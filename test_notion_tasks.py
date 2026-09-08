@@ -73,6 +73,32 @@ def t2():
 results.append(run("the view id in a URL is not mistaken for the database", t2))
 
 
+def t2b():
+    # Notion puts the page title in the URL ahead of the id, and a title made
+    # of hex-ish words ("Deface Added Beef Cafe") used to be matched as part
+    # of the id, yielding a database that doesn't exist.
+    bare = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+    for title in ("Deface-Added-Beef-Cafe", "Faced-Badace-Decade-Beaded-Cabbage",
+                  "Accede-Facade-Deface"):
+        url = f"https://www.notion.so/myspace/{title}-{bare}?v=99887766554433221100aabbccddeeff"
+        assert nt.extract_id(url) == bare, f"{title}: {nt.extract_id(url)}"
+results.append(run("a hex-looking page title is not mistaken for the id", t2b))
+
+
+def t2c():
+    bare = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+    dashed = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6"
+    view = "99887766554433221100aabbccddeeff"
+    for label, url in (
+        ("fragment", f"https://www.notion.so/myspace/Tasks-{bare}#block"),
+        ("no scheme", f"notion.so/myspace/Tasks-{bare}?v={view}"),
+        ("dashed in a URL", f"https://www.notion.so/myspace/{dashed}?v={view}"),
+        ("nested path", f"https://www.notion.so/team/{view}/{bare}?v={view}"),
+    ):
+        assert nt.extract_id(url) == bare, f"{label}: {nt.extract_id(url)}"
+results.append(run("handles fragments, nested paths, and dashed ids in URLs", t2c))
+
+
 def t3():
     for bad in ("", "https://notion.so/my-page", "not an id"):
         try:
