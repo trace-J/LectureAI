@@ -1,7 +1,8 @@
 # LectureAI
 
-Drop a lecture recording in `inbox/`. Get a study summary as a Google Doc in the
-right course folder in Drive, with the raw transcript filed one level down.
+Record a lecture on this Mac, or drop one in `inbox/` from your phone. Get a
+study summary as a Google Doc in the right course folder in Drive, with the raw
+transcript filed one level down.
 
 Everything in between is automatic: the course is inferred from your class
 schedule, the audio is compressed and split to clear the transcription API's
@@ -11,6 +12,9 @@ once both uploads land.
 ## How a recording flows through
 
 ```
+record.py           records from this Mac's mic into .work/, then moves the
+   |                finished file into inbox/ (or sync one from your phone)
+   v
 inbox/lecture.m4a
    |
    |  watch.py      waits for the file to stop growing, then infers
@@ -54,6 +58,41 @@ That caches `token.json`. The app uses the `drive.file` scope, which only
 reaches files it created, so it makes its own "Lecture Notes" folder in My Drive
 rather than writing into one you made by hand. Move that folder anywhere
 afterward; access follows it. Its id is cached in `.drive_root`.
+
+## Recording on this Mac
+
+```bash
+.venv/bin/python record.py
+```
+
+Records until Ctrl-C, names the file from your schedule, and drops it in
+`inbox/`. The first run asks for microphone permission; if it was denied,
+grant it under System Settings > Privacy & Security > Microphone and try
+again.
+
+```bash
+.venv/bin/python record.py --minutes 80          # stop on its own
+.venv/bin/python record.py --course RELI-3304    # override the schedule
+.venv/bin/python record.py --device "MacBook"    # pick a different mic
+.venv/bin/python record.py --list-devices
+```
+
+Three things worth knowing:
+
+- **The mic takes a second or two to open**, so the first moments of a lecture
+  are lost. Start recording before the professor does. The finished file
+  reports how much audio it actually holds, not how long you sat there.
+- **Recording goes to `.work/` and only moves into `inbox/` once finalized.**
+  An in-progress recording is not a valid m4a, and an 80 minute lecture written
+  directly into `inbox/` would also outlast the watcher's one hour patience for
+  a file that is still growing.
+- **The microphone is chosen by name, not index.** avfoundation numbers devices
+  in connection order, so on this Mac index 0 is often a nearby iPhone rather
+  than the built-in mic. Change the default with `RECORD_DEVICE` in `.env`.
+
+Stopping with Ctrl-C is the supported way to end a recording: it lets ffmpeg
+write the file's trailer. Killing the process instead leaves an m4a nothing can
+open.
 
 ## Running it
 
@@ -137,25 +176,24 @@ lecture, which gives three useful behaviors:
 Files uploaded before this existed carry no stamp. The first time you re-run
 one of those lectures, the file is claimed by name and stamped from then on.
 
-The logic has regression tests that run against an in-memory fake Drive, so
-they need no network, no credentials, and cost nothing:
+## Tests
+
+Both suites are self-contained. The upload tests run against an in-memory fake
+Drive and the recording tests open no microphone, so neither needs network,
+credentials, or an API key, and neither costs anything to run.
 
 ```bash
-.venv/bin/python test_upload_collisions.py
+.venv/bin/python test_upload_collisions.py   # collisions, re-runs, two-part days
+.venv/bin/python test_record.py              # device selection and naming
 ```
 
 ## V2 roadmap
 
-V1 is what's described above and it runs daily. These are the deferrals, in
-rough order of how soon each one bites.
+Everything described above is built and in daily use. These are what's left,
+in rough order of how soon each one bites.
 
 ### New capability
 
-- **Record on this computer.** Today a recording has to be made on the phone
-  and synced into `inbox/`. Record directly from the Mac's microphone instead:
-  start and stop a lecture from the CLI, write straight into `inbox/`, and let
-  the existing watcher take it from there. Removes the phone, the sync wait,
-  and the file-stability delay from the loop.
 - **Speaker diarization.** Separate the instructor from student questions.
 - **Slide OCR.** Pull text off the slides and fold it into the summary.
 - **Cross-lecture study guides.** Synthesize a whole unit rather than one
