@@ -163,6 +163,38 @@ def t8():
 results.append(run("a title-only database maps cleanly with no extras", t8))
 
 
+def t8b():
+    reset_overrides()
+    # One select property must not be claimed by both course and kind: both
+    # are written on create, so the course code would be overwritten by the
+    # item type. This is what happened against the real database.
+    one_select = {
+        "Name": {"type": "title"},
+        "Due": {"type": "date"},
+        "Course": {"type": "select"},
+        "Source": {"type": "url"},
+    }
+    m = nt.map_properties(one_select)
+    assert m["course"] == "Course", m
+    assert m["kind"] is None, f"kind stole the course property: {m}"
+    assigned = [v for k, v in m.items() if v]
+    assert len(assigned) == len(set(assigned)), f"a property serves two roles: {m}"
+results.append(run("one select property is not claimed by two roles", t8b))
+
+
+def t8c():
+    reset_overrides()
+    # With a dedicated Type property, kind gets it and course keeps Course.
+    both = {
+        "Name": {"type": "title"},
+        "Course": {"type": "select"},
+        "Type": {"type": "select"},
+    }
+    m = nt.map_properties(both)
+    assert m["course"] == "Course" and m["kind"] == "Type", m
+results.append(run("a dedicated Type property is still matched to kind", t8c))
+
+
 def t9():
     reset_overrides()
     try:

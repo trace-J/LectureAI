@@ -153,8 +153,14 @@ def get_schema(data_source_id: str) -> dict:
 
 
 def _find(properties: dict, hints: tuple[str, ...], types: tuple[str, ...],
-          override: str = "") -> str | None:
-    """Name of the property to use for one role, or None if there isn't one."""
+          override: str = "", taken: set[str] | None = None) -> str | None:
+    """Name of the property to use for one role, or None if there isn't one.
+
+    `taken` holds properties already claimed by an earlier role. Without it a
+    database with a single select property gave that property to both `course`
+    and `kind`, and since both are written on create, the course code was
+    immediately overwritten by the item type.
+    """
     if override:
         if override in properties:
             return override
@@ -162,13 +168,15 @@ def _find(properties: dict, hints: tuple[str, ...], types: tuple[str, ...],
             f"property {override!r} is not in the database. Available: "
             f"{', '.join(sorted(properties)) or '(none)'}"
         )
+    claimed = taken or set()
     candidates = {name: spec for name, spec in properties.items()
-                  if spec.get("type") in types}
+                  if spec.get("type") in types and name not in claimed}
     for hint in hints:
         for name in candidates:
             if hint in name.lower():
                 return name
-    # A database with exactly one property of the right type needs no hint.
+    # A database with exactly one unclaimed property of the right type needs
+    # no hint to be unambiguous.
     return next(iter(candidates)) if len(candidates) == 1 else None
 
 
@@ -185,17 +193,23 @@ def map_properties(properties: dict) -> dict:
     if not title:
         raise NotionError("database has no title property, which Notion requires")
 
-    return {
-        "title": title,
-        "due": _find(properties, DUE_HINTS, ("date",), config.NOTION_PROP_DUE),
-        "course": _find(properties, COURSE_HINTS,
-                        ("select", "multi_select", "status"),
-                        config.NOTION_PROP_COURSE),
-        "kind": _find(properties, KIND_HINTS,
-                      ("select", "multi_select"), config.NOTION_PROP_KIND),
-        "source": _find(properties, SOURCE_HINTS,
-                        ("url", "rich_text"), config.NOTION_PROP_SOURCE),
-    }
+    # Claimed in priority order, each role excluding what earlier ones took.
+    # Course before kind: knowing which class a task belongs to matters more
+    # than labelling it a reading, so it wins a single shared select.
+    mapping = {"title": title}
+    taken = {title}
+    for role, hints, types, override in (
+        ("due", DUE_HINTS, ("date",), config.NOTION_PROP_DUE),
+        ("course", COURSE_HINTS, ("select", "multi_select", "status"),
+         config.NOTION_PROP_COURSE),
+        ("kind", KIND_HINTS, ("select", "multi_select"), config.NOTION_PROP_KIND),
+        ("source", SOURCE_HINTS, ("url", "rich_text"), config.NOTION_PROP_SOURCE),
+    ):
+        found = _find(properties, hints, types, override, taken)
+        mapping[role] = found
+        if found:
+            taken.add(found)
+    return mapping
 
 
 def _value_for(spec_type: str, value: str) -> dict:
@@ -305,6 +319,66 @@ def push(items: list[dict], course: str, source_url: str = "",
     return {"added": added, "skipped": skipped, "failed": failed, "urls": urls}
 
 
+def _course_options() -> list[dict]:
+    """Seed the Course select with the courses already in SCHEDULE."""
+    colors = ("blue", "green", "orange", "purple", "pink", "brown", "red")
+    codes = sorted(set(config.SCHEDULE.values()))
+    return [{"name": code, "color": colors[i % len(colors)]}
+            for i, code in enumerate(codes)]
+
+
+def setup_properties(dry_run: bool = False) -> dict:
+    """Add the properties this script needs, for roles the database lacks.
+
+    Only ever adds. An existing property is never included in the request, so
+    nothing already in the database can be renamed, retyped, or removed by
+    this (Notion deletes a property when it is sent as null, which is why the
+    request is built from scratch rather than from the current schema).
+
+    A role already covered by a differently named property is left alone: a
+    database with "Deadline" does not also get a "Due".
+    """
+    data_source_id, title = resolve_data_source()
+    schema = get_schema(data_source_id)
+    mapping = map_properties(schema)
+
+    wanted = {
+        "due": ("Due", {"type": "date", "date": {}}),
+        "course": ("Course", {"type": "select",
+                              "select": {"options": _course_options()}}),
+        "source": ("Source", {"type": "url", "url": {}}),
+    }
+
+    additions, skipped = {}, []
+    for role, (name, spec) in wanted.items():
+        if mapping.get(role):
+            skipped.append(f"{role}: already using {mapping[role]!r}")
+            continue
+        if name in schema:
+            skipped.append(
+                f"{role}: a property called {name!r} exists but is a "
+                f"{schema[name].get('type')}, so it was left alone"
+            )
+            continue
+        additions[name] = spec
+
+    for note in skipped:
+        log(f"  skipped {note}")
+
+    if not additions:
+        log("  nothing to add; the database already has what it needs")
+        return {"added": [], "database": title}
+
+    if dry_run:
+        log(f"  would add to {title!r}: {', '.join(sorted(additions))}")
+        return {"added": sorted(additions), "database": title, "dry_run": True}
+
+    _request("PATCH", f"/data_sources/{data_source_id}",
+             {"properties": additions})
+    log(f"  added to {title!r}: {', '.join(sorted(additions))}")
+    return {"added": sorted(additions), "database": title}
+
+
 def describe() -> str:
     """Human-readable report of what this script sees in your database."""
     data_source_id, db_title = resolve_data_source()
@@ -335,6 +409,8 @@ def main() -> int:
     )
     parser.add_argument("--check", action="store_true",
                         help="show the database and property mapping, then exit")
+    parser.add_argument("--setup", action="store_true",
+                        help="add any missing Due / Course / Source properties")
     parser.add_argument("--transcript", help="a transcript to summarize and push")
     parser.add_argument("--course", help="course code, e.g. ACCT-4321")
     parser.add_argument("--date", help="lecture date, YYYY-MM-DD")
@@ -343,13 +419,20 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
+        if args.setup:
+            setup_properties(dry_run=args.dry_run)
+            if not args.dry_run:
+                print()
+                print(describe())
+            return 0
+
         if args.check:
             print(describe())
             return 0
 
         if not (args.transcript and args.course and args.date):
             parser.error("--transcript, --course and --date are required "
-                         "unless --check is given")
+                         "unless --check or --setup is given")
 
         import summarize
         text = Path(args.transcript).expanduser().read_text()
