@@ -174,6 +174,100 @@ def _watcher_is_running() -> bool:
     return True
 
 
+class Recorder:
+    """One microphone recording, startable and stoppable from anywhere.
+
+    The CLI runs a progress loop around this; the GUI holds one and drives it
+    from button clicks. Keeping the ffmpeg handling, the finalize, and the
+    move into inbox/ in one place means the two front ends cannot drift into
+    producing subtly different files.
+    """
+
+    def __init__(self, device: str | None = None, course: str | None = None):
+        self.device = device
+        self.course = course
+        self.device_name = ""
+        self.started: datetime | None = None
+        self._proc: subprocess.Popen | None = None
+        self._staging: Path | None = None
+        self._errors = None
+
+    @property
+    def is_recording(self) -> bool:
+        return self._proc is not None and self._proc.poll() is None
+
+    @property
+    def elapsed(self) -> float:
+        """Seconds since recording began. Wall clock, not audio captured."""
+        if not self.started:
+            return 0.0
+        return (datetime.now() - self.started).total_seconds()
+
+    @property
+    def staged_bytes(self) -> int:
+        if self._staging and self._staging.exists():
+            return self._staging.stat().st_size
+        return 0
+
+    @property
+    def planned_name(self) -> str:
+        return output_name(self.started or datetime.now(), self.course)
+
+    def start(self) -> None:
+        """Open the microphone and begin writing to .work/."""
+        if self.is_recording:
+            raise RuntimeError("already recording")
+        if shutil.which("ffmpeg") is None:
+            raise RuntimeError(
+                "ffmpeg is not on your PATH. Install it:  brew install ffmpeg")
+
+        device_index, self.device_name = resolve_device(self.device)
+        self.started = datetime.now()
+        config.WORK_DIR.mkdir(exist_ok=True)
+        self._staging = config.WORK_DIR / f"recording_{self.started:%Y%m%d-%H%M%S}.m4a"
+
+        self._errors = tempfile.TemporaryFile(mode="w+")
+        self._proc = subprocess.Popen(
+            _ffmpeg_command(device_index, self._staging),
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=self._errors,
+            # Keep ffmpeg out of the terminal's signal group so Ctrl-C reaches
+            # this process first and we can shut it down in an orderly way.
+            start_new_session=True,
+        )
+
+    def stop(self) -> Path:
+        """Finalize the recording and move it into inbox/. Returns its path."""
+        if self._proc is None or self._staging is None or self.started is None:
+            raise RuntimeError("not recording")
+
+        returncode_before = self._proc.poll()
+        _stop(self._proc)
+
+        self._errors.seek(0)
+        stderr = self._errors.read().strip()
+        self._errors.close()
+        self._errors = None
+        staging, self._staging = self._staging, None
+        proc, self._proc = self._proc, None
+
+        # ffmpeg exiting on its own before we asked means it never opened the
+        # device, which is nearly always a permissions problem.
+        died_early = returncode_before is not None and not staging.exists()
+        if died_early or not staging.exists() or staging.stat().st_size == 0:
+            staging.unlink(missing_ok=True)
+            raise RuntimeError(_diagnose(stderr, self.device_name))
+
+        destination = config.INBOX_DIR / output_name(self.started, self.course)
+        if destination.exists():
+            destination = config.INBOX_DIR / output_name(
+                self.started, self.course
+            ).replace(".m4a", f"_{int(time.time())}.m4a")
+        shutil.move(str(staging), str(destination))
+        self.stderr = stderr
+        return destination
+
+
 def record(
     minutes: float | None = None,
     device: str | None = None,
@@ -183,37 +277,21 @@ def record(
 
     Returns the path of the finished recording.
     """
-    if shutil.which("ffmpeg") is None:
-        raise RuntimeError("ffmpeg is not on your PATH. Install it:  brew install ffmpeg")
-
-    device_index, device_name = resolve_device(device)
+    recorder = Recorder(device=device, course=course)
     limit = minutes if minutes is not None else config.RECORD_MAX_MINUTES
-    started = datetime.now()
+    recorder.start()
+    started = recorder.started
 
-    config.WORK_DIR.mkdir(exist_ok=True)
-    staging = config.WORK_DIR / f"recording_{started:%Y%m%d-%H%M%S}.m4a"
-
-    planned = output_name(started, course)
-    log(f"recording from {device_name}")
-    log(f"  will file as {planned}")
+    log(f"recording from {recorder.device_name}")
+    log(f"  will file as {recorder.planned_name}")
     log("  the mic takes a few seconds to spin up, so start before the lecture does")
     log(f"  Ctrl-C to stop" + (f", or it stops itself at {limit:g} min" if limit else ""))
 
-    errors = tempfile.TemporaryFile(mode="w+")
-    proc = subprocess.Popen(
-        _ffmpeg_command(device_index, staging),
-        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errors,
-        # Keep ffmpeg out of the terminal's signal group so Ctrl-C reaches this
-        # process first and we can shut it down in an orderly way.
-        start_new_session=True,
-    )
-
     deadline = time.monotonic() + limit * 60 if limit else None
-    interrupted = False
     try:
-        while proc.poll() is None:
+        while recorder.is_recording:
             elapsed = str(datetime.now() - started).split(".")[0]
-            size = staging.stat().st_size if staging.exists() else 0
+            size = recorder.staged_bytes
             # ffmpeg buffers the m4a, so the file sits at zero for the first
             # while. Showing 0.0MB during a lecture reads like a failure, so
             # only report a size once there is one.
@@ -225,31 +303,12 @@ def record(
                 break
             time.sleep(1)
     except KeyboardInterrupt:
-        interrupted = True
+        pass
     finally:
         print("", file=sys.stderr, flush=True)
-        _stop(proc)
 
-    errors.seek(0)
-    stderr = errors.read().strip()
-    errors.close()
-
-    if proc.returncode not in (0, 255) and not interrupted and not staging.exists():
-        raise RuntimeError(_diagnose(stderr, device_name))
-
-    if not staging.exists() or staging.stat().st_size == 0:
-        staging.unlink(missing_ok=True)
-        raise RuntimeError(_diagnose(stderr, device_name))
-
-    # ffmpeg's last write is when recording stopped, which is exactly what the
-    # course-inference in config.py expects to read off the file. A rename
-    # inside the project keeps it, so don't copy the file around.
-    destination = config.INBOX_DIR / output_name(started, course)
-    if destination.exists():
-        destination = config.INBOX_DIR / output_name(started, course).replace(
-            ".m4a", f"_{int(time.time())}.m4a"
-        )
-    shutil.move(str(staging), str(destination))
+    destination = recorder.stop()
+    stderr = getattr(recorder, "stderr", "")
 
     size_mb = destination.stat().st_size / 1024 / 1024
 

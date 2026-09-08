@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LectureAI</title>
+<link rel="icon" href="/static/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lexend+Deca:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --brand: #8C52FF;
+    --brand-soft: #f3ecff;
+    --brand-deep: #6a35d9;
+    --ink: #16131f;
+    --muted: #6b6577;
+    --line: #e7e3ee;
+    --bg: #faf9fc;
+    --card: #ffffff;
+    --ok: #128a5b;
+    --warn: #b25c00;
+    --err: #c22f3d;
+    --shadow: 0 1px 2px rgba(22,19,31,.05), 0 8px 24px rgba(22,19,31,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --brand-soft: #241a3d;
+      --ink: #f2eefb; --muted: #a49db4; --line: #2c2738;
+      --bg: #131019; --card: #1b1725;
+      --ok: #4ecf9b; --warn: #e5a252; --err: #ff8792;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Lexend Deca", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-weight: 400; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 32px 20px 64px; }
+
+  /* Header ------------------------------------------------------------- */
+  header { display: flex; align-items: center; gap: 14px; margin-bottom: 28px; }
+  header img { width: 44px; height: 44px; border-radius: 11px; display: block; }
+  .brandname { font-size: 25px; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; }
+  .brandname .ai { color: var(--brand); }
+  .tagline { font-size: 13px; color: var(--muted); font-weight: 300; }
+
+  /* Cards -------------------------------------------------------------- */
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 16px; box-shadow: var(--shadow); margin-bottom: 18px;
+  }
+  .card-pad { padding: 22px; }
+  h2 {
+    font-size: 12px; font-weight: 600; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--muted);
+    margin: 0 0 14px;
+  }
+
+  /* Record ------------------------------------------------------------- */
+  .record { display: flex; align-items: center; gap: 20px; }
+  .rec-btn {
+    flex: 0 0 auto; width: 84px; height: 84px; border-radius: 50%;
+    border: none; cursor: pointer; background: var(--brand);
+    display: grid; place-items: center;
+    transition: transform .12s ease, box-shadow .2s ease, background .2s ease;
+    box-shadow: 0 6px 20px rgba(140,82,255,.32);
+  }
+  .rec-btn:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(140,82,255,.42); }
+  .rec-btn:active { transform: translateY(0) scale(.97); }
+  .rec-btn:disabled { opacity: .55; cursor: default; transform: none; box-shadow: none; }
+  .rec-btn .glyph { width: 26px; height: 26px; border-radius: 50%; background: #fff; }
+  .rec-btn.is-recording { background: var(--err); box-shadow: 0 6px 20px rgba(194,47,61,.3); }
+  .rec-btn.is-recording .glyph { border-radius: 5px; width: 24px; height: 24px; }
+  .rec-btn.is-recording::after {
+    content: ""; position: absolute; width: 84px; height: 84px; border-radius: 50%;
+    border: 2px solid var(--err); animation: pulse 1.8s ease-out infinite;
+  }
+  @keyframes pulse {
+    0%   { transform: scale(1);    opacity: .7; }
+    100% { transform: scale(1.35); opacity: 0; }
+  }
+  .rec-btn-wrap { position: relative; display: grid; place-items: center; }
+
+  .rec-info { min-width: 0; flex: 1; }
+  .timer {
+    font-size: 34px; font-weight: 300; letter-spacing: -.01em;
+    font-variant-numeric: tabular-nums; line-height: 1.15;
+  }
+  .timer.idle { color: var(--muted); }
+  .rec-meta { font-size: 13px; color: var(--muted); margin-top: 3px; }
+  .rec-meta strong { color: var(--ink); font-weight: 500; }
+  .rec-note { font-size: 12px; color: var(--muted); margin-top: 8px; font-weight: 300; }
+
+  select {
+    font: inherit; font-size: 13px; padding: 7px 11px; border-radius: 9px;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink);
+    margin-top: 10px; cursor: pointer;
+  }
+
+  /* Pills / rows ------------------------------------------------------- */
+  .row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 13px 0; border-top: 1px solid var(--line);
+  }
+  .row:first-of-type { border-top: none; }
+  .row-main { min-width: 0; }
+  .row-title {
+    font-size: 14px; font-weight: 500; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .row-sub { font-size: 12px; color: var(--muted); font-weight: 300; margin-top: 2px; }
+  a.row-title { color: var(--brand); text-decoration: none; }
+  a.row-title:hover { text-decoration: underline; }
+
+  .tag {
+    flex: 0 0 auto; font-size: 11px; font-weight: 500; letter-spacing: .03em;
+    padding: 3px 9px; border-radius: 999px;
+    background: var(--brand-soft); color: var(--brand-deep);
+  }
+  @media (prefers-color-scheme: dark) { .tag { color: #c3a6ff; } }
+  .tag.err { background: rgba(194,47,61,.12); color: var(--err); }
+
+  .btn {
+    font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+    padding: 7px 15px; border-radius: 9px;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink);
+    transition: border-color .15s ease, color .15s ease;
+  }
+  .btn:hover { border-color: var(--brand); color: var(--brand); }
+  .btn:disabled { opacity: .5; cursor: default; }
+
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; display: inline-block; }
+  .dot.on { background: var(--ok); }
+  .dot.off { background: var(--muted); opacity: .5; }
+  .status-line { display: flex; align-items: center; gap: 9px; font-size: 14px; }
+
+  .checks { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+  .check { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); }
+  .check .dot.on { background: var(--ok); }
+
+  .empty { font-size: 13px; color: var(--muted); font-weight: 300; padding: 4px 0; }
+  .flash {
+    font-size: 13px; padding: 11px 14px; border-radius: 11px; margin-bottom: 18px;
+    background: var(--brand-soft); color: var(--brand-deep); display: none;
+  }
+  .flash.err { background: rgba(194,47,61,.1); color: var(--err); }
+  @media (prefers-color-scheme: dark) { .flash { color: #c3a6ff; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <img src="/static/icon.png" alt="">
+    <div>
+      <div class="brandname">Lecture<span class="ai">AI</span></div>
+      <div class="tagline">All of your lectures, in one place</div>
+    </div>
+  </header>
+
+  <div class="flash" id="flash"></div>
+
+  <!-- Record -->
+  <div class="card card-pad">
+    <div class="record">
+      <div class="rec-btn-wrap">
+        <button class="rec-btn" id="recBtn" aria-label="Start recording">
+          <span class="glyph"></span>
+        </button>
+      </div>
+      <div class="rec-info">
+        <div class="timer idle" id="timer">Ready</div>
+        <div class="rec-meta" id="recMeta">Not recording</div>
+        <select id="courseSel" aria-label="Course to file under"></select>
+        <div class="rec-note" id="recNote">
+          The mic takes a moment to open, so start before the lecture does.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Watcher -->
+  <div class="card card-pad">
+    <h2>Pipeline</h2>
+    <div class="row">
+      <div class="row-main">
+        <div class="status-line">
+          <span class="dot off" id="watchDot"></span>
+          <span id="watchText">Watcher stopped</span>
+        </div>
+        <div class="row-sub" id="watchSub">Recordings sit in the inbox until it runs.</div>
+      </div>
+      <button class="btn" id="watchBtn">Start</button>
+    </div>
+    <div class="row">
+      <div class="row-main">
+        <div class="row-title" id="inboxTitle">Inbox empty</div>
+        <div class="row-sub" id="inboxSub">Nothing waiting to be processed.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent -->
+  <div class="card card-pad">
+    <h2>Recent lectures</h2>
+    <div id="recent"><div class="empty">Nothing processed yet.</div></div>
+  </div>
+
+  <!-- Setup -->
+  <div class="card card-pad">
+    <h2>Setup</h2>
+    <div class="checks" id="checks"></div>
+  </div>
+
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let state = null;
+let busy = false;
+
+function hhmmss(total) {
+  const s = Math.max(0, Math.floor(total));
+  const h = String(Math.floor(s / 3600)).padStart(2, "0");
+  const m = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+  const x = String(s % 60).padStart(2, "0");
+  return `${h}:${m}:${x}`;
+}
+
+function fileSize(bytes) {
+  if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function flash(message, isError) {
+  const el = $("flash");
+  el.textContent = message;
+  el.className = "flash" + (isError ? " err" : "");
+  el.style.display = "block";
+  clearTimeout(flash._t);
+  flash._t = setTimeout(() => { el.style.display = "none"; }, 6000);
+}
+
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: body === undefined ? "GET" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok || data.ok === false) throw new Error(data.error || "request failed");
+  return data;
+}
+
+function renderCourses(s) {
+  const sel = $("courseSel");
+  if (sel.dataset.filled) return;
+  const opts = ['<option value="">Course from schedule</option>'];
+  for (const c of s.courses) opts.push(`<option value="${c}">${c}</option>`);
+  sel.innerHTML = opts.join("");
+  sel.dataset.filled = "1";
+}
+
+function render(s) {
+  state = s;
+  renderCourses(s);
+
+  // Record
+  const r = s.recording;
+  const btn = $("recBtn");
+  btn.classList.toggle("is-recording", r.active);
+  btn.setAttribute("aria-label", r.active ? "Stop recording" : "Start recording");
+  $("courseSel").disabled = r.active;
+
+  if (r.active) {
+    $("timer").textContent = hhmmss(r.elapsed);
+    $("timer").classList.remove("idle");
+    const size = r.bytes ? ` · ${(r.bytes / 1048576).toFixed(1)} MB` : "";
+    $("recMeta").innerHTML = `<strong>${r.planned}</strong><br>${r.device}${size}`;
+    $("recNote").textContent = "Click again to stop. The file moves to the inbox when finalized.";
+  } else {
+    $("timer").textContent = "Ready";
+    $("timer").classList.add("idle");
+    $("recMeta").textContent = s.now_class
+      ? `${s.now_class} is scheduled right now`
+      : "No class scheduled at this hour";
+    $("recNote").textContent = "The mic takes a moment to open, so start before the lecture does.";
+  }
+
+  // Watcher
+  const w = s.watcher;
+  $("watchDot").className = "dot " + (w.running ? "on" : "off");
+  $("watchText").textContent = w.running ? "Watcher running" : "Watcher stopped";
+  $("watchSub").textContent = w.running
+    ? `Processing anything dropped in the inbox (pid ${w.pid}).`
+    : "Recordings sit in the inbox until it runs.";
+  const wb = $("watchBtn");
+  wb.textContent = w.running ? "Stop" : "Start";
+  wb.disabled = busy;
+
+  // Inbox
+  if (s.inbox.length) {
+    $("inboxTitle").textContent = `${s.inbox.length} waiting in the inbox`;
+    $("inboxSub").textContent = s.inbox.map(f => `${f.name} (${fileSize(f.bytes)})`).join(", ");
+  } else {
+    $("inboxTitle").textContent = "Inbox empty";
+    $("inboxSub").textContent = "Nothing waiting to be processed.";
+  }
+
+  // Recent
+  const box = $("recent");
+  if (!s.recent.length) {
+    box.innerHTML = '<div class="empty">Nothing processed yet.</div>';
+  } else {
+    box.innerHTML = s.recent.map(x => {
+      const when = x.when.replace("T", " ").slice(0, 16);
+      if (x.error) {
+        return `<div class="row"><div class="row-main">
+          <div class="row-title">${escapeHtml(x.source)}</div>
+          <div class="row-sub">${when} · ${escapeHtml(x.error).slice(0, 120)}</div>
+        </div><span class="tag err">failed</span></div>`;
+      }
+      return `<div class="row"><div class="row-main">
+        <a class="row-title" href="${x.url}" target="_blank" rel="noopener">${escapeHtml(x.name)}</a>
+        <div class="row-sub">${when}</div>
+      </div><span class="tag">${escapeHtml(x.course)}</span></div>`;
+    }).join("");
+  }
+
+  // Setup
+  const labels = { openai: "Transcription", anthropic: "Summaries", drive: "Google Drive", notion: "Notion" };
+  $("checks").innerHTML = Object.entries(labels).map(([k, label]) => {
+    const on = s.integrations[k];
+    return `<div class="check"><span class="dot ${on ? "on" : "off"}"></span>${label}${on ? "" : " not set up"}</div>`;
+  }).join("");
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, c => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
+async function poll() {
+  try { render(await api("/api/status")); }
+  catch (e) { /* the panel is local; a blip just means the next tick retries */ }
+}
+
+$("recBtn").onclick = async () => {
+  if (busy) return;
+  busy = true;
+  $("recBtn").disabled = true;
+  try {
+    if (state && state.recording.active) {
+      const out = await api("/api/record/stop", {});
+      const next = out.watching
+        ? "The watcher will pick it up."
+        : "Start the watcher to process it.";
+      const lost = out.lost > 3
+        ? ` ${out.lost}s was lost while the mic opened.`
+        : "";
+      flash(`Saved ${out.name} · ${hhmmss(out.seconds)} of audio, ${fileSize(out.bytes)}. ${next}${lost}`);
+    } else {
+      const course = $("courseSel").value;
+      const out = await api("/api/record/start", { course });
+      flash(`Recording from ${out.device} into ${out.planned}`);
+    }
+  } catch (e) {
+    flash(e.message, true);
+  } finally {
+    busy = false;
+    $("recBtn").disabled = false;
+    poll();
+  }
+};
+
+$("watchBtn").onclick = async () => {
+  if (busy) return;
+  busy = true;
+  try {
+    const running = state && state.watcher.running;
+    await api(running ? "/api/watcher/stop" : "/api/watcher/start", {});
+    flash(running ? "Watcher stopped." : "Watcher started.");
+  } catch (e) {
+    flash(e.message, true);
+  } finally {
+    busy = false;
+    setTimeout(poll, 400);
+  }
+};
+
+poll();
+setInterval(poll, 1000);
+</script>
+</body>
+</html>
