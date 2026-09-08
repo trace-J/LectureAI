@@ -1,0 +1,7 @@
+openai>=1.60
+anthropic>=0.40
+google-api-python-client>=2.150
+google-auth-oauthlib>=1.2
+google-auth-httplib2>=0.2
+python-dotenv>=1.0
+watchdog>=5.0
