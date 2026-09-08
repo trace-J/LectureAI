@@ -143,6 +143,17 @@
   .check { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); }
   .check .dot.on { background: var(--ok); }
 
+  .spinner {
+    width: 12px; height: 12px; flex: 0 0 auto; border-radius: 50%;
+    border: 2px solid var(--brand); border-right-color: transparent;
+    animation: spin .75s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation-duration: 2.5s; }
+    .rec-btn.is-recording::after { animation: none; }
+  }
+
   .empty { font-size: 13px; color: var(--muted); font-weight: 300; padding: 4px 0; }
   .flash {
     font-size: 13px; padding: 11px 14px; border-radius: 11px; margin-bottom: 18px;
@@ -196,6 +207,16 @@
         <div class="row-sub" id="watchSub">Recordings sit in the inbox until it runs.</div>
       </div>
       <button class="btn" id="watchBtn">Start</button>
+    </div>
+    <div class="row" id="procRow" hidden>
+      <div class="row-main">
+        <div class="status-line">
+          <span class="spinner"></span>
+          <span id="procTitle">Working</span>
+        </div>
+        <div class="row-sub" id="procSub"></div>
+      </div>
+      <span class="tag" id="procTag"></span>
     </div>
     <div class="row">
       <div class="row-main">
@@ -303,7 +324,28 @@ function render(s) {
   wb.textContent = w.running ? "Stop" : "Start";
   wb.disabled = busy;
 
-  // Inbox
+  // Processing
+  const p = s.processing;
+  const STAGES = {
+    waiting:      "Waiting for the file to finish copying",
+    transcribing: "Transcribing",
+    summarizing:  "Summarizing",
+    uploading:    "Uploading to Drive",
+    notion:       "Adding tasks to Notion",
+  };
+  $("procRow").hidden = !p;
+  if (p) {
+    $("procTitle").textContent = STAGES[p.stage] || p.stage;
+    const bits = [p.file, p.detail, `${hhmmss(p.elapsed)} elapsed`].filter(Boolean);
+    $("procSub").textContent = bits.join(" · ");
+    $("procTag").textContent = p.course || "";
+    $("procTag").hidden = !p.course;
+  }
+
+  // Inbox. A file being processed is still sitting in the inbox, so it would
+  // otherwise be counted as waiting when it is anything but.
+  const busyFile = p ? p.file : null;
+  s = Object.assign({}, s, { inbox: s.inbox.filter(f => f.name !== busyFile) });
   if (s.inbox.length) {
     $("inboxTitle").textContent = `${s.inbox.length} waiting in the inbox`;
     $("inboxSub").textContent = s.inbox.map(f => `${f.name} (${fileSize(f.bytes)})`).join(", ");

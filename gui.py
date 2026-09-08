@@ -13,6 +13,7 @@ pipeline log, none of which should be reachable from the network.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import signal
 import subprocess
@@ -90,6 +91,36 @@ def _recent(limit: int = 12) -> list[dict]:
     return list(reversed(rows))[:limit]
 
 
+def _processing(watcher_pid: int | None) -> dict | None:
+    """What the watcher is working on right now, or None if it is idle.
+
+    Tied to the live watcher's pid. A watcher killed mid-lecture leaves its
+    status file behind, and reporting that stale stage forever would be worse
+    than saying nothing.
+    """
+    if watcher_pid is None or not config.STATUS_FILE.exists():
+        return None
+    try:
+        data = json.loads(config.STATUS_FILE.read_text())
+    except (OSError, ValueError):
+        return None
+    if data.get("pid") != watcher_pid:
+        return None
+
+    started = data.get("started", "")
+    try:
+        elapsed = (datetime.now() - datetime.fromisoformat(started)).total_seconds()
+    except ValueError:
+        elapsed = 0
+    return {
+        "stage": data.get("stage", ""),
+        "file": data.get("file", ""),
+        "course": data.get("course", ""),
+        "detail": data.get("detail", ""),
+        "elapsed": round(max(0.0, elapsed)),
+    }
+
+
 def _integrations() -> dict:
     """Which pieces are configured. Presence only; no secrets leave here."""
     return {
@@ -119,6 +150,7 @@ def status():
             "course": (_recorder.course or "") if active else "",
         },
         "watcher": {"running": pid is not None, "pid": pid},
+        "processing": _processing(pid),
         "inbox": _inbox(),
         "recent": _recent(),
         "integrations": _integrations(),

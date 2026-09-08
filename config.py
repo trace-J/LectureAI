@@ -24,6 +24,10 @@ INBOX_DIR = BASE_DIR / "inbox"
 PROCESSED_DIR = BASE_DIR / "processed"
 WORK_DIR = BASE_DIR / ".work"          # scratch space for compressed/split audio
 LOG_FILE = BASE_DIR / "pipeline.log"
+# What the watcher is doing right now, for the control panel to read. Written
+# during a run and removed at the end; pipeline.log only gets a line once a
+# lecture is finished, which leaves the whole transcription invisible.
+STATUS_FILE = BASE_DIR / ".work" / "status.json"
 LOCK_FILE = BASE_DIR / ".watcher.lock"   # guards against two watchers at once
 
 CREDENTIALS_FILE = BASE_DIR / "credentials.json"
