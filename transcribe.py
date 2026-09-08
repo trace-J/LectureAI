@@ -142,13 +142,25 @@ def _transcribe_one(path: Path, client: OpenAI, prompt: str = "") -> str:
     return (result if isinstance(result, str) else result.text).strip()
 
 
-def transcribe(path: str | Path) -> str:
+def transcribe(path: str | Path, on_progress=None) -> str:
     """Transcribe an audio file, compressing and splitting as needed.
 
     Two separate limits force a split: the 25MB request cap, and the output
     token cap on the gpt-4o transcribe models, which truncates long audio
     without raising. Duration is the binding constraint in practice.
+
+    on_progress, if given, is called with a short human-readable string as the
+    work moves along. A 75 minute lecture takes many minutes and ten API
+    calls, so something has to be able to say how far in it is.
     """
+    def progress(detail: str) -> None:
+        if on_progress:
+            try:
+                on_progress(detail)
+            except Exception:
+                # Reporting progress must never break a transcription.
+                pass
+
     src = Path(path).expanduser().resolve()
     if not src.is_file():
         raise FileNotFoundError(f"no such audio file: {src}")
@@ -163,6 +175,7 @@ def transcribe(path: str | Path) -> str:
     try:
         audio = src
         if _size(audio) > config.COMPRESS_THRESHOLD_BYTES:
+            progress("compressing the audio")
             audio = compress(audio, work_dir)
 
         seconds = duration_seconds(audio) or total_seconds
@@ -170,6 +183,7 @@ def transcribe(path: str | Path) -> str:
         too_big = _size(audio) > config.WHISPER_LIMIT_BYTES
 
         if not (too_long or too_big):
+            progress("transcribing")
             text = _transcribe_one(audio, client)
             log(f"  done: {len(text.split())} words")
             return text
@@ -177,9 +191,11 @@ def transcribe(path: str | Path) -> str:
         why = "duration" if too_long else "file size"
         log(f"  splitting on {why}")
         parts: list[str] = []
+        progress("splitting the audio")
         chunks = split(audio, work_dir)
         for i, chunk in enumerate(chunks, start=1):
             log(f"  chunk {i}/{len(chunks)} ...")
+            progress(f"part {i} of {len(chunks)}")
             parts.append(_transcribe_chunk(chunk, client, work_dir))
 
         text = "\n\n".join(p for p in parts if p)

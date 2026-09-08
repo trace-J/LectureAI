@@ -76,6 +76,18 @@ start and stop the watcher, see what's waiting in the inbox, and open recent
 lectures in Drive. It drives the same modules the CLI does, so a recording
 started here is identical to one started with `record.py`.
 
+While a lecture is being processed the panel shows the stage it is in:
+waiting for the file to finish copying, transcribing (with the part number, so
+a ten-part lecture visibly advances), summarizing, uploading, adding tasks to
+Notion. A 75 minute recording takes several minutes and ten API calls, and
+without this it just sits in the inbox looking untouched, because
+`pipeline.log` gets its line only once the whole thing is done.
+
+The watcher writes that stage to `.work/status.json` and stamps it with its
+own pid; the panel ignores a status whose pid is not the watcher currently
+running, so a watcher killed mid-lecture cannot leave a stage on screen
+forever.
+
 It binds to localhost only, and deliberately: it can start and stop processes
 and read your pipeline log, none of which belongs on the network. The setup
 row at the bottom reports which pieces are configured by presence alone, so no

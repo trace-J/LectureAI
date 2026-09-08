@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import json
 import os
 import queue
 import shutil
@@ -61,6 +62,41 @@ def write_log_line(*fields: str) -> None:
     stamp = datetime.now().isoformat(timespec="seconds")
     with config.LOG_FILE.open("a") as fh:
         fh.write("\t".join([stamp, *fields]) + "\n")
+
+
+def write_status(stage: str, file: str = "", course: str = "",
+                 detail: str = "", started: str = "") -> None:
+    """Record what the watcher is doing, for the control panel to read.
+
+    pipeline.log gets its line only once a lecture is finished, so without
+    this an 80 minute recording spends a quarter of an hour looking like it
+    is sitting untouched in the inbox.
+
+    Written to a temp file and renamed, because the panel polls this once a
+    second and must never catch a half-written file. Failures are swallowed:
+    progress reporting must not be able to take down a lecture.
+    """
+    try:
+        config.STATUS_FILE.parent.mkdir(exist_ok=True)
+        payload = {
+            "stage": stage, "file": file, "course": course, "detail": detail,
+            "started": started or datetime.now().isoformat(timespec="seconds"),
+            "updated": datetime.now().isoformat(timespec="seconds"),
+            "pid": os.getpid(),
+        }
+        temp = config.STATUS_FILE.with_suffix(".json.tmp")
+        temp.write_text(json.dumps(payload))
+        temp.replace(config.STATUS_FILE)
+    except OSError:
+        pass
+
+
+def clear_status() -> None:
+    """Say the watcher is idle again."""
+    try:
+        config.STATUS_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def is_audio(path: Path) -> bool:
@@ -124,7 +160,15 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
         log("  neither the timestamp nor the filename identifies a course; "
             "filing under UNKNOWN")
 
-    transcript = transcribe.transcribe(path)
+    began = datetime.now().isoformat(timespec="seconds")
+    status = lambda stage, detail="": write_status(  # noqa: E731
+        stage, path.name, course, detail, began)
+
+    status("transcribing", "starting")
+    transcript = transcribe.transcribe(
+        path, on_progress=lambda detail: status("transcribing", detail))
+
+    status("summarizing", f"{len(transcript.split()):,} words")
     result = summarize.summarize(transcript, course, date)
     stem = summarize.build_filename(course, date, result["topic_slug"])
 
@@ -143,6 +187,7 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
 
     # The summary goes in the course folder as a Doc; the raw transcript goes
     # one level down, so the course folder stays a clean list of study notes.
+    status("uploading", stem)
     summary = drive.upload(
         md_path, course, interactive,
         as_google_doc=config.SUMMARY_AS_GOOGLE_DOC,
@@ -170,6 +215,7 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
     # cost the recording, and the tasks are recoverable from the summary Doc.
     notion_result = None
     if notion_tasks.enabled():
+        status("notion", f"{len(result['action_items'])} action items")
         try:
             notion_result = notion_tasks.push(
                 result["action_items"], course, source_url=md_url
@@ -257,6 +303,7 @@ def run_watcher() -> int:
             seen.add(resolved)
 
             try:
+                write_status("waiting", path.name, detail="waiting for the file to finish copying")
                 wait_until_stable(path)
                 process(path, interactive=False)
             except Exception as exc:
@@ -267,6 +314,10 @@ def run_watcher() -> int:
                 if path.exists():
                     log(f"  left {path.name} in inbox for a retry")
                 seen.discard(resolved)
+            finally:
+                # Idle again either way, so the panel stops showing a stage
+                # that finished or died.
+                clear_status()
     except KeyboardInterrupt:
         log("stopping")
     finally:
@@ -292,6 +343,8 @@ def main() -> int:
             log(f"error: {exc}")
             traceback.print_exc(file=sys.stderr)
             return 1
+        finally:
+            clear_status()
         return 0
 
     try:

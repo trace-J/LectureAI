@@ -179,6 +179,56 @@ def t12():
 results.append(run("the status payload has everything the page reads", t12))
 
 
+def t12b():
+    import json as _json
+    import watch
+    status = tmp / "status.json"
+    config.STATUS_FILE = status
+    config.LOCK_FILE = tmp / "no-such.lock"
+
+    watch.write_status("transcribing", "lecture.m4a", "ACCT-4321", "part 3 of 10")
+    raw = _json.loads(status.read_text())
+    assert raw["stage"] == "transcribing" and raw["detail"] == "part 3 of 10", raw
+
+    # The panel only trusts a status stamped by the watcher that is running.
+    seen = gui._processing(raw["pid"])
+    assert seen["stage"] == "transcribing", seen
+    assert seen["file"] == "lecture.m4a" and seen["course"] == "ACCT-4321", seen
+    assert seen["elapsed"] >= 0, seen
+results.append(run("the watcher's status is read back by the panel", t12b))
+
+
+def t12c():
+    import watch
+    config.STATUS_FILE = tmp / "status.json"
+    watch.write_status("summarizing", "lecture.m4a")
+    # A watcher that died mid-lecture leaves this behind; a stale stage shown
+    # forever is worse than showing nothing.
+    assert gui._processing(None) is None, "reported progress with no watcher"
+    assert gui._processing(424242) is None, "reported another process's status"
+
+    config.STATUS_FILE.write_text("{ truncated")
+    import os as _os
+    assert gui._processing(_os.getpid()) is None, "a corrupt status file must not raise"
+
+    watch.clear_status()
+    assert not config.STATUS_FILE.exists()
+    assert gui._processing(_os.getpid()) is None
+results.append(run("stale, foreign, or corrupt status reads as idle", t12c))
+
+
+def t12d():
+    import watch, os as _os
+    config.STATUS_FILE = tmp / "status.json"
+    watch.write_status("uploading", "lecture.m4a", "ACCT-4321")
+    body = client.get("/api/status").get_json()
+    assert "processing" in body, "status payload is missing processing"
+    # No watcher is running in the test, so it must report idle.
+    assert body["processing"] is None, body["processing"]
+    watch.clear_status()
+results.append(run("the status payload carries a processing field", t12d))
+
+
 def t13():
     res = client.get("/")
     assert res.status_code == 200
