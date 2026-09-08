@@ -24,6 +24,7 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 import config
+import notion_tasks
 import summarize
 import transcribe
 import upload as drive
@@ -163,6 +164,23 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
     # Both uploads landed, so the local staging copies are redundant.
     txt_path.unlink(missing_ok=True)
     md_path.unlink(missing_ok=True)
+
+    # Notion comes last and never raises. The lecture is already safe in Drive
+    # by this point, so a Notion outage or a misconfigured database must not
+    # cost the recording, and the tasks are recoverable from the summary Doc.
+    notion_result = None
+    if notion_tasks.enabled():
+        try:
+            notion_result = notion_tasks.push(
+                result["action_items"], course, source_url=md_url
+            )
+            log(f"  notion: {notion_result['added']} added, "
+                f"{notion_result['skipped']} already there, "
+                f"{notion_result['failed']} failed")
+        except Exception as exc:
+            log(f"  notion: skipped ({exc})")
+    elif result["action_items"]:
+        log(f"  {len(result['action_items'])} action items (Notion not configured)")
 
     if config.DELETE_ORIGINAL_AFTER_UPLOAD:
         path.unlink()
