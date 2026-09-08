@@ -134,16 +134,31 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
     txt_path.write_text(transcript)
     md_path.write_text(summarize.render_markdown(result, course, date))
 
+    # Identifies this recording on the Drive files it produces, so re-running
+    # it replaces its own past output instead of colliding with a different
+    # lecture that happens to share a name.
+    rec_key = config.recording_key(mtime, length)
+    time_suffix = config.recording_time_suffix(mtime, length)
+
     # The summary goes in the course folder as a Doc; the raw transcript goes
     # one level down, so the course folder stays a clean list of study notes.
-    md_url = drive.upload(
+    summary = drive.upload(
         md_path, course, interactive,
         as_google_doc=config.SUMMARY_AS_GOOGLE_DOC,
         name=stem if config.SUMMARY_AS_GOOGLE_DOC else md_path.name,
+        recording_key=rec_key, time_suffix=time_suffix,
     )
-    txt_url = drive.upload(
-        txt_path, course, interactive, subfolder=config.TRANSCRIPT_SUBFOLDER
+    md_url = summary.url
+
+    # Name the transcript after whatever the summary ended up called, so a
+    # renamed pair stays a pair.
+    final_stem = summary.name.removesuffix(".md")
+    transcript_upload = drive.upload(
+        txt_path, course, interactive, subfolder=config.TRANSCRIPT_SUBFOLDER,
+        name=f"{final_stem}.txt",
+        recording_key=rec_key, time_suffix=time_suffix,
     )
+    txt_url = transcript_upload.url
 
     # Both uploads landed, so the local staging copies are redundant.
     txt_path.unlink(missing_ok=True)
@@ -159,13 +174,13 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
             shutil.move(str(path), str(destination))
         original = str(destination)
 
-    write_log_line(course, path.name, stem, md_url)
-    log(f"  done: {stem}")
+    write_log_line(course, path.name, final_stem, md_url)
+    log(f"  done: {final_stem}")
     log(f"  summary:    {md_url}")
     log(f"  transcript: {txt_url}")
 
     return {
-        "course": course, "date": date, "stem": stem,
+        "course": course, "date": date, "stem": final_stem,
         "summary_url": md_url, "transcript_url": txt_url,
         "original": original,
     }
