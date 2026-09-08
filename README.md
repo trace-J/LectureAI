@@ -119,18 +119,35 @@ project to an Internal audience ends it permanently.
 code in the filename and drop it back in `inbox/`. The filename fallback will
 catch it.
 
+## Re-runs, duplicates, and two-part lectures
+
+Every uploaded file is stamped with the minute its recording started, in a
+private Drive property. That stamp, not the filename, is what identifies a
+lecture, which gives three useful behaviors:
+
+- **Re-running a recording replaces its own files** rather than piling up
+  copies, even if the topic slug came back different the second time and the
+  filename changed with it.
+- **Two recordings of one class on one day both survive.** They produce the
+  same `{COURSE}_{DATE}_{Topic-Slug}`, so the second one is filed with its
+  start time appended: `ACCT-4321_2026-09-01_Job-Order-Costing_1447`.
+- **Nothing is overwritten unless it can be proven to be the same recording.**
+  A duplicate in Drive is cheap; a lost lecture is not.
+
+Files uploaded before this existed carry no stamp. The first time you re-run
+one of those lectures, the file is claimed by name and stamped from then on.
+
+The logic has regression tests that run against an in-memory fake Drive, so
+they need no network, no credentials, and cost nothing:
+
+```bash
+.venv/bin/python test_upload_collisions.py
+```
+
 ## V2 roadmap
 
 V1 is what's described above and it runs daily. These are the deferrals, in
 rough order of how soon each one bites.
-
-### Fix before recording another two-part lecture
-
-- **Filename collisions.** The upload name is
-  `{COURSE}_{DATE}_{Topic-Slug}`, and [upload.py](upload.py) replaces a file of
-  the same name rather than creating a second one. Two recordings of the same
-  class on the same day overwrite each other. The September 1 two-part lecture
-  only survived because the halves happened to produce different topic slugs.
 
 ### New capability
 

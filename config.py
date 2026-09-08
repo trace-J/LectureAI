@@ -218,6 +218,29 @@ def lecture_date(
     return recording_start(file_mtime, duration_seconds).strftime("%Y-%m-%d")
 
 
+def recording_key(
+    file_mtime: float | datetime, duration_seconds: float | None = None
+) -> str:
+    """Stable identity for one recording: the minute it started.
+
+    Stamped onto the uploaded Drive files so a re-run can find and replace what
+    it produced last time, even if the topic slug came back different and the
+    filename changed with it. Two recordings can't start in the same minute, so
+    matching keys mean the same lecture and differing keys mean different ones.
+
+    Derived from the file's mtime and duration, both fixed once recording
+    stops, so the same file always produces the same key.
+    """
+    return recording_start(file_mtime, duration_seconds).strftime("%Y-%m-%dT%H:%M")
+
+
+def recording_time_suffix(
+    file_mtime: float | datetime, duration_seconds: float | None = None
+) -> str:
+    """HHMM of the recording's start, to tell same-day recordings apart."""
+    return recording_start(file_mtime, duration_seconds).strftime("%H%M")
+
+
 def require(name: str) -> str:
     """Fetch a required setting or fail with a readable message."""
     value = globals().get(name, "")

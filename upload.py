@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -31,6 +32,18 @@ MIME_TYPES = {
     ".mp3": "audio/mpeg",
     ".wav": "audio/wav",
 }
+
+# Stamped on every uploaded file so a re-run can recognize its own past work.
+# appProperties are private to this app and invisible in the Drive UI.
+RECORDING_KEY_PROPERTY = "lectureRecordingStart"
+
+
+class Upload(NamedTuple):
+    """Where a file landed. `name` is the final name, which may differ from
+    the one asked for if another recording already held it."""
+
+    url: str
+    name: str
 
 
 def log(msg: str) -> None:
@@ -171,17 +184,56 @@ def ensure_folder(service, name: str, parent_id: str) -> str:
     return folder["id"]
 
 
-def _find_file(service, name: str, folder_id: str) -> str | None:
-    """Id of an existing file called `name` in `folder_id`, if there is one."""
+def _find_file(service, name: str, folder_id: str) -> dict | None:
+    """An existing file called `name` in `folder_id`, with its appProperties."""
     query = (
         f"name = '{_escape(name)}' and '{_escape(folder_id)}' in parents "
         f"and trashed = false"
     )
     found = service.files().list(
-        q=query, fields="files(id)", pageSize=1,
+        q=query, fields="files(id, appProperties)", pageSize=1,
         supportsAllDrives=True, includeItemsFromAllDrives=True,
     ).execute().get("files", [])
-    return found[0]["id"] if found else None
+    return found[0] if found else None
+
+
+def _find_by_recording(service, key: str, folder_id: str) -> dict | None:
+    """The file in `folder_id` that a previous run of this recording produced."""
+    query = (
+        f"appProperties has {{ key='{RECORDING_KEY_PROPERTY}' "
+        f"and value='{_escape(key)}' }} "
+        f"and '{_escape(folder_id)}' in parents and trashed = false"
+    )
+    found = service.files().list(
+        q=query, fields="files(id, name)", pageSize=1,
+        supportsAllDrives=True, includeItemsFromAllDrives=True,
+    ).execute().get("files", [])
+    return found[0] if found else None
+
+
+def _add_suffix(name: str, suffix: str) -> str:
+    """Insert `suffix` before the extension: X.txt + 1447 -> X_1447.txt.
+
+    Google Docs are stored without an extension, so a name with no dot just
+    gets the suffix appended.
+    """
+    ext = Path(name).suffix
+    return f"{name[:len(name) - len(ext)] if ext else name}_{suffix}{ext}"
+
+
+def _free_name(service, name: str, folder_id: str, suffix: str) -> str:
+    """A name in `folder_id` that no *other* recording has already taken.
+
+    Tries the time-of-day suffix first, since that reads as what it is: the
+    second recording of a class the same day. Falls back to counting only if
+    that is somehow taken too.
+    """
+    candidates = [_add_suffix(name, suffix)] if suffix else []
+    candidates += [_add_suffix(name, f"{n}") for n in range(2, 20)]
+    for candidate in candidates:
+        if _find_file(service, candidate, folder_id) is None:
+            return candidate
+    raise RuntimeError(f"could not find a free name for {name} after 20 tries")
 
 
 def upload(
@@ -192,15 +244,27 @@ def upload(
     subfolder: str = "",
     as_google_doc: bool = False,
     name: str | None = None,
-) -> str:
-    """Upload a file into the course's Drive folder. Returns its webViewLink.
+    recording_key: str | None = None,
+    time_suffix: str = "",
+) -> Upload:
+    """Upload a file into the course's Drive folder. Returns the link and name.
 
     subfolder      files into course/<subfolder>/ instead of course/
     as_google_doc  asks Drive to convert the upload into a native Google Doc
     name           overrides the Drive filename (a Doc wants no extension)
+    recording_key  config.recording_key() for the source recording
+    time_suffix    config.recording_time_suffix(), used to break a collision
 
-    Re-uploading the same name replaces the existing file's contents rather
-    than leaving two copies behind, so re-running a lecture is safe.
+    Replaces a file only when it can prove the file came from this same
+    recording, matched on `recording_key` rather than on the filename. Two
+    recordings of one class on one day produce the same
+    COURSE_DATE_Topic-Slug, and overwriting on a name match silently destroyed
+    the first one. Anything that can't be proven to be the same recording gets
+    a name of its own, because a duplicate in Drive is cheap and a lost lecture
+    is not.
+
+    Without a recording_key it falls back to matching on name alone, which is
+    the old behavior and is fine for one-off CLI uploads.
     """
     path = Path(local_path).expanduser().resolve()
     if not path.is_file():
@@ -216,18 +280,47 @@ def upload(
     drive_name = name or path.name
     mime = MIME_TYPES.get(path.suffix.lower(), "application/octet-stream")
     media = MediaFileUpload(str(path), mimetype=mime, resumable=True)
-    existing = _find_file(service, drive_name, folder_id)
 
-    if existing:
+    replacing = None
+
+    # A previous run of this same recording, wherever its slug happened to
+    # land. Found by key, so a changed topic slug still resolves to one file.
+    if recording_key:
+        prior = _find_by_recording(service, recording_key, folder_id)
+        if prior:
+            replacing = prior["id"]
+            if prior.get("name") != drive_name:
+                log(f"  same recording, new name: {prior.get('name')} -> {drive_name}")
+
+    if replacing is None:
+        clash = _find_file(service, drive_name, folder_id)
+        if clash:
+            clash_key = (clash.get("appProperties") or {}).get(RECORDING_KEY_PROPERTY)
+            if not recording_key or clash_key is None or clash_key == recording_key:
+                # No key on either side means a file from before keys existed,
+                # or a plain CLI upload. Treat the name as the identity, as
+                # this always used to.
+                replacing = clash["id"]
+            else:
+                taken = drive_name
+                drive_name = _free_name(service, drive_name, folder_id, time_suffix)
+                log(f"  {taken} belongs to another recording; "
+                    f"filing this one as {drive_name}")
+
+    body: dict = {"name": drive_name}
+    if recording_key:
+        body["appProperties"] = {RECORDING_KEY_PROPERTY: recording_key}
+
+    if replacing:
         log(f"  replacing {drive_name} in {where}/")
         result = service.files().update(
-            fileId=existing, media_body=media,
+            fileId=replacing, body=body, media_body=media,
             fields="id, webViewLink", supportsAllDrives=True,
         ).execute()
     else:
         kind = "Google Doc" if as_google_doc else path.suffix.lstrip(".")
         log(f"  uploading {drive_name} to {where}/ as {kind}")
-        body = {"name": drive_name, "parents": [folder_id]}
+        body["parents"] = [folder_id]
         if as_google_doc:
             # Drive converts the uploaded markdown into a native Doc.
             body["mimeType"] = GOOGLE_DOC_MIME
@@ -236,7 +329,7 @@ def upload(
             fields="id, webViewLink", supportsAllDrives=True,
         ).execute()
 
-    return result["webViewLink"]
+    return Upload(result["webViewLink"], drive_name)
 
 
 def main() -> int:
@@ -256,7 +349,7 @@ def main() -> int:
             return 0
         if not args.file or not args.course:
             parser.error("file and course are required unless --login is given")
-        print(upload(args.file, args.course))
+        print(upload(args.file, args.course).url)
     except HttpError as exc:
         detail = getattr(exc, "reason", None) or str(exc)
         log(f"error: Drive API returned {exc.status_code}: {detail}")
