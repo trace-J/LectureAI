@@ -12,6 +12,9 @@ once both uploads land.
 ## How a recording flows through
 
 ```
+gui.py              a local control panel over everything below
+   |
+   v
 record.py           records from this Mac's mic into .work/, then moves the
    |                finished file into inbox/ (or sync one from your phone)
    v
@@ -61,6 +64,28 @@ That caches `token.json`. The app uses the `drive.file` scope, which only
 reaches files it created, so it makes its own "Lecture Notes" folder in My Drive
 rather than writing into one you made by hand. Move that folder anywhere
 afterward; access follows it. Its id is cached in `.drive_root`.
+
+## The control panel
+
+```bash
+.venv/bin/python gui.py
+```
+
+Then open <http://127.0.0.1:5173>. One page to start and stop a recording,
+start and stop the watcher, see what's waiting in the inbox, and open recent
+lectures in Drive. It drives the same modules the CLI does, so a recording
+started here is identical to one started with `record.py`.
+
+It binds to localhost only, and deliberately: it can start and stop processes
+and read your pipeline log, none of which belongs on the network. The setup
+row at the bottom reports which pieces are configured by presence alone, so no
+key or token is ever sent to the browser.
+
+Two limits worth knowing. Recording state lives in the panel's memory, so
+quitting `gui.py` mid-recording orphans the ffmpeg process and leaves the file
+in `.work/` rather than filing it: stop the recording before you quit. The
+watcher is the opposite, and on purpose: it is started detached, so closing
+the panel leaves a lecture midway through transcription alone to finish.
 
 ## Recording on this Mac
 
@@ -263,6 +288,7 @@ credentials, or an API key, and neither costs anything to run.
 .venv/bin/python test_upload_collisions.py   # collisions, re-runs, two-part days
 .venv/bin/python test_record.py              # device selection and naming
 .venv/bin/python test_notion_tasks.py        # property mapping and de-duplication
+.venv/bin/python test_gui.py                 # log parsing and API guard rails
 ```
 
 ## V2 roadmap
@@ -276,7 +302,6 @@ in rough order of how soon each one bites.
 - **Cross-lecture study guides.** Synthesize a whole unit rather than one
   lecture. The highest-value item for actually studying, and the one that most
   wants a database underneath it.
-- **A GUI.** CLI-only today.
 - **A database.** State currently lives in `pipeline.log` and the filesystem.
 
 Dropped: **slide OCR**, decided against on 2026-09-08 as not worth the
