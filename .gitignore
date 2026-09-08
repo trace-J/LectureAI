@@ -13,6 +13,7 @@ inbox/*
 processed/*
 !inbox/.gitkeep
 !processed/.gitkeep
+.work/
 pipeline.log
 .watcher.lock
 *.txt

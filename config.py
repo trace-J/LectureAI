@@ -91,6 +91,29 @@ TRANSCRIPT_SUBFOLDER = "Transcripts"
 # processed/. Set to False to keep the originals.
 DELETE_ORIGINAL_AFTER_UPLOAD = True
 
+# --- Recording (record.py) ------------------------------------------------
+
+# Which microphone to record from. Either a substring of the device name as
+# ffmpeg reports it ("MacBook Pro") or an avfoundation index ("1").
+#
+# Prefer a name. Indices are assigned in connection order, so plugging in a
+# headset or waking a nearby iPhone renumbers them: on this Mac index 0 is
+# often the iPhone's mic rather than the built-in one, and a lecture recorded
+# through a phone that then leaves the room is a lecture you don't have.
+RECORD_DEVICE = os.getenv("RECORD_DEVICE", "MacBook Pro Microphone")
+
+# Names to fall back through if RECORD_DEVICE matches nothing attached.
+RECORD_DEVICE_FALLBACKS = ("MacBook Pro Microphone", "Built-in", "Microphone")
+
+# Mono at 16 kHz is what the transcription models resample to anyway, so
+# anything richer is bytes spent on quality that gets discarded.
+RECORD_SAMPLE_RATE = 16000
+RECORD_CHANNELS = 1
+RECORD_BITRATE = "64k"
+
+# Stop on your own; this only guards against a recorder left running all night.
+RECORD_MAX_MINUTES = 240
+
 # --- Watcher ---
 
 # Phone sync writes incrementally, so a file isn't ready the moment it appears.
