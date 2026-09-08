@@ -208,12 +208,30 @@ Then confirm it can see your database and worked out the right properties:
 ```
 
 That prints every property in your database and which role it was matched to.
-Your database is yours, so nothing about its shape is assumed: the title is
-the only property Notion guarantees, and a due date, course, type, and source
-link are used **only if** something suitable already exists. No property is
-ever created, and your `Status` property is left alone so new tasks get
-whatever default your workflow already uses. If a guess is wrong, override it
-by exact name in `.env`:
+
+If it reports that no date property matched, your database has nowhere to put
+a deadline. Add what's needed:
+
+```bash
+.venv/bin/python notion_tasks.py --setup --dry-run   # see what it would add
+.venv/bin/python notion_tasks.py --setup
+```
+
+That adds `Due` (date), `Course` (select, pre-filled with the codes in
+`SCHEDULE`), and `Source` (url) **only where the role isn't already covered**.
+It never touches a property you already have: the request is built from
+scratch and mentions only new names, because Notion deletes a property that is
+sent as null. A database that already has a `Deadline` field keeps it and gets
+no `Due`.
+
+Apart from `--setup`, nothing about your database's shape is assumed. The
+title is the only property Notion guarantees, and a due date, course, type,
+and source link are used **only if** something suitable exists. Your `Status`
+property is left alone so new tasks get whatever default your workflow already
+uses. Each property serves one role only: if a single select has to cover both
+course and type, course wins, since knowing the class matters more than
+knowing it was a reading. If a guess is wrong, override it by exact name in
+`.env`:
 
 ```
 NOTION_PROP_DUE=Deadline
