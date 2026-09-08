@@ -27,6 +27,37 @@ class KeyTerm(BaseModel):
     definition: str = Field(description="One line, in plain language.")
 
 
+class ActionItem(BaseModel):
+    """One thing the student has to do, with a date if the lecture gave one.
+
+    Every field is a plain string rather than a date or an enum. The schema is
+    enforced server-side, and a nullable or enum-typed field is a place for
+    that enforcement to reject a response the pipeline could otherwise have
+    used. An empty string is unambiguous and normalizing in Python is free.
+    """
+
+    task: str = Field(
+        description=(
+            "What the student has to do, phrased as an instruction to "
+            "themselves: 'Read chapter 7', 'Submit the case memo'. Do not "
+            "include the due date here."
+        )
+    )
+    due_date: str = Field(
+        description=(
+            "The due date as YYYY-MM-DD. Resolve anything relative against "
+            "the lecture date given above, so 'next Thursday' becomes a real "
+            "date. Use an empty string if the instructor gave no deadline at "
+            "all. Never guess a date that was not stated or implied."
+        )
+    )
+    kind: str = Field(
+        description=(
+            "One of: assignment, reading, quiz, exam, project, other."
+        )
+    )
+
+
 class LectureSummary(BaseModel):
     """Schema the model's response is constrained to.
 
@@ -54,11 +85,10 @@ class LectureSummary(BaseModel):
     key_terms: list[KeyTerm] = Field(
         description="Terms a student would need defined to follow the lecture."
     )
-    action_items: list[str] = Field(
+    action_items: list[ActionItem] = Field(
         description=(
-            "Any assignment, reading, quiz, exam, or deadline mentioned, with "
-            "the date when it was stated. Empty list if none were mentioned. "
-            "Never invent one."
+            "Any assignment, reading, quiz, exam, or deadline mentioned. "
+            "Empty list if none were mentioned. Never invent one."
         )
     )
 
@@ -80,7 +110,11 @@ on the exam, or flagged as commonly misunderstood deserves prominence.
 - Skip attendance, scheduling chatter, and technical difficulties unless they \
 carry a deadline or a requirement.
 - Do not invent action items. If the instructor never mentioned a deadline, \
-return an empty list."""
+return an empty list.
+- For each action item, resolve any relative deadline against the lecture date \
+you are given: "next Thursday", "a week from today" and "before the exam" all \
+become a real YYYY-MM-DD. If the instructor genuinely set no deadline, leave \
+the date empty rather than inventing one."""
 
 USER_TEMPLATE = """Course: {course}
 Date: {date}
@@ -115,6 +149,59 @@ def slugify_topic(raw: str) -> str:
 def build_filename(course: str, date: str, topic_slug: str) -> str:
     """{COURSE}_{YYYY-MM-DD}_{Topic-Slug} — course comes from the schedule."""
     return f"{course}_{date}_{slugify_topic(topic_slug)}"
+
+
+ACTION_KINDS = {"assignment", "reading", "quiz", "exam", "project", "other"}
+
+
+def _clean_date(raw: str) -> str:
+    """A real YYYY-MM-DD, or empty. Guards against a plausible-looking date."""
+    text = str(raw or "").strip()[:10]
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError:
+        return ""
+
+
+def normalize_actions(raw_items, course: str, date: str) -> list[dict]:
+    """Clean up action items and give the undated ones a due date.
+
+    An item the instructor never dated is dated to the next class meeting,
+    since that is when a reading or problem set is usually wanted. `date_source`
+    records which happened, so an assumption is never presented as something
+    the instructor said.
+    """
+    items: list[dict] = []
+    for raw in raw_items or []:
+        if isinstance(raw, str):
+            entry = {"task": raw, "due_date": "", "kind": "other"}
+        elif isinstance(raw, dict):
+            entry = raw
+        else:  # a pydantic ActionItem
+            entry = {
+                "task": getattr(raw, "task", ""),
+                "due_date": getattr(raw, "due_date", ""),
+                "kind": getattr(raw, "kind", "other"),
+            }
+
+        task = str(entry.get("task", "")).strip()
+        if not task:
+            continue
+
+        kind = str(entry.get("kind", "other")).strip().lower()
+        if kind not in ACTION_KINDS:
+            kind = "other"
+
+        due = _clean_date(entry.get("due_date", ""))
+        if due:
+            source = "stated"
+        else:
+            due = config.next_class_meeting(course, date) or ""
+            source = "assumed" if due else "none"
+
+        items.append({"task": task, "due_date": due, "kind": kind,
+                      "date_source": source})
+    return items
 
 
 def _save_failed_response(raw: str, course: str, date: str) -> None:
@@ -153,13 +240,12 @@ def _parse(raw: str) -> dict:
         elif isinstance(item, str) and item.strip():
             terms.append({"term": item.strip(), "definition": ""})
 
-    actions = [str(a).strip() for a in (data.get("action_items") or []) if str(a).strip()]
-
     return {
         "summary_md": str(data.get("summary_md", "")).strip(),
         "topic_slug": slugify_topic(str(data.get("topic_slug", ""))),
         "key_terms": terms,
-        "action_items": actions,
+        # Left raw here; summarize() normalizes once it knows course and date.
+        "action_items": data.get("action_items") or [],
     }
 
 
@@ -194,7 +280,7 @@ def summarize(transcript: str, course: str, date: str) -> dict:
                 {"term": t.term.strip(), "definition": t.definition.strip()}
                 for t in parsed.key_terms if t.term.strip()
             ],
-            "action_items": [a.strip() for a in parsed.action_items if a.strip()],
+            "action_items": normalize_actions(parsed.action_items, course, date),
         }
     else:
         # Shouldn't happen with a schema, but a truncated or refused response
@@ -207,12 +293,28 @@ def summarize(transcript: str, course: str, date: str) -> dict:
                 f"model returned nothing usable (stop_reason={response.stop_reason})"
             )
         result = _parse(raw)
+        result["action_items"] = normalize_actions(
+            result["action_items"], course, date
+        )
         _save_failed_response(raw, course, date)
     log(f"  topic: {result['topic_slug']} | "
         f"{len(result['key_terms'])} terms | "
         f"{len(result['action_items'])} action items | "
         f"{response.usage.input_tokens} in / {response.usage.output_tokens} out tokens")
     return result
+
+
+def render_action(item: dict | str) -> str:
+    """One action item as a line of text, with its date and how we got it."""
+    if isinstance(item, str):
+        return item
+    task = item.get("task", "").strip()
+    due = item.get("due_date", "")
+    if not due:
+        return task
+    if item.get("date_source") == "assumed":
+        return f"{task} (due {due}, assumed: next class)"
+    return f"{task} (due {due})"
 
 
 def render_markdown(result: dict, course: str, date: str) -> str:
@@ -235,7 +337,8 @@ def render_markdown(result: dict, course: str, date: str) -> str:
 
     lines += ["## Action items", ""]
     if result["action_items"]:
-        lines += [f"- [ ] {a}" for a in result["action_items"]]
+        for a in result["action_items"]:
+            lines.append(f"- [ ] {render_action(a)}")
     else:
         lines.append("_None mentioned in this lecture._")
     lines.append("")

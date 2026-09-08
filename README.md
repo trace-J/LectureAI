@@ -30,6 +30,9 @@ inbox/lecture.m4a
    |  upload.py     ACCT-4321/ACCT-4321_2026-09-03_Job-Order-Costing  (Doc)
    |                ACCT-4321/Transcripts/..._Job-Order-Costing.txt
    v
+   |  notion_tasks  action items become dated tasks in your Notion to-do
+   |                list (skipped entirely unless NOTION_TOKEN is set)
+   v
 pipeline.log        one line per lecture: timestamp, course, source file, URL
 ```
 
@@ -176,6 +179,62 @@ lecture, which gives three useful behaviors:
 Files uploaded before this existed carry no stamp. The first time you re-run
 one of those lectures, the file is claimed by name and stamped from then on.
 
+## Action items in Notion
+
+Every deadline a lecture mentions becomes a task in your Notion to-do
+database, dated. This is optional: with `NOTION_TOKEN` unset the pipeline
+skips Notion and behaves exactly as it did before.
+
+**Setup**, which is mostly in the browser:
+
+1. Create an internal integration at
+   [notion.so/my-integrations](https://www.notion.so/my-integrations) and copy
+   its secret.
+2. Open your to-do database in Notion, and under the `...` menu choose
+   **Connections** and add that integration. Without this step every request
+   comes back 404, because the integration cannot see a database nobody shared
+   with it.
+3. Put both values in `.env`:
+
+```
+NOTION_TOKEN=ntn_...
+NOTION_DATABASE=https://www.notion.so/...   # just paste the database URL
+```
+
+Then confirm it can see your database and worked out the right properties:
+
+```bash
+.venv/bin/python notion_tasks.py --check
+```
+
+That prints every property in your database and which role it was matched to.
+Your database is yours, so nothing about its shape is assumed: the title is
+the only property Notion guarantees, and a due date, course, type, and source
+link are used **only if** something suitable already exists. No property is
+ever created, and your `Status` property is left alone so new tasks get
+whatever default your workflow already uses. If a guess is wrong, override it
+by exact name in `.env`:
+
+```
+NOTION_PROP_DUE=Deadline
+NOTION_PROP_COURSE=Class
+```
+
+**Dates.** A deadline the instructor actually stated is used as-is, with
+anything relative ("next Thursday") resolved against the lecture date. An item
+with no stated deadline is dated to the **next time that class meets**,
+computed from `SCHEDULE`, and labeled `assumed` in the Drive summary so you can
+tell the two apart. Nothing lands undated, because an undated task sinks in a
+list sorted by date.
+
+**Re-runs don't duplicate.** Before adding anything, the database is checked
+for a task with the same title and due date. Re-processing a lecture adds
+nothing the second time.
+
+**Failures are contained.** Notion runs last, after Drive, and never raises. A
+bad token or an outage costs you the Notion tasks for that lecture and nothing
+else; the action items are still in the summary Doc.
+
 ## Tests
 
 Both suites are self-contained. The upload tests run against an in-memory fake
@@ -185,6 +244,7 @@ credentials, or an API key, and neither costs anything to run.
 ```bash
 .venv/bin/python test_upload_collisions.py   # collisions, re-runs, two-part days
 .venv/bin/python test_record.py              # device selection and naming
+.venv/bin/python test_notion_tasks.py        # property mapping and de-duplication
 ```
 
 ## V2 roadmap
@@ -195,13 +255,14 @@ in rough order of how soon each one bites.
 ### New capability
 
 - **Speaker diarization.** Separate the instructor from student questions.
-- **Slide OCR.** Pull text off the slides and fold it into the summary.
 - **Cross-lecture study guides.** Synthesize a whole unit rather than one
   lecture. The highest-value item for actually studying, and the one that most
   wants a database underneath it.
-- **Notion integration.** A destination besides Drive.
 - **A GUI.** CLI-only today.
 - **A database.** State currently lives in `pipeline.log` and the filesystem.
+
+Dropped: **slide OCR**, decided against on 2026-09-08 as not worth the
+complexity.
 
 ### Loose ends
 

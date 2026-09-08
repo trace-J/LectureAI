@@ -91,6 +91,28 @@ TRANSCRIPT_SUBFOLDER = "Transcripts"
 # processed/. Set to False to keep the originals.
 DELETE_ORIGINAL_AFTER_UPLOAD = True
 
+# --- Notion (notion_tasks.py) ---------------------------------------------
+
+# Internal integration secret from notion.so/my-integrations. Leave it unset
+# and the pipeline simply skips Notion; nothing else changes.
+NOTION_TOKEN = os.getenv("NOTION_TOKEN", "")
+
+# The to-do database action items are added to. Paste the whole Notion URL;
+# the id is pulled out of it.
+NOTION_DATABASE = os.getenv("NOTION_DATABASE", "")
+
+# Pinned deliberately. 2025-09-03 split databases from data sources, changing
+# the page parent and the query endpoint, so the version and the request
+# shapes in notion_tasks.py have to move together.
+NOTION_VERSION = os.getenv("NOTION_VERSION", "2026-03-11")
+
+# Optional overrides if the automatic property matching picks wrong. Each is
+# the exact property name in your database.
+NOTION_PROP_DUE = os.getenv("NOTION_PROP_DUE", "")
+NOTION_PROP_COURSE = os.getenv("NOTION_PROP_COURSE", "")
+NOTION_PROP_KIND = os.getenv("NOTION_PROP_KIND", "")
+NOTION_PROP_SOURCE = os.getenv("NOTION_PROP_SOURCE", "")
+
 # --- Recording (record.py) ------------------------------------------------
 
 # Which microphone to record from. Either a substring of the device name as
@@ -239,6 +261,34 @@ def lecture_date(
 ) -> str:
     """YYYY-MM-DD of the class, used in output filenames."""
     return recording_start(file_mtime, duration_seconds).strftime("%Y-%m-%d")
+
+
+def next_class_meeting(
+    course: str, after: datetime | str, within_days: int = 21
+) -> str | None:
+    """The next date `course` meets after `after`, as YYYY-MM-DD.
+
+    Used to date an action item the instructor never put a deadline on.
+    Readings and problem sets are usually due the next time the class meets,
+    which beats leaving the task undated and letting it sink in a to-do list
+    sorted by date. Returns None for a course that isn't in SCHEDULE, or one
+    that doesn't meet again inside `within_days`.
+    """
+    if isinstance(after, str):
+        try:
+            after = datetime.strptime(after[:10], "%Y-%m-%d")
+        except ValueError:
+            return None
+
+    meeting_days = {day for (day, _hour), code in SCHEDULE.items() if code == course}
+    if not meeting_days:
+        return None
+
+    for offset in range(1, within_days + 1):
+        candidate = after + timedelta(days=offset)
+        if candidate.strftime("%a") in meeting_days:
+            return candidate.strftime("%Y-%m-%d")
+    return None
 
 
 def recording_key(

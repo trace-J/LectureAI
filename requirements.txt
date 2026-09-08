@@ -3,5 +3,7 @@ anthropic>=0.40
 google-api-python-client>=2.150
 google-auth-oauthlib>=1.2
 google-auth-httplib2>=0.2
+pydantic>=2.0
 python-dotenv>=1.0
+requests>=2.31
 watchdog>=5.0
