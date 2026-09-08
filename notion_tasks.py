@@ -26,9 +26,19 @@ import config
 API = "https://api.notion.com/v1"
 TIMEOUT = 30
 
-# A Notion id is 32 hex characters, with or without dashes, and a database URL
-# carries it right before an optional ?v= view id.
-ID_RE = re.compile(r"([0-9a-fA-F]{32}|[0-9a-fA-F-]{36})")
+# A Notion id is 32 hex characters, written bare or as a dashed UUID.
+#
+# Both patterns are anchored so they can't match part of the page title that
+# Notion puts in the URL ahead of the id. A title like "Deface Added Beef
+# Cafe" is hex all the way through, and a loose pattern happily matched the
+# title plus the front of the real id and returned a database that doesn't
+# exist.
+UUID_RE = re.compile(
+    r"(?<![0-9a-fA-F])"
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+    r"(?![0-9a-fA-F])"
+)
+HEX32_RE = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}(?![0-9a-fA-F])")
 
 # How property names are matched when the database isn't explicitly mapped.
 # First hit wins, so the more specific names come first.
@@ -52,14 +62,22 @@ def enabled() -> bool:
 
 
 def extract_id(value: str) -> str:
-    """Pull a Notion id out of a URL, or pass a bare id through."""
-    match = ID_RE.search(str(value or "").split("?")[0])
-    if not match:
+    """Pull a Notion id out of a URL, or pass a bare id through.
+
+    The query string goes first, since that is where the ?v= view id lives and
+    it looks exactly like a database id. Of what remains, the last match wins:
+    Notion puts the id at the end of the path, after the workspace and the
+    page title.
+    """
+    path = str(value or "").split("?")[0].split("#")[0]
+    found = list(UUID_RE.finditer(path)) + list(HEX32_RE.finditer(path))
+    if not found:
         raise NotionError(
-            f"could not find a Notion id in {value!r}. Paste the database URL "
-            f"from your browser, or the 32-character id."
+            f"could not find a Notion id in {value!r}. Open the database in "
+            f"Notion, copy the URL from your browser, and paste the whole "
+            f"thing."
         )
-    return match.group(1).replace("-", "")
+    return max(found, key=lambda m: m.start()).group(0).replace("-", "")
 
 
 def _request(method: str, path: str, payload: dict | None = None) -> dict:
