@@ -241,6 +241,46 @@ def t13():
 results.append(run("the page renders with the brand font, color, and logo", t13))
 
 
+def t14():
+    html = client.get("/").get_data(as_text=True)
+    for choice in ("system", "light", "dark"):
+        assert f'data-theme-choice="{choice}"' in html, f"{choice} theme button missing"
+    assert 'localStorage.getItem("lectureai-theme")' in html, "theme is not remembered"
+results.append(run("the page offers system, light, and dark", t14))
+
+
+def t15():
+    html = client.get("/").get_data(as_text=True)
+    # The saved theme must be applied before the stylesheet is parsed,
+    # otherwise the page paints the OS theme first and visibly corrects.
+    script = html.find("lectureai-theme")
+    style = html.find("<style>")
+    assert script != -1 and style != -1, "missing script or style"
+    assert script < style, "theme script runs after the stylesheet; page will flash"
+results.append(run("the saved theme is applied before first paint", t15))
+
+
+def t16():
+    html = client.get("/").get_data(as_text=True)
+    # Both halves of every themed token live in one light-dark() call, so a
+    # colour cannot be updated in one theme and forgotten in the other.
+    assert "color-scheme: light dark" in html, "root does not follow the OS by default"
+    for choice in ("light", "dark"):
+        assert f':root[data-theme="{choice}"]' in html, f"no explicit {choice} override"
+        assert f"color-scheme: {choice};" in html, f"{choice} does not set color-scheme"
+    assert "light-dark(#faf9fc, #131019)" in html, "background is not theme-aware"
+results.append(run("themes are driven by color-scheme, not a second palette", t16))
+
+
+def t17():
+    html = client.get("/").get_data(as_text=True)
+    # .row sets display:flex, which outranks the browser's [hidden] rule, so
+    # the idle processing row stayed on screen reading "Working" forever.
+    assert "[hidden] { display: none !important; }" in html, \
+        "hidden elements will stay visible"
+results.append(run("[hidden] beats the display rules that broke it", t17))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
