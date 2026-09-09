@@ -252,6 +252,10 @@ Then confirm it can see your database and worked out the right properties:
 
 That prints every property in your database and which role it was matched to.
 
+`--setup` below only applies to `NOTION_TARGET=database`; it refuses while
+the target is `weekly`, since checkboxes never read those properties and
+adding them would only leave clutter in your database.
+
 If it reports that no date property matched, your database has nowhere to put
 a deadline. Add what's needed:
 

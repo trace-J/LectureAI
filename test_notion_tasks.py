@@ -542,6 +542,20 @@ def t26():
 results.append(run("push() routes to the weekly page when told to", t26))
 
 
+def t27():
+    reset_overrides()
+    config.NOTION_TARGET = "weekly"
+    fake = FakeWeekly(); nt._request = fake
+    try:
+        nt.setup_properties()
+    except nt.NotionError as exc:
+        assert "weekly" in str(exc).lower(), exc
+    else:
+        raise AssertionError("--setup should refuse while the target is weekly")
+    reset_overrides()
+results.append(run("--setup refuses to add row properties the weekly target ignores", t27))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
