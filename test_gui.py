@@ -451,6 +451,29 @@ def t24():
 results.append(run("Drive login refuses to double up and disconnect removes the token", t24))
 
 
+def t25():
+    # Flask's run() reads a .env from the current directory by default, which
+    # let a checkout's .env override the home directory's settings. The panel
+    # must start with that off, on localhost, and without a schedule.
+    captured = {}
+    real_run, real_open = gui.app.run, gui._open_browser_later
+    gui.app.run = lambda **kw: captured.update(kw)
+    gui._open_browser_later = lambda url, delay=0: captured.update(opened=url)
+    try:
+        point_config_at(tmp / "another-empty-home")
+        assert gui.main(["--no-browser", "--port", "5555"]) == 0
+        assert captured["load_dotenv"] is False, captured
+        assert captured["host"] == "127.0.0.1" and captured["port"] == 5555, captured
+        assert "opened" not in captured, "--no-browser still opened a browser"
+        captured.clear()
+        assert gui.main(["--port", "5556"]) == 0
+        assert captured["opened"].endswith(":5556/setup"), "an empty home must land on setup"
+    finally:
+        gui.app.run, gui._open_browser_later = real_run, real_open
+        point_config_at(setup_home)
+results.append(run("the panel starts without Flask's cwd .env, on localhost, landing on setup", t25))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

@@ -457,7 +457,12 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr, flush=True)
     if not args.no_browser:
         _open_browser_later(url)
-    app.run(host=args.host, port=args.port, debug=False, threaded=True)
+    # load_dotenv=False: Flask would otherwise read a .env from the current
+    # directory into the environment, so running the panel from a checkout
+    # (or any folder with a stray .env) silently overrode the home directory's
+    # settings. The only .env that counts is the one config already loaded.
+    app.run(host=args.host, port=args.port, debug=False, threaded=True,
+            load_dotenv=False)
     return 0
 
 
