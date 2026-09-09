@@ -211,7 +211,13 @@ class Wizard:
                     return
                 self.say(f"  no device numbered {answer}")
                 continue
-            if any(answer.lower() in n.lower() for _i, n in devices):
+            matches = [n for _i, n in devices if answer.lower() in n.lower()]
+            if len(matches) == 1:
+                # Store the full name the substring picked out, so the file
+                # reads unambiguously and a later rerun marks it as current.
+                values["RECORD_DEVICE"] = matches[0]
+                return
+            if matches:
                 values["RECORD_DEVICE"] = answer
                 return
             self.say(f"  nothing attached matches {answer!r}; try a number from the list")

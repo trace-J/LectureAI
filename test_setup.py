@@ -330,6 +330,20 @@ def t17():
 results.append(run("with no devices to list, setup keeps going with the default mic", t17))
 
 
+def t17b():
+    home = Path(tempfile.mkdtemp())
+    w, _ = wizard(home, ["k1", "k2", "macbook", "Tue 14 ACCT-4321", "", "n"])
+    assert w.run() == 0
+    env = setup_wizard.read_env(home / ".env")
+    # A substring that picks out one device is stored as that device's name.
+    assert env["RECORD_DEVICE"] == "MacBook Pro Microphone", env
+    w, _ = wizard(home, ["", "", "Microphone", "", "n"])
+    assert w.run() == 0
+    # One that matches several stays a substring, which is what config expects.
+    assert setup_wizard.read_env(home / ".env")["RECORD_DEVICE"] == "Microphone"
+results.append(run("a unique mic substring is stored as the full device name", t17b))
+
+
 def t18():
     home = Path(tempfile.mkdtemp())
     values = {"OPENAI_API_KEY": "a b#c", "ANTHROPIC_API_KEY": 'q"uote',
