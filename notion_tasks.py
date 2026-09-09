@@ -561,6 +561,14 @@ def setup_properties(dry_run: bool = False) -> dict:
     A role already covered by a differently named property is left alone: a
     database with "Deadline" does not also get a "Due".
     """
+    if config.NOTION_TARGET == "weekly":
+        raise NotionError(
+            "NOTION_TARGET is 'weekly', so tasks are written as checkboxes in "
+            "the weekly page and Due/Course/Source rows are never used. Adding "
+            "them would just be clutter. Set NOTION_TARGET=database first if "
+            "you actually want rows."
+        )
+
     data_source_id, title = resolve_data_source()
     schema = get_schema(data_source_id)
     mapping = map_properties(schema)
