@@ -110,6 +110,12 @@ NOTION_DATABASE = os.getenv("NOTION_DATABASE", "")
 # shapes in notion_tasks.py have to move together.
 NOTION_VERSION = os.getenv("NOTION_VERSION", "2026-03-11")
 
+# Where action items go: "weekly" writes a checkbox into the day column of
+# the weekly page, which is the list you actually tick; "database" creates a
+# row with Due/Course/Source fields instead. They are different surfaces, and
+# a row is invisible from the weekly page.
+NOTION_TARGET = os.getenv("NOTION_TARGET", "weekly")
+
 # Optional overrides if the automatic property matching picks wrong. Each is
 # the exact property name in your database.
 NOTION_PROP_DUE = os.getenv("NOTION_PROP_DUE", "")

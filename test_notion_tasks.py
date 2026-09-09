@@ -45,6 +45,7 @@ def reset_overrides():
     # every request it would make is stubbed below.
     config.NOTION_DATABASE = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
     config.NOTION_TOKEN = "test-token"
+    config.NOTION_TARGET = "database"
     config.NOTION_PROP_DUE = ""
     config.NOTION_PROP_COURSE = ""
     config.NOTION_PROP_KIND = ""
@@ -343,6 +344,202 @@ def t16():
     assert out["added"] == 2, out
     assert list(fake.created[0]["properties"]) == ["Name"], fake.created[0]
 results.append(run("a database without a date property still gets the tasks", t16))
+
+
+# --- weekly page --------------------------------------------------------
+
+from datetime import date  # noqa: E402
+
+
+def t17():
+    cases = [
+        ("Sep 9 - Sep 13",           date(2026, 9, 10), (date(2026,9,9), date(2026,9,13))),
+        ("Sep 9 - Sep 13",           date(2026, 9, 14), None),
+        ("Sep 9 \u2013 13",           date(2026, 9, 10), (date(2026,9,9), date(2026,9,13))),
+        ("September 28 - October 4", date(2026, 10, 1), (date(2026,9,28), date(2026,10,4))),
+        # A week that straddles New Year has to land in the right two years.
+        ("Dec 28 - Jan 3",           date(2027, 1, 1),  (date(2026,12,28), date(2027,1,3))),
+        ("Dec 28 - Jan 3",           date(2026, 12, 29),(date(2026,12,28), date(2027,1,3))),
+        ("Weekly To-do List",        date(2026, 9, 10), None),
+        ("",                         date(2026, 9, 10), None),
+    ]
+    for text, near, want in cases:
+        got = nt.parse_week_range(text, near)
+        assert got == want, f"{text!r} near {near}: {got} != {want}"
+results.append(run("week headings parse, including across New Year", t17))
+
+
+def _as_read(todo: dict) -> dict:
+    """Echo a to_do the way Notion does: writes send text.content, reads come
+    back carrying plain_text too. Without this the fake reads back blank and
+    nothing is ever recognised as already present."""
+    out = dict(todo)
+    out["rich_text"] = [
+        dict(part, plain_text=part.get("text", {}).get("content", ""))
+        for part in todo.get("rich_text", [])
+    ]
+    return out
+
+
+class FakeWeekly:
+    """A weekly page: a heading and seven day columns of blank checkboxes."""
+
+    DAYS = (" Mon", " Tues", " Wed", " Thur", " Fri", " Sat", " Sun")
+
+    def __init__(self, heading="Sep 9 - Sep 13", blanks=3):
+        self.blocks = {}
+        self.appended = []
+        self.updated = []
+        self.page = "page-1"
+        head = {"id": "h1", "type": "heading_1",
+                "heading_1": {"rich_text": [{"plain_text": heading}]}}
+        cols = []
+        for i, label in enumerate(self.DAYS):
+            kids = [{"id": f"h-{i}", "type": "heading_3",
+                     "heading_3": {"rich_text": [{"plain_text": label}]}}]
+            for b in range(blanks):
+                kids.append({"id": f"todo-{i}-{b}", "type": "to_do",
+                             "to_do": {"rich_text": [], "checked": False}})
+            self.blocks[f"col-{i}"] = kids
+            cols.append({"id": f"col-{i}", "type": "column"})
+        self.blocks["cl-1"] = cols
+        self.blocks[self.page] = [head, {"id": "cl-1", "type": "column_list"}]
+
+    def __call__(self, method, path, payload=None):
+        if method == "GET" and path.startswith("/databases/"):
+            return {"title": [{"plain_text": "To-Do list"}],
+                    "data_sources": [{"id": "ds-1", "name": "To-Do list"}]}
+        if method == "POST" and path.endswith("/query"):
+            return {"results": [{"id": self.page, "properties": {
+                "Name": {"type": "title",
+                         "title": [{"plain_text": "Weekly To-do List"}]}}}]}
+        if method == "GET" and path.startswith("/blocks/"):
+            block_id = path.split("/blocks/")[1].split("/children")[0]
+            return {"results": self.blocks.get(block_id, [])}
+        if method == "PATCH" and path.endswith("/children"):
+            col = path.split("/blocks/")[1].split("/children")[0]
+            new = {"id": f"new-{len(self.appended)}", "type": "to_do",
+                   "to_do": _as_read(payload["children"][0]["to_do"])}
+            self.blocks[col].append(new)
+            self.appended.append(payload)
+            return {"results": [new]}
+        if method == "PATCH" and path.startswith("/blocks/"):
+            bid = path.split("/blocks/")[1]
+            for kids in self.blocks.values():
+                for b in kids:
+                    if b["id"] == bid:
+                        b["to_do"] = _as_read(payload["to_do"])
+            self.updated.append(bid)
+            return {"id": bid}
+        raise AssertionError(f"unexpected {method} {path}")
+
+    def texts(self, day_index):
+        return [
+            "".join(p.get("plain_text") or p.get("text", {}).get("content", "")
+                    for p in b["to_do"]["rich_text"])
+            for b in self.blocks[f"col-{day_index}"] if b["type"] == "to_do"
+        ]
+
+
+ITEM = [{"task": "Read chapter 7", "due_date": "2026-09-10",
+         "kind": "reading", "date_source": "stated"}]
+
+
+def t18():
+    reset_overrides()
+    fake = FakeWeekly(); nt._request = fake
+    out = nt.push_to_weekly(ITEM, "ACCT-4321", "https://drive/doc")
+    assert out["added"] == 1 and out["failed"] == 0, out
+    # 2026-09-10 is a Thursday: index 3, not any other column.
+    assert any("Read chapter 7" in t for t in fake.texts(3)), fake.texts(3)
+    for other in (0, 1, 2, 4, 5, 6):
+        assert not any(t.strip() for t in fake.texts(other)), f"col {other} touched"
+results.append(run("a task lands in its own weekday column", t18))
+
+
+def t19():
+    reset_overrides()
+    fake = FakeWeekly(); nt._request = fake
+    nt.push_to_weekly(ITEM, "ACCT-4321")
+    # The template's blank boxes get used before any are added.
+    assert fake.updated, "did not reuse a blank checkbox"
+    assert not fake.appended, "appended instead of filling a blank"
+    assert len([t for t in fake.texts(3)]) == 3, fake.texts(3)
+results.append(run("a blank checkbox is filled before appending a new one", t19))
+
+
+def t20():
+    reset_overrides()
+    fake = FakeWeekly(blanks=0); nt._request = fake
+    nt.push_to_weekly(ITEM, "ACCT-4321")
+    assert fake.appended, "should append when no blank is free"
+    assert any("Read chapter 7" in t for t in fake.texts(3)), fake.texts(3)
+results.append(run("with no blanks left, a checkbox is appended", t20))
+
+
+def t21():
+    reset_overrides()
+    fake = FakeWeekly(); nt._request = fake
+    nt.push_to_weekly(ITEM, "ACCT-4321")
+    out = nt.push_to_weekly(ITEM, "ACCT-4321")
+    assert out["added"] == 0 and out["skipped"] == 1, out
+results.append(run("re-processing a lecture does not duplicate a checkbox", t21))
+
+
+def t22():
+    reset_overrides()
+    # The page covers a different week: filing it anyway would hide the task
+    # in a week you have already finished.
+    fake = FakeWeekly(heading="Oct 5 - Oct 11"); nt._request = fake
+    out = nt.push_to_weekly(ITEM, "ACCT-4321")
+    assert out["added"] == 0 and out["failed"] == 1, out
+    assert "no weekly page covers" in out["notes"][0], out["notes"]
+    assert not fake.updated and not fake.appended, "wrote into the wrong week"
+results.append(run("no matching week means skip and say so, not guess", t22))
+
+
+def t23():
+    reset_overrides()
+    fake = FakeWeekly(); nt._request = fake
+    out = nt.push_to_weekly(
+        [{"task": "Vague thing", "due_date": "", "kind": "other"}], "ACCT-4321")
+    assert out["failed"] == 1 and out["added"] == 0, out
+    assert "no due date" in out["notes"][0], out["notes"]
+results.append(run("an undated item has no day to go in and is reported", t23))
+
+
+def t24():
+    reset_overrides()
+    fake = FakeWeekly(); nt._request = fake
+    nt.push_to_weekly(ITEM, "ACCT-4321", "https://drive/doc")
+    body = fake.updated and [b for kids in fake.blocks.values() for b in kids
+                             if b["id"] == fake.updated[0]][0]
+    parts = body["to_do"]["rich_text"]
+    joined = "".join(p["text"]["content"] for p in parts)
+    assert joined.startswith("ACCT-4321: "), joined
+    assert any((p["text"].get("link") or {}).get("url") == "https://drive/doc"
+               for p in parts), parts
+results.append(run("the checkbox carries the course and links to the notes", t24))
+
+
+def t25():
+    import importlib
+    fresh = importlib.reload(config)
+    assert fresh.NOTION_TARGET == "weekly", \
+        f"default target is {fresh.NOTION_TARGET!r}; rows are invisible from the weekly page"
+    reset_overrides()
+results.append(run("the shipped default writes to the weekly page", t25))
+
+
+def t26():
+    reset_overrides()
+    config.NOTION_TARGET = "weekly"
+    fake = FakeWeekly(); nt._request = fake
+    out = nt.push(ITEM, "ACCT-4321", "https://drive/doc")
+    assert out["added"] == 1, out
+    assert fake.updated, "push() did not reach the weekly page"
+    reset_overrides()
+results.append(run("push() routes to the weekly page when told to", t26))
 
 
 print()
