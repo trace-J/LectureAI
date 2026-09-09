@@ -11,8 +11,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import config  # noqa: E402
-import record  # noqa: E402
+from _test_home import fresh_home  # noqa: E402
+
+fresh_home()  # before config is imported, so nothing touches ~/.lectureai
+
+from lectureai import config  # noqa: E402
+from lectureai import record  # noqa: E402
 
 # Real output from `ffmpeg -f avfoundation -list_devices true -i ""`, including
 # the curly apostrophe macOS puts in device names.

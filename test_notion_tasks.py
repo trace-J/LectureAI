@@ -10,8 +10,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import config  # noqa: E402
-import notion_tasks as nt  # noqa: E402
+from _test_home import fresh_home  # noqa: E402
+
+fresh_home()  # before config is imported, so nothing touches ~/.lectureai
+
+from lectureai import config  # noqa: E402
+from lectureai import notion_tasks as nt  # noqa: E402
 
 # A to-do database shaped the way a real one tends to be: a title, a couple of
 # date properties, a status, and some selects.

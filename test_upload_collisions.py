@@ -12,7 +12,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import upload as drive  # noqa: E402
+from _test_home import fresh_home  # noqa: E402
+
+fresh_home()  # before config is imported, so nothing touches ~/.lectureai
+
+from lectureai import upload as drive  # noqa: E402
 
 FOLDER_MIME = drive.FOLDER_MIME
 KEY = drive.RECORDING_KEY_PROPERTY

@@ -11,8 +11,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import config  # noqa: E402
-import gui  # noqa: E402
+from _test_home import fresh_home  # noqa: E402
+
+fresh_home()  # before config is imported, so nothing touches ~/.lectureai
+
+from lectureai import config  # noqa: E402
+from lectureai import gui  # noqa: E402
 
 
 def run(label, fn):
@@ -181,7 +185,7 @@ results.append(run("the status payload has everything the page reads", t12))
 
 def t12b():
     import json as _json
-    import watch
+    from lectureai import watch
     status = tmp / "status.json"
     config.STATUS_FILE = status
     config.LOCK_FILE = tmp / "no-such.lock"
@@ -199,7 +203,7 @@ results.append(run("the watcher's status is read back by the panel", t12b))
 
 
 def t12c():
-    import watch
+    from lectureai import watch
     config.STATUS_FILE = tmp / "status.json"
     watch.write_status("summarizing", "lecture.m4a")
     # A watcher that died mid-lecture leaves this behind; a stale stage shown
@@ -218,7 +222,8 @@ results.append(run("stale, foreign, or corrupt status reads as idle", t12c))
 
 
 def t12d():
-    import watch, os as _os
+    import os as _os
+    from lectureai import watch
     config.STATUS_FILE = tmp / "status.json"
     watch.write_status("uploading", "lecture.m4a", "ACCT-4321")
     body = client.get("/api/status").get_json()
