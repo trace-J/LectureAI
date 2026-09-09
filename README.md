@@ -88,6 +88,12 @@ own pid; the panel ignores a status whose pid is not the watcher currently
 running, so a watcher killed mid-lecture cannot leave a stage on screen
 forever.
 
+The theme buttons in the top right switch between **system, light, and
+dark**. System follows macOS; picking light or dark overrides it and is
+remembered in that browser. Every colour is defined once with CSS
+`light-dark()`, so the two themes cannot drift apart the way a duplicated
+palette does.
+
 It binds to localhost only, and deliberately: it can start and stop processes
 and read your pipeline log, none of which belongs on the network. The setup
 row at the bottom reports which pieces are configured by presence alone, so no
