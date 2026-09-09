@@ -1,6 +1,6 @@
 # LectureAI
 
-Record a lecture on this Mac, or drop one in `inbox/` from your phone. Get a
+Record a lecture on your Mac, or drop one in the inbox from your phone. Get a
 study summary as a Google Doc in the right course folder in Drive, with the raw
 transcript filed one level down.
 
@@ -12,69 +12,125 @@ once both uploads land.
 ## How a recording flows through
 
 ```
-gui.py              a local control panel over everything below
+lectureai panel     a local control panel over everything below
    |
    v
-record.py           records from this Mac's mic into .work/, then moves the
+lectureai record    records from this Mac's mic into .work/, then moves the
    |                finished file into inbox/ (or sync one from your phone)
    v
 inbox/lecture.m4a
    |
-   |  watch.py      waits for the file to stop growing, then infers
-   |                the course and date from the recording's START time
-   |                (mtime minus duration), falling back to the filename
+   |  lectureai watch   waits for the file to stop growing, then infers
+   |                    the course and date from the recording's START time
+   |                    (mtime minus duration), falling back to the filename
    v
-   |  transcribe.py compresses over ~24MB, splits over 8 minutes,
-   |                transcribes each chunk, stitches them in order
+   |  transcribe.py     compresses over ~24MB, splits over 8 minutes,
+   |                    transcribes each chunk, stitches them in order
    v
-   |  summarize.py  one Claude call, response constrained to a schema:
-   |                summary, key terms, action items, topic slug
+   |  summarize.py      one Claude call, response constrained to a schema:
+   |                    summary, key terms, action items, topic slug
    v
-   |  upload.py     ACCT-4321/ACCT-4321_2026-09-03_Job-Order-Costing  (Doc)
-   |                ACCT-4321/Transcripts/..._Job-Order-Costing.txt
+   |  upload.py         ACCT-4321/ACCT-4321_2026-09-03_Job-Order-Costing  (Doc)
+   |                    ACCT-4321/Transcripts/..._Job-Order-Costing.txt
    v
-   |  notion_tasks  action items become dated tasks in your Notion to-do
-   |                list (skipped entirely unless NOTION_TOKEN is set)
+   |  notion_tasks      action items become dated tasks in your Notion to-do
+   |                    list (skipped entirely unless Notion is set up)
    v
 pipeline.log        one line per lecture: timestamp, course, source file, URL
 ```
+
+Everything the pipeline reads or writes lives in one place, `~/.lectureai`:
+your keys in `.env`, your `schedule.toml`, the `inbox/` and `processed/`
+folders, the Drive token, and `pipeline.log`. Set `LECTUREAI_HOME` to put it
+somewhere else. The code never keeps anything next to itself.
 
 Local copies are staged in `processed/` before upload and removed after, so a
 failed upload never costs you the transcription you already paid for.
 
 ## Setup
 
-Python 3.11+ and `ffmpeg` on your PATH.
+You need a Mac, Homebrew, an OpenAI API key, and an Anthropic API key. Three
+commands in Terminal, then the rest happens in your browser:
 
 ```bash
-brew install ffmpeg
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-cp .env.example .env   # then fill in OPENAI_API_KEY and ANTHROPIC_API_KEY
+brew install ffmpeg pipx
 ```
-
-For Drive, put your Google OAuth client at `credentials.json`, then authorize
-once:
 
 ```bash
-.venv/bin/python upload.py --login
+pipx install git+https://github.com/trace-J/LectureAI
 ```
 
-That caches `token.json`. The app uses the `drive.file` scope, which only
-reaches files it created, so it makes its own "Lecture Notes" folder in My Drive
-rather than writing into one you made by hand. Move that folder anywhere
-afterward; access follows it. Its id is cached in `.drive_root`.
+```bash
+lectureai panel
+```
+
+That opens the control panel in your browser. The first time, with nothing
+configured, it lands on the **Setup** page: paste your two keys, pick a
+microphone from the list, add a row for every time a class meets, tick Notion
+if you want it, and click **Connect Google Drive**, which opens a Google
+sign-in tab. A checkup at the bottom of the page shows what still needs doing
+and turns green as you go. Everything is saved on your Mac in `~/.lectureai`;
+nothing is sent anywhere but to the services you gave keys for.
+
+Come back to the Setup page any time from the gear in the panel's header.
+Saved keys are shown masked and a blank field keeps what is there, so
+changing one thing never means retyping the rest.
+
+The same setup works from Terminal if you prefer:
+
+```bash
+lectureai setup
+```
+
+It asks for the two keys, shows the microphones ffmpeg can see, takes your
+class schedule one line at a time (`Tue 14 ACCT-4321`, blank line when done),
+asks once about Notion, and offers to authorize Google Drive at the end.
+
+Either way, `lectureai doctor` is the check to run when something misbehaves.
+It prints one line per thing that has to be right, with the exact fix next to
+anything that is not, and it never touches the network. The Setup page's
+checkup is the same list.
+
+```
+ok    Python               3.12.14
+ok    ffmpeg               /opt/homebrew/bin/ffmpeg
+ok    home directory       /Users/you/.lectureai (default)
+ok    OpenAI key           sk-proj...Xk2A
+ok    Anthropic key        sk-ant-...9fQ1
+ok    class schedule       8 class meetings, ACCT-4321, ENTR-3306, ENTR-4306, RELI-3304, tolerance 45 min
+ok    Drive OAuth client   bundled with the package (Cloud project lectureai)
+FAIL  Drive authorization  no token.json yet
+                           fix: lectureai login
+ok    Notion               skipped in setup (optional)
+ok    microphone           3 inputs, will record from MacBook Pro Microphone
+```
+
+For Drive, the Google OAuth client ships with the package, so there is no
+Cloud project to create. If setup did not already do it:
+
+```bash
+lectureai login
+```
+
+That caches `token.json` in `~/.lectureai`. The app uses the `drive.file`
+scope, which only reaches files it created, so it makes its own "Lecture
+Notes" folder in My Drive rather than writing into one you made by hand. Move
+that folder anywhere afterward; access follows it.
+
+If `pipx` says the command is not on your PATH, run `pipx ensurepath` and open
+a new terminal. To update later: `pipx upgrade lectureai`.
 
 ## The control panel
 
 ```bash
-.venv/bin/python gui.py
+lectureai panel
 ```
 
-Then open <http://127.0.0.1:5173>. One page to start and stop a recording,
+It opens <http://127.0.0.1:5173> in your browser (add `--no-browser` to skip
+that). One page to start and stop a recording,
 start and stop the watcher, see what's waiting in the inbox, and open recent
 lectures in Drive. It drives the same modules the CLI does, so a recording
-started here is identical to one started with `record.py`.
+started here is identical to one started with `lectureai record`.
 
 While a lecture is being processed the panel shows the stage it is in:
 waiting for the file to finish copying, transcribing (with the part number, so
@@ -90,7 +146,7 @@ forever.
 
 The theme buttons in the top right switch between **system, light, and
 dark**. System follows macOS; picking light or dark overrides it and is
-remembered in that browser. Every colour is defined once with CSS
+remembered in that browser. Every color is defined once with CSS
 `light-dark()`, so the two themes cannot drift apart the way a duplicated
 palette does.
 
@@ -100,27 +156,28 @@ row at the bottom reports which pieces are configured by presence alone, so no
 key or token is ever sent to the browser.
 
 Two limits worth knowing. Recording state lives in the panel's memory, so
-quitting `gui.py` mid-recording orphans the ffmpeg process and leaves the file
-in `.work/` rather than filing it: stop the recording before you quit. The
-watcher is the opposite, and on purpose: it is started detached, so closing
-the panel leaves a lecture midway through transcription alone to finish.
+quitting the panel mid-recording orphans the ffmpeg process and leaves the
+file in `.work/` rather than filing it: stop the recording before you quit.
+The watcher is the opposite, and on purpose: it is started detached, so
+closing the panel leaves a lecture midway through transcription alone to
+finish.
 
 ## Recording on this Mac
 
 ```bash
-.venv/bin/python record.py
+lectureai record
 ```
 
 Records until Ctrl-C, names the file from your schedule, and drops it in
-`inbox/`. The first run asks for microphone permission; if it was denied,
-grant it under System Settings > Privacy & Security > Microphone and try
-again.
+`~/.lectureai/inbox/`. The first run asks for microphone permission; if it
+was denied, grant it under System Settings > Privacy & Security > Microphone
+and try again.
 
 ```bash
-.venv/bin/python record.py --minutes 80          # stop on its own
-.venv/bin/python record.py --course RELI-3304    # override the schedule
-.venv/bin/python record.py --device "MacBook"    # pick a different mic
-.venv/bin/python record.py --list-devices
+lectureai record --minutes 80          # stop on its own
+lectureai record --course RELI-3304    # override the schedule
+lectureai record --device "MacBook"    # pick a different mic
+lectureai record --list-devices
 ```
 
 Three things worth knowing:
@@ -133,8 +190,9 @@ Three things worth knowing:
   directly into `inbox/` would also outlast the watcher's one hour patience for
   a file that is still growing.
 - **The microphone is chosen by name, not index.** avfoundation numbers devices
-  in connection order, so on this Mac index 0 is often a nearby iPhone rather
-  than the built-in mic. Change the default with `RECORD_DEVICE` in `.env`.
+  in connection order, so index 0 is often a nearby iPhone rather than the
+  built-in mic. `lectureai setup` picks by name; so does `RECORD_DEVICE` in
+  `~/.lectureai/.env`.
 
 Stopping with Ctrl-C is the supported way to end a recording: it lets ffmpeg
 write the file's trailer. Killing the process instead leaves an m4a nothing can
@@ -143,66 +201,88 @@ open.
 ## Running it
 
 ```bash
-.venv/bin/python watch.py
+lectureai watch
 ```
 
-Watches `inbox/` until Ctrl-C. It never dies on a bad file: the error goes to
+Watches the inbox until Ctrl-C. It never dies on a bad file: the error goes to
 `pipeline.log`, the recording stays in `inbox/` for a retry, and the next one
 still gets processed. A lock file stops two watchers from racing on the same
 inbox. To stop a stray one:
 
 ```bash
-pkill -f 'watch\.py'
+pkill -f 'lectureai.*watch'
 ```
 
 One file at a time, without the watcher:
 
 ```bash
-.venv/bin/python watch.py --once inbox/lecture.m4a
-```
-
-Each module also runs standalone, which is how to debug a single stage:
-
-```bash
-.venv/bin/python transcribe.py lecture.m4a > transcript.txt
-.venv/bin/python summarize.py transcript.txt ACCT-4321 2026-09-03
-.venv/bin/python upload.py summary.md ACCT-4321
+lectureai watch --once ~/.lectureai/inbox/lecture.m4a
 ```
 
 ## The class schedule
 
-`SCHEDULE` in [config.py](config.py) maps `(day, start hour)` to a course code.
-Editing it is the only thing you need to touch each semester.
+`~/.lectureai/schedule.toml` maps each class meeting to a course code. One
+row per meeting: the day, the hour it starts on a 24-hour clock, and the code.
+`lectureai setup` writes it; editing it by hand is just as good, and is the
+only thing you need to touch each semester.
+
+```toml
+classes = [
+  { day = "Mon", start =  9, course = "ENTR-4306" },
+  { day = "Tue", start = 12, course = "ENTR-3306" },
+  { day = "Tue", start = 14, course = "ACCT-4321" },
+]
+
+tolerance_minutes = 45
+```
 
 Two details that matter:
 
 - The match runs against when the recording **started**, not the file's mtime.
   An 80 minute class ends closer to the next class on the calendar than to its
   own, so backing out the duration is what keeps back-to-back classes apart.
-- `SCHEDULE_TOLERANCE_MINUTES` must stay well under the gap between
-  consecutive classes. With a 12:00 and a 14:00 on the same day, anything near
-  60 makes the two windows touch and the wrong course wins.
+- `tolerance_minutes` must stay well under the gap between consecutive
+  classes. With a 12:00 and a 14:00 on the same day, anything near 60 makes
+  the two windows touch and the wrong course wins. The file carries this
+  warning next to the value.
 
 If the timestamp matches nothing, the filename is tried next: a recording named
-`9-1-26-acct-4321-pt2.m4a` still files correctly. Only codes already in
-`SCHEDULE` are accepted, so a stray number in a filename cannot invent a course
+`9-1-26-acct-4321-pt2.m4a` still files correctly. Only codes already in the
+schedule are accepted, so a stray number in a filename cannot invent a course
 folder. Failing both, it goes to `UNKNOWN/`.
 
+A missing or broken schedule stops `record`, `watch`, and `panel` with one
+line saying which row is wrong and pointing at `lectureai setup`.
+
 ## Things worth knowing when it misbehaves
+
+**Start with `lectureai doctor`.** It checks every piece the pipeline depends
+on and prints the fix for the ones that are missing.
 
 **A summary comes back thin or oddly formatted.** The transcript is probably
 truncated. The `gpt-4o-mini-transcribe` model caps output near 2000 tokens and
 truncates silently rather than erroring, which is why audio is split on
-duration as well as size. Lower `CHUNK_SECONDS` if you see truncation warnings.
+duration as well as size. Lower `CHUNK_SECONDS` in `config.py` if you see
+truncation warnings.
 
-**Uploads suddenly fail with an auth error.** If the Google Cloud project is
-still in External + Testing, refresh tokens expire every 7 days.
-`.venv/bin/python upload.py --login` gets you going again; switching the
-project to an Internal audience ends it permanently.
+**Uploads suddenly fail with an auth error.** The Google Cloud project behind
+the bundled client is still in External + Testing, so refresh tokens expire
+every 7 days and only accounts added as test users can log in at all.
+`lectureai login` gets you going again; publishing the project ends it
+permanently.
 
 **A recording was filed under the wrong course.** Rename it with the course
 code in the filename and drop it back in `inbox/`. The filename fallback will
 catch it.
+
+**The panel opens on the Setup page instead of the controls.** Both keys and
+at least one class are needed before anything can be recorded and filed. Fill
+them in and the panel is one click away in the header.
+
+**You installed before the home directory existed.** Your `.env`, token, and
+log are still next to the code. The first `lectureai` command you run offers
+to move them into `~/.lectureai`; say yes and restart any watcher or panel that
+was already running.
 
 ## Re-runs, duplicates, and two-part lectures
 
@@ -225,8 +305,8 @@ one of those lectures, the file is claimed by name and stamped from then on.
 ## Action items in Notion
 
 Every deadline a lecture mentions becomes a task in your Notion to-do
-database, dated. This is optional: with `NOTION_TOKEN` unset the pipeline
-skips Notion and behaves exactly as it did before.
+database, dated. This is optional: skip it in `lectureai setup` and the
+pipeline behaves exactly as it did before.
 
 **Setup**, which is mostly in the browser:
 
@@ -237,7 +317,8 @@ skips Notion and behaves exactly as it did before.
    **Connections** and add that integration. Without this step every request
    comes back 404, because the integration cannot see a database nobody shared
    with it.
-3. Put both values in `.env`:
+3. Give both values to `lectureai setup` when it asks, or put them in
+   `~/.lectureai/.env` yourself:
 
 ```
 NOTION_TOKEN=ntn_...
@@ -247,7 +328,7 @@ NOTION_DATABASE=https://www.notion.so/...   # just paste the database URL
 Then confirm it can see your database and worked out the right properties:
 
 ```bash
-.venv/bin/python notion_tasks.py --check
+lectureai notion --check
 ```
 
 That prints every property in your database and which role it was matched to.
@@ -260,12 +341,12 @@ If it reports that no date property matched, your database has nowhere to put
 a deadline. Add what's needed:
 
 ```bash
-.venv/bin/python notion_tasks.py --setup --dry-run   # see what it would add
-.venv/bin/python notion_tasks.py --setup
+lectureai notion --setup --dry-run   # see what it would add
+lectureai notion --setup
 ```
 
-That adds `Due` (date), `Course` (select, pre-filled with the codes in
-`SCHEDULE`), and `Source` (url) **only where the role isn't already covered**.
+That adds `Due` (date), `Course` (select, pre-filled with the codes in your
+schedule), and `Source` (url) **only where the role isn't already covered**.
 It never touches a property you already have: the request is built from
 scratch and mentions only new names, because Notion deletes a property that is
 sent as null. A database that already has a `Deadline` field keeps it and gets
@@ -278,7 +359,7 @@ property is left alone so new tasks get whatever default your workflow already
 uses. Each property serves one role only: if a single select has to cover both
 course and type, course wins, since knowing the class matters more than
 knowing it was a reading. If a guess is wrong, override it by exact name in
-`.env`:
+`~/.lectureai/.env`:
 
 ```
 NOTION_PROP_DUE=Deadline
@@ -309,15 +390,15 @@ picks it up.
 Within a day column, a blank checkbox from the template is filled before any
 new one is appended, so the column keeps the shape you set up.
 
-Run `notion_tasks.py --check` to see every page, the date range read from each
-heading, and where the next seven days would land.
+Run `lectureai notion --check` to see every page, the date range read from
+each heading, and where the next seven days would land.
 
 **Dates.** A deadline the instructor actually stated is used as-is, with
 anything relative ("next Thursday") resolved against the lecture date. An item
 with no stated deadline is dated to the **next time that class meets**,
-computed from `SCHEDULE`, and labeled `assumed` in the Drive summary so you can
-tell the two apart. Nothing lands undated, because an undated task has no day
-column to go in and gets skipped.
+computed from your schedule, and labeled `assumed` in the Drive summary so you
+can tell the two apart. Nothing lands undated, because an undated task has no
+day column to go in and gets skipped.
 
 **Re-runs don't duplicate.** Before adding anything, the database is checked
 for a task with the same title and due date. Re-processing a lecture adds
@@ -327,17 +408,60 @@ nothing the second time.
 bad token or an outage costs you the Notion tasks for that lecture and nothing
 else; the action items are still in the summary Doc.
 
-## Tests
+## Development
 
-Both suites are self-contained. The upload tests run against an in-memory fake
-Drive and the recording tests open no microphone, so neither needs network,
-credentials, or an API key, and neither costs anything to run.
+The code is a plain Python package in `lectureai/`, and the `lectureai`
+command is one console script over it. To work on it:
+
+```bash
+git clone https://github.com/trace-J/LectureAI && cd LectureAI
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt   # installs the package editable, with the lectureai command
+```
+
+Dependencies are declared once, in `pyproject.toml`; `requirements.txt` just
+points at it. Python 3.11 or newer, for `tomllib`.
+
+Every module still runs on its own from the checkout, which is how to debug a
+single stage. The root-level `record.py`, `watch.py`, `gui.py`, `upload.py`,
+`transcribe.py`, `summarize.py`, and `notion_tasks.py` are one-line shims onto
+the package, so these are the same code the CLI runs:
+
+```bash
+.venv/bin/python record.py --list-devices
+.venv/bin/python watch.py --once ~/.lectureai/inbox/lecture.m4a
+.venv/bin/python transcribe.py lecture.m4a > transcript.txt
+.venv/bin/python summarize.py transcript.txt ACCT-4321 2026-09-03
+.venv/bin/python upload.py summary.md ACCT-4321
+.venv/bin/python gui.py
+```
+
+A dev checkout and a pipx install share `~/.lectureai` by default. To keep a
+scratch install from touching your real recordings and keys:
+
+```bash
+LECTUREAI_HOME=/tmp/lectureai-scratch lectureai setup
+```
+
+The Google OAuth client the app identifies itself with is `credentials.json`
+inside the package, read by `google_client.py`. A `credentials.json` in the
+home directory overrides it. The one at the repo root, if you have one from
+before, stays gitignored.
+
+### Tests
+
+Every suite is self-contained: the upload tests run against an in-memory fake
+Drive, the recording tests open no microphone, the setup tests drive the
+wizard with scripted answers into a temp directory. None needs network,
+credentials, or an API key, none costs anything to run, and none can touch
+`~/.lectureai`.
 
 ```bash
 .venv/bin/python test_upload_collisions.py   # collisions, re-runs, two-part days
 .venv/bin/python test_record.py              # device selection and naming
 .venv/bin/python test_notion_tasks.py        # property mapping and de-duplication
 .venv/bin/python test_gui.py                 # log parsing and API guard rails
+.venv/bin/python test_setup.py               # home directory, schedule file, setup wizard, doctor
 ```
 
 ## V2 roadmap
@@ -358,7 +482,9 @@ complexity.
 
 ### Loose ends
 
+- **Publish the Google Cloud project.** The bundled OAuth client's project is
+  still in Testing, so `lectureai login` only works for accounts listed as
+  test users and their tokens expire weekly. Switching it to Production is
+  what makes the friend path above work for anyone.
 - **Recover the September 3, 13:56 ACCT lecture.** Audio and transcript are
   gone, but the summary text survives in the raw JSON of the trashed Doc.
-- **`pydantic` is imported by [summarize.py](summarize.py) but missing from
-  `requirements.txt`.** It installs today only because `anthropic` pulls it in.

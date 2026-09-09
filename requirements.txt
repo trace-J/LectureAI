@@ -1,10 +1,4 @@
-openai>=1.60
-anthropic>=0.40
-google-api-python-client>=2.150
-google-auth-oauthlib>=1.2
-flask>=3.0
-google-auth-httplib2>=0.2
-pydantic>=2.0
-python-dotenv>=1.0
-requests>=2.31
-watchdog>=5.0
+# Dependencies are declared once, in pyproject.toml. This installs the
+# package into the current venv in editable mode, which also gives you the
+# `lectureai` command there.
+-e .

@@ -188,6 +188,18 @@
     background: var(--brand-soft); color: var(--brand-deep); display: none;
   }
   .flash.err { background: rgba(194,47,61,.1); color: var(--err); }
+  .flash a { color: inherit; font-weight: 500; }
+
+  .gear {
+    display: grid; place-items: center; width: 36px; height: 36px;
+    border: 1px solid var(--line); border-radius: 999px; background: var(--card);
+    color: var(--muted); text-decoration: none; transition: color .15s ease, border-color .15s ease;
+  }
+  .gear:hover { color: var(--brand); border-color: var(--brand); }
+  .gear svg { width: 16px; height: 16px; display: block; }
+  .card-foot { font-size: 12px; color: var(--muted); font-weight: 300; margin-top: 12px; }
+  .card-foot a { color: var(--brand); text-decoration: none; }
+  .card-foot a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -199,7 +211,13 @@
       <div class="brandname">Lecture<span class="ai">AI</span></div>
       <div class="tagline">All of your lectures, in one place</div>
     </div>
-    <div class="theme" role="group" aria-label="Color theme">
+    <a class="gear" href="/setup" title="Setup" aria-label="Setup" style="margin-left:auto">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>
+      </svg>
+    </a>
+    <div class="theme" role="group" aria-label="Color theme" style="margin-left:0">
       <button type="button" data-theme-choice="system" title="Match system" aria-label="Match system theme">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>
@@ -220,6 +238,9 @@
   </header>
 
   <div class="flash" id="flash"></div>
+  <div class="flash" id="setupFlash" style="display:none">
+    Nothing is set up yet. <a href="/setup">Finish setup</a> to add your keys and class schedule.
+  </div>
 
   <!-- Record -->
   <div class="card card-pad">
@@ -281,6 +302,7 @@
   <div class="card card-pad">
     <h2>Setup</h2>
     <div class="checks" id="checks"></div>
+    <div class="card-foot">Change keys, microphone, or schedule on the <a href="/setup">Setup page</a>.</div>
   </div>
 
 </div>
@@ -420,6 +442,7 @@ function render(s) {
   }
 
   // Setup
+  $("setupFlash").style.display = s.configured ? "none" : "block";
   const labels = { openai: "Transcription", anthropic: "Summaries", drive: "Google Drive", notion: "Notion" };
   $("checks").innerHTML = Object.entries(labels).map(([k, label]) => {
     const on = s.integrations[k];

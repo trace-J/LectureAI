@@ -1,14 +1,19 @@
 .venv/
 __pycache__/
 *.pyc
+build/
+dist/
+*.egg-info/
 
-# secrets
+# secrets: a stray per-developer OAuth client at the repo root stays out of
+# git; the copy inside the package is shipped on purpose (see google_client.py)
 .env
-credentials.json
+/credentials.json
+!lectureai/credentials.json
 token.json
 .drive_root
 
-# runtime data
+# runtime data from before the home directory existed
 inbox/*
 processed/*
 !inbox/.gitkeep
