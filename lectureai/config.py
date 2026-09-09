@@ -644,6 +644,42 @@ def recording_time_suffix(
     return recording_start(file_mtime, duration_seconds).strftime("%H%M")
 
 
+# Settings that come from .env, with their defaults. reload() re-reads these
+# so a long-running panel sees what setup just wrote without a restart.
+ENV_SETTINGS = {
+    "OPENAI_API_KEY": "",
+    "ANTHROPIC_API_KEY": "",
+    "DRIVE_ROOT_FOLDER_NAME": "Lecture Notes",
+    "DRIVE_PARENT_FOLDER_ID": "",
+    "NOTION_TOKEN": "",
+    "NOTION_DATABASE": "",
+    "NOTION_VERSION": "2026-03-11",
+    "NOTION_TARGET": "weekly",
+    "NOTION_PROP_DUE": "",
+    "NOTION_PROP_COURSE": "",
+    "NOTION_PROP_KIND": "",
+    "NOTION_PROP_SOURCE": "",
+    "RECORD_DEVICE": "MacBook Pro Microphone",
+}
+
+
+def reload() -> None:
+    """Re-read .env and the schedule file into this module.
+
+    Values are taken from the file itself, not from os.environ, so a key the
+    user just removed in the file actually goes away rather than lingering
+    from the first load.
+    """
+    from dotenv import dotenv_values
+    file_values = dotenv_values(ENV_FILE) if ENV_FILE.exists() else {}
+    for name, default in ENV_SETTINGS.items():
+        value = file_values.get(name)
+        if value is None:
+            value = os.environ.get(name, default)
+        globals()[name] = value or default
+    reload_schedule()
+
+
 def require(name: str) -> str:
     """Fetch a required setting or fail with a readable message."""
     value = globals().get(name, "")

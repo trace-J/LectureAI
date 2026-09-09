@@ -5,6 +5,7 @@ no microphone is opened, and no watcher is spawned. From the project root:
 
     .venv/bin/python test_gui.py
 """
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -284,6 +285,170 @@ def t17():
     assert "[hidden] { display: none !important; }" in html, \
         "hidden elements will stay visible"
 results.append(run("[hidden] beats the display rules that broke it", t17))
+
+
+# --- setup page -------------------------------------------------------------
+
+setup_home = tmp / "setup-home"
+setup_home.mkdir()
+
+
+def point_config_at(home):
+    config.HOME_DIR = home
+    config.ENV_FILE = home / ".env"
+    config.SCHEDULE_FILE = home / "schedule.toml"
+    config.TOKEN_FILE = home / "token.json"
+    config.INBOX_DIR = home / "inbox"
+    config.PROCESSED_DIR = home / "processed"
+    config.WORK_DIR = home / ".work"
+    config.reload()
+
+
+# No microphone is opened: the device list is canned, the way test_record does it.
+gui.recording.list_devices = lambda: [(0, "Someone's iPhone Microphone"),
+                                      (1, "MacBook Pro Microphone")]
+
+
+def t18():
+    res = client.get("/setup")
+    assert res.status_code == 200
+    html = res.get_data(as_text=True)
+    assert "Lexend Deca" in html and "#8C52FF" in html, "setup page is off-brand"
+    for step in ("API keys", "Microphone", "Class schedule", "Notion", "Google Drive"):
+        assert step in html, f"setup page is missing {step}"
+    assert "/api/setup" in html and "/api/drive/login" in html
+    # The panel itself must offer a way in.
+    assert 'href="/setup"' in client.get("/").get_data(as_text=True)
+results.append(run("the setup page renders with every step and the panel links to it", t18))
+
+
+def t19():
+    point_config_at(setup_home)
+    # An empty home: no schedule, no keys. The panel must still answer.
+    body = client.get("/api/status").get_json()
+    assert body["courses"] == [] and body["configured"] is False, body
+    assert body["now_class"] is None
+    state = client.get("/api/setup").get_json()
+    assert state["openai_set"] is False and state["schedule"] == [], state
+    assert [d["name"] for d in state["devices"]] == ["Someone's iPhone Microphone",
+                                                     "MacBook Pro Microphone"]
+    assert state["drive"]["connected"] is False
+    assert state["configured"] is False
+results.append(run("with nothing configured the panel answers instead of failing", t19))
+
+
+def t20():
+    point_config_at(setup_home)
+    res = client.post("/api/setup", json={
+        "openai_key": "sk-openai-test-key-000000",
+        "anthropic_key": "sk-ant-test-key-0000000000",
+        "device": "MacBook Pro Microphone",
+        "schedule": [{"day": "Tue", "start": 14, "course": "acct-4321"},
+                     {"day": "Thursday", "start": "14", "course": "ACCT-4321"}],
+        "tolerance": 30,
+        "notion": {"enabled": False},
+    })
+    assert res.status_code == 200, res.get_json()
+    out = res.get_json()
+    assert out["ok"] and out["configured"] and out["classes"] == 2, out
+
+    from lectureai import setup_wizard
+    env = setup_wizard.read_env(setup_home / ".env")
+    assert env["OPENAI_API_KEY"] == "sk-openai-test-key-000000", env
+    assert env["RECORD_DEVICE"] == "MacBook Pro Microphone", env
+    assert not env.get("NOTION_TOKEN"), env
+    loaded = config.load_schedule(setup_home / "schedule.toml")
+    assert loaded.by_slot == {("Tue", 14): "ACCT-4321", ("Thu", 14): "ACCT-4321"}, loaded.by_slot
+    assert loaded.tolerance_minutes == 30
+    # The running panel picks the new settings up without a restart.
+    assert config.OPENAI_API_KEY == "sk-openai-test-key-000000"
+    assert client.get("/api/status").get_json()["courses"] == ["ACCT-4321"]
+    assert not (config.PACKAGE_DIR / ".env").exists()
+results.append(run("saving the form writes .env and schedule.toml and reloads them", t20))
+
+
+def t21():
+    point_config_at(setup_home)
+    state = client.get("/api/setup").get_json()
+    # Masked, never the key itself.
+    assert state["openai_set"] is True
+    assert "sk-openai-test-key-000000" not in json.dumps(state), "key leaked to the page"
+    assert state["openai"].startswith("sk-ope") and "..." in state["openai"], state["openai"]
+    assert state["schedule"][0] == {"day": "Tue", "start": 14, "course": "ACCT-4321"}
+
+    # Blank keys keep what is on file; one bad row is named.
+    res = client.post("/api/setup", json={
+        "openai_key": "", "anthropic_key": "", "device": "",
+        "schedule": [{"day": "Mon", "start": 9, "course": "ENTR-4306"},
+                     {"day": "Someday", "start": 9, "course": "X"}],
+        "notion": {"enabled": False},
+    })
+    assert res.status_code == 400, res.get_json()
+    assert res.get_json()["row"] == 2 and "row 2" in res.get_json()["error"]
+    assert config.load_schedule(setup_home / "schedule.toml").by_slot == \
+        {("Tue", 14): "ACCT-4321", ("Thu", 14): "ACCT-4321"}, "a rejected save changed the file"
+
+    res = client.post("/api/setup", json={
+        "openai_key": "", "anthropic_key": "", "device": "",
+        "schedule": [{"day": "Mon", "start": 9, "course": "ENTR-4306"}],
+        "notion": {"enabled": True, "token": "ntn_x", "database": ""},
+    })
+    assert res.status_code == 400 and "Notion" in res.get_json()["error"], res.get_json()
+
+    res = client.post("/api/setup", json={
+        "openai_key": "", "anthropic_key": "", "device": "",
+        "schedule": [{"day": "Mon", "start": 9, "course": "ENTR-4306"}],
+        "notion": {"enabled": False},
+    })
+    assert res.status_code == 200, res.get_json()
+    from lectureai import setup_wizard
+    env = setup_wizard.read_env(setup_home / ".env")
+    assert env["OPENAI_API_KEY"] == "sk-openai-test-key-000000", "blank key wiped the saved one"
+    assert env["ANTHROPIC_API_KEY"] == "sk-ant-test-key-0000000000"
+results.append(run("the page shows masked keys, keeps them on blank, and names a bad row", t21))
+
+
+def t22():
+    point_config_at(setup_home)
+    res = client.post("/api/setup", json={"openai_key": "", "anthropic_key": "",
+                                          "schedule": [], "notion": {"enabled": False}})
+    assert res.status_code == 400 and "at least one class" in res.get_json()["error"]
+    empty = tmp / "empty-home"; empty.mkdir()
+    point_config_at(empty)
+    res = client.post("/api/setup", json={"openai_key": "sk-only-one", "anthropic_key": "",
+                                          "schedule": [{"day": "Mon", "start": 9, "course": "X-1"}],
+                                          "notion": {"enabled": False}})
+    assert res.status_code == 400 and "both API keys" in res.get_json()["error"]
+    assert not (empty / ".env").exists(), "a rejected save must write nothing"
+    point_config_at(setup_home)
+results.append(run("no schedule or a missing key is refused before anything is written", t22))
+
+
+def t23():
+    point_config_at(setup_home)
+    body = client.get("/api/doctor").get_json()
+    names = [c["name"] for c in body["checks"]]
+    for want in ("Python", "ffmpeg", "OpenAI key", "class schedule", "Drive authorization", "Notion"):
+        assert want in names, f"doctor is missing {want}"
+    assert "sk-openai-test-key-000000" not in json.dumps(body), "doctor leaked a key"
+    drive = next(c for c in body["checks"] if c["name"] == "Drive authorization")
+    assert drive["ok"] is False and drive["fix"] == "lectureai login"
+    assert body["healthy"] is False
+    assert "ok" not in body, "an ok field would read as a failed request on the page"
+results.append(run("the checkup endpoint mirrors doctor without exposing secrets", t23))
+
+
+def t24():
+    point_config_at(setup_home)
+    (setup_home / "token.json").write_text("{}")
+    res = client.post("/api/drive/login", json={})
+    assert res.status_code == 409, "must not start a login while a token exists"
+    assert client.get("/api/setup").get_json()["drive"]["connected"] is True
+    res = client.post("/api/drive/disconnect", json={})
+    assert res.status_code == 200
+    assert not (setup_home / "token.json").exists()
+    assert client.get("/api/setup").get_json()["drive"]["connected"] is False
+results.append(run("Drive login refuses to double up and disconnect removes the token", t24))
 
 
 print()

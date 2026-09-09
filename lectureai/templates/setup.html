@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LectureAI setup</title>
+<link rel="icon" href="/static/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lexend+Deca:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>
+  try {
+    var saved = localStorage.getItem("lectureai-theme");
+    if (saved === "light" || saved === "dark") {
+      document.documentElement.dataset.theme = saved;
+    }
+  } catch (e) { /* system theme is fine */ }
+</script>
+<style>
+  :root {
+    color-scheme: light dark;
+    --brand: #8C52FF;
+    --brand-soft:  light-dark(#f3ecff, #241a3d);
+    --brand-deep:  light-dark(#6a35d9, #c3a6ff);
+    --ink:         light-dark(#16131f, #f2eefb);
+    --muted:       light-dark(#6b6577, #a49db4);
+    --line:        light-dark(#e7e3ee, #2c2738);
+    --bg:          light-dark(#faf9fc, #131019);
+    --card:        light-dark(#ffffff, #1b1725);
+    --field:       light-dark(#fbfafd, #15111d);
+    --ok:          light-dark(#128a5b, #4ecf9b);
+    --warn:        light-dark(#b25c00, #e5a252);
+    --err:         light-dark(#c22f3d, #ff8792);
+    --shadow-near: light-dark(rgba(22,19,31,.05), rgba(0,0,0,.3));
+    --shadow-far:  light-dark(rgba(22,19,31,.06), rgba(0,0,0,.35));
+    --shadow: 0 1px 2px var(--shadow-near), 0 8px 24px var(--shadow-far);
+  }
+  :root[data-theme="light"] { color-scheme: light; }
+  :root[data-theme="dark"]  { color-scheme: dark; }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Lexend Deca", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-weight: 400; line-height: 1.5; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 32px 20px 64px; }
+
+  header { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+  header img { width: 44px; height: 44px; border-radius: 11px; display: block; }
+  .brandname { font-size: 25px; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; }
+  .brandname .ai { color: var(--brand); }
+  .tagline { font-size: 13px; color: var(--muted); font-weight: 300; }
+  .back { margin-left: auto; font-size: 13px; color: var(--brand); text-decoration: none; font-weight: 500; }
+  .back:hover { text-decoration: underline; }
+  .intro { color: var(--muted); font-size: 14px; font-weight: 300; margin: 0 0 24px; }
+  .intro code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 16px; box-shadow: var(--shadow); margin-bottom: 18px; padding: 22px;
+  }
+  h2 {
+    font-size: 12px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--muted); margin: 0 0 6px; display: flex; align-items: center; gap: 10px;
+  }
+  .step {
+    display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
+    background: var(--brand); color: #fff; font-size: 11px; font-weight: 600; letter-spacing: 0;
+  }
+  .lead { font-size: 14px; color: var(--muted); font-weight: 300; margin: 0 0 16px; }
+  .lead a { color: var(--brand); text-decoration: none; }
+  .lead a:hover { text-decoration: underline; }
+
+  label { display: block; font-size: 13px; font-weight: 500; margin: 12px 0 5px; }
+  label:first-of-type { margin-top: 0; }
+  .hint { font-size: 12px; color: var(--muted); font-weight: 300; margin-top: 5px; }
+  input[type=text], input[type=password], input[type=url], input[type=number], select {
+    font: inherit; font-size: 14px; width: 100%; padding: 9px 12px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--field); color: var(--ink);
+  }
+  input:focus, select:focus { outline: 2px solid var(--brand); outline-offset: 1px; border-color: var(--brand); }
+  input::placeholder { color: var(--muted); opacity: .8; }
+  select { cursor: pointer; }
+
+  .btn {
+    font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+    padding: 8px 16px; border-radius: 9px;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink);
+    transition: border-color .15s ease, color .15s ease, background .15s ease;
+  }
+  .btn:hover { border-color: var(--brand); color: var(--brand); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; padding: 11px 22px; font-size: 14px; }
+  .btn.primary:hover { background: var(--brand-deep); border-color: var(--brand-deep); color: #fff; }
+  .btn.small { padding: 5px 10px; font-size: 12px; }
+  .btn.danger:hover { border-color: var(--err); color: var(--err); }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  th { text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 0 6px 6px 0; }
+  td { padding: 4px 6px 4px 0; vertical-align: middle; }
+  td:last-child, th:last-child { padding-right: 0; width: 1%; white-space: nowrap; }
+  tr.bad td input, tr.bad td select { border-color: var(--err); }
+  .table-foot { display: flex; align-items: center; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
+  .table-foot .hint { margin: 0; }
+  .advanced { margin-top: 14px; font-size: 12px; color: var(--muted); }
+  .advanced summary { cursor: pointer; font-weight: 500; }
+  .advanced input { max-width: 110px; margin: 8px 8px 0 0; }
+
+  .toggle { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; cursor: pointer; }
+  .toggle input { width: 18px; height: 18px; accent-color: var(--brand); margin: 0; }
+
+  .status-line { display: flex; align-items: center; gap: 9px; font-size: 14px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; display: inline-block; }
+  .dot.on { background: var(--ok); }
+  .dot.off { background: var(--muted); opacity: .5; }
+  .dot.bad { background: var(--err); }
+  .spinner {
+    width: 12px; height: 12px; flex: 0 0 auto; border-radius: 50%;
+    border: 2px solid var(--brand); border-right-color: transparent;
+    animation: spin .75s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+  .checks { margin-top: 6px; }
+  .check { display: flex; align-items: flex-start; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 13px; }
+  .check:first-child { border-top: none; }
+  .check .dot { margin-top: 6px; }
+  .check-name { font-weight: 500; min-width: 140px; }
+  .check-detail { color: var(--muted); font-weight: 300; word-break: break-word; }
+  .check-fix { color: var(--warn); font-weight: 400; margin-top: 2px; }
+  .check-fix code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: var(--brand-soft); color: var(--brand-deep); padding: 1px 6px; border-radius: 5px; }
+
+  .save-bar { display: flex; align-items: center; gap: 14px; margin: 6px 0 24px; flex-wrap: wrap; }
+  .save-bar .hint { margin: 0; }
+  .flash {
+    font-size: 13px; padding: 11px 14px; border-radius: 11px; margin-bottom: 18px;
+    background: var(--brand-soft); color: var(--brand-deep); display: none;
+  }
+  .flash.err { background: rgba(194,47,61,.1); color: var(--err); }
+  .flash a { color: inherit; font-weight: 500; }
+  .done {
+    display: none; padding: 16px 20px; border-radius: 14px; margin-bottom: 18px;
+    background: var(--brand-soft); color: var(--brand-deep); font-size: 14px;
+  }
+  .done a { color: inherit; font-weight: 600; }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.5s; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <img src="/static/icon.png" alt="">
+    <div>
+      <div class="brandname">Lecture<span class="ai">AI</span> setup</div>
+      <div class="tagline">All of your lectures, in one place</div>
+    </div>
+    <a class="back" href="/">Control panel &rarr;</a>
+  </header>
+  <p class="intro">
+    Everything here is saved on this Mac only, in <code id="homePath">~/.lectureai</code>.
+    Come back any time to change one thing; the rest stays as it is.
+  </p>
+
+  <div class="done" id="done">
+    You're all set. <a href="/">Open the control panel</a> to record your first lecture.
+  </div>
+  <div class="flash" id="flash"></div>
+
+  <form id="form" autocomplete="off">
+
+    <!-- 1. Keys -->
+    <div class="card">
+      <h2><span class="step">1</span> API keys</h2>
+      <p class="lead">
+        Two services do the work, each billed to your own account.
+        <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI</a>
+        transcribes the audio and
+        <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic</a>
+        writes the summary. Create a key at each link and paste it here.
+      </p>
+      <label for="openai">OpenAI API key</label>
+      <input type="password" id="openai" placeholder="sk-..." spellcheck="false">
+      <div class="hint" id="openaiHint"></div>
+      <label for="anthropic">Anthropic API key</label>
+      <input type="password" id="anthropic" placeholder="sk-ant-..." spellcheck="false">
+      <div class="hint" id="anthropicHint"></div>
+    </div>
+
+    <!-- 2. Microphone -->
+    <div class="card">
+      <h2><span class="step">2</span> Microphone</h2>
+      <p class="lead">Which microphone to record lectures from. The built-in one is usually right.</p>
+      <div class="row">
+        <select id="device" aria-label="Microphone"></select>
+        <button type="button" class="btn small" id="refreshDevices">Refresh</button>
+      </div>
+      <div class="hint" id="deviceHint"></div>
+    </div>
+
+    <!-- 3. Schedule -->
+    <div class="card">
+      <h2><span class="step">3</span> Class schedule</h2>
+      <p class="lead">
+        One line for every time a class meets. Recordings are filed under the class
+        that starts nearest the time you began recording.
+      </p>
+      <table>
+        <thead><tr><th>Day</th><th>Starts at</th><th>Course code</th><th></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="table-foot">
+        <button type="button" class="btn small" id="addRow">+ Add a class</button>
+        <div class="hint">Course codes become Drive folder names, like <b>ACCT-4321</b>.</div>
+      </div>
+      <details class="advanced">
+        <summary>Advanced: matching window</summary>
+        <input type="number" id="tolerance" min="0" max="180" step="5"> minutes.
+        How far from a class's start time a recording can begin and still count as that
+        class. Keep it well under the gap between back-to-back classes: with a 12:00 and a
+        14:00 on the same day, anything near 60 lets the wrong class win.
+      </details>
+    </div>
+
+    <!-- 4. Notion -->
+    <div class="card">
+      <h2><span class="step">4</span> Notion <span style="font-weight:400;letter-spacing:0;text-transform:none">(optional)</span></h2>
+      <label class="toggle"><input type="checkbox" id="notionOn"> Send each lecture's deadlines to a Notion to-do list</label>
+      <div id="notionFields" hidden>
+        <p class="lead" style="margin-top:14px">
+          Create an internal integration at
+          <a href="https://www.notion.so/my-integrations" target="_blank" rel="noopener">notion.so/my-integrations</a>
+          and copy its secret. Then open your to-do database in Notion, choose
+          <b>Connections</b> under the <b>&hellip;</b> menu, and add the integration.
+          Without that step Notion answers every request with 404.
+        </p>
+        <label for="notionToken">Integration secret</label>
+        <input type="password" id="notionToken" placeholder="ntn_..." spellcheck="false">
+        <div class="hint" id="notionTokenHint"></div>
+        <label for="notionDb">Database URL</label>
+        <input type="url" id="notionDb" placeholder="https://www.notion.so/..." spellcheck="false">
+        <div class="hint">Paste the whole address from your browser while the database is open.</div>
+      </div>
+    </div>
+
+    <div class="save-bar">
+      <button type="submit" class="btn primary" id="save">Save settings</button>
+      <div class="hint" id="saveHint"></div>
+    </div>
+  </form>
+
+  <!-- 5. Drive -->
+  <div class="card">
+    <h2><span class="step">5</span> Google Drive</h2>
+    <p class="lead">
+      Summaries are filed as Google Docs in a "Lecture Notes" folder in your own Drive.
+      Connecting opens Google in a new tab; sign in and allow access. The app can only see
+      files it created itself.
+    </p>
+    <div class="row">
+      <div class="status-line"><span class="dot off" id="driveDot"></span><span id="driveText">Not connected</span></div>
+      <div style="display:flex;gap:8px">
+        <button type="button" class="btn" id="driveBtn">Connect Google Drive</button>
+        <button type="button" class="btn danger" id="driveOff" hidden>Disconnect</button>
+      </div>
+    </div>
+    <div class="hint" id="driveHint"></div>
+  </div>
+
+  <!-- Checkup -->
+  <div class="card">
+    <h2>Checkup <button type="button" class="btn small" id="recheck" style="margin-left:auto">Run again</button></h2>
+    <p class="lead">The same checks as <code>lectureai doctor</code>, so you can see what still needs doing.</p>
+    <div class="checks" id="checks"><div class="hint">Checking&hellip;</div></div>
+  </div>
+
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const DAY_NAMES = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday",
+                    Fri: "Friday", Sat: "Saturday", Sun: "Sunday" };
+let current = null;
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, c => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
+function flash(message, isError, html) {
+  const el = $("flash");
+  if (html) el.innerHTML = message; else el.textContent = message;
+  el.className = "flash" + (isError ? " err" : "");
+  el.style.display = "block";
+  clearTimeout(flash._t);
+  flash._t = setTimeout(() => { el.style.display = "none"; }, isError ? 12000 : 7000);
+}
+
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: body === undefined ? "GET" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok || data.ok === false) {
+    const err = new Error(data.error || "request failed");
+    err.row = data.row;
+    throw err;
+  }
+  return data;
+}
+
+function hourLabel(h) {
+  const suffix = h < 12 ? "AM" : "PM";
+  const twelve = h % 12 === 0 ? 12 : h % 12;
+  return `${twelve}:00 ${suffix}`;
+}
+
+function hourOptions(selected) {
+  let out = "";
+  for (let h = 6; h <= 22; h++) {
+    out += `<option value="${h}" ${h === selected ? "selected" : ""}>${hourLabel(h)}</option>`;
+  }
+  return out;
+}
+
+function dayOptions(selected) {
+  return DAYS.map(d => `<option value="${d}" ${d === selected ? "selected" : ""}>${DAY_NAMES[d]}</option>`).join("");
+}
+
+function addRow(row) {
+  row = row || { day: "Mon", start: 9, course: "" };
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td><select class="day" aria-label="Day">${dayOptions(row.day)}</select></td>
+    <td><select class="start" aria-label="Start time">${hourOptions(Number(row.start))}</select></td>
+    <td><input type="text" class="course" aria-label="Course code" placeholder="ACCT-4321" value="${escapeHtml(row.course)}" spellcheck="false"></td>
+    <td><button type="button" class="btn small remove" aria-label="Remove this class">&times;</button></td>`;
+  tr.querySelector(".remove").onclick = () => tr.remove();
+  $("rows").appendChild(tr);
+  return tr;
+}
+
+function readRows() {
+  return [...$("rows").querySelectorAll("tr")].map(tr => ({
+    day: tr.querySelector(".day").value,
+    start: Number(tr.querySelector(".start").value),
+    course: tr.querySelector(".course").value.trim(),
+  }));
+}
+
+function renderDevices(s) {
+  const sel = $("device");
+  const options = s.devices.map(d =>
+    `<option value="${escapeHtml(d.name)}">${escapeHtml(d.name)}</option>`);
+  const known = s.devices.some(d => d.name === s.device || d.name.toLowerCase().includes(String(s.device).toLowerCase()));
+  if (!known && s.device) {
+    options.unshift(`<option value="${escapeHtml(s.device)}">${escapeHtml(s.device)} (not attached right now)</option>`);
+  }
+  sel.innerHTML = options.join("") || `<option value="">No microphones found</option>`;
+  // Pick the saved device: exact name first, then the substring config allows.
+  let pick = s.devices.find(d => d.name === s.device)
+          || s.devices.find(d => d.name.toLowerCase().includes(String(s.device).toLowerCase()));
+  sel.value = pick ? pick.name : (s.device || "");
+  $("deviceHint").textContent = s.devices.length
+    ? "Names are used rather than numbers, because macOS renumbers devices whenever a phone or headset connects."
+    : "No audio inputs were found. If this Mac has a microphone, allow your terminal app under System Settings > Privacy & Security > Microphone, then refresh.";
+}
+
+function render(s) {
+  current = s;
+  $("homePath").textContent = s.home;
+  DAYS = s.days;
+
+  $("openaiHint").textContent = s.openai_set ? `Saved: ${s.openai}. Leave blank to keep it.` : "";
+  $("anthropicHint").textContent = s.anthropic_set ? `Saved: ${s.anthropic}. Leave blank to keep it.` : "";
+  $("openai").placeholder = s.openai_set ? "leave blank to keep the saved key" : "sk-...";
+  $("anthropic").placeholder = s.anthropic_set ? "leave blank to keep the saved key" : "sk-ant-...";
+
+  renderDevices(s);
+
+  $("rows").innerHTML = "";
+  if (s.schedule.length) s.schedule.forEach(addRow); else addRow();
+  $("tolerance").value = s.tolerance;
+  if (s.schedule_error) flash(`Your schedule file could not be read (${s.schedule_error}). Saving will rewrite it.`, true);
+
+  $("notionOn").checked = s.notion.enabled;
+  $("notionFields").hidden = !s.notion.enabled;
+  $("notionTokenHint").textContent = s.notion.token_set ? `Saved: ${s.notion.token}. Leave blank to keep it.` : "";
+  $("notionToken").placeholder = s.notion.token_set ? "leave blank to keep the saved secret" : "ntn_...";
+  $("notionDb").value = s.notion.database || "";
+
+  renderDrive(s.drive);
+  $("done").style.display = (s.configured && s.drive.connected) ? "block" : "none";
+}
+
+function renderDrive(d) {
+  $("driveDot").className = "dot " + (d.connected ? "on" : (d.error ? "bad" : "off"));
+  $("driveText").textContent = d.connected ? "Connected" : (d.running ? "Waiting for you to finish in the browser" : "Not connected");
+  $("driveBtn").hidden = d.connected;
+  $("driveBtn").disabled = d.running;
+  $("driveBtn").textContent = d.running ? "Connecting..." : "Connect Google Drive";
+  $("driveOff").hidden = !d.connected;
+  $("driveHint").textContent = d.error ? `Last attempt failed: ${d.error}` : "";
+}
+
+async function load() {
+  try { render(await api("/api/setup")); }
+  catch (e) { flash(`Could not load settings: ${e.message}`, true); }
+}
+
+async function checkup() {
+  try {
+    const out = await api("/api/doctor");
+    $("checks").innerHTML = out.checks.map(c => `
+      <div class="check">
+        <span class="dot ${c.ok ? "on" : (c.required ? "bad" : "off")}"></span>
+        <div>
+          <span class="check-name">${escapeHtml(c.name)}</span>
+          <span class="check-detail">${escapeHtml(c.detail)}</span>
+          ${c.ok || !c.fix ? "" : `<div class="check-fix">Fix: ${renderFix(c.fix)}</div>`}
+        </div>
+      </div>`).join("");
+  } catch (e) {
+    $("checks").innerHTML = `<div class="hint">Could not run the checks: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderFix(fix) {
+  // Anything the page itself can do is phrased for the page; the rest is a
+  // command, shown as one.
+  const text = escapeHtml(fix);
+  if (/lectureai setup/.test(fix)) return "fill in the section above and save";
+  if (/lectureai login/.test(fix)) return "click Connect Google Drive above";
+  return text.replace(/(brew install \S+)/, "<code>$1</code>");
+}
+
+$("addRow").onclick = () => { addRow().querySelector(".course").focus(); };
+$("refreshDevices").onclick = load;
+$("notionOn").onchange = () => { $("notionFields").hidden = !$("notionOn").checked; };
+
+$("form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  for (const tr of $("rows").querySelectorAll("tr")) tr.classList.remove("bad");
+  $("save").disabled = true;
+  $("saveHint").textContent = "Saving...";
+  try {
+    const out = await api("/api/setup", {
+      openai_key: $("openai").value,
+      anthropic_key: $("anthropic").value,
+      device: $("device").value,
+      schedule: readRows(),
+      tolerance: Number($("tolerance").value),
+      notion: {
+        enabled: $("notionOn").checked,
+        token: $("notionToken").value,
+        database: $("notionDb").value,
+      },
+    });
+    $("openai").value = ""; $("anthropic").value = ""; $("notionToken").value = "";
+    flash(`Saved. ${out.classes} class meeting${out.classes === 1 ? "" : "s"} on the schedule.`);
+    await load();
+    await checkup();
+    if (!current.drive.connected) {
+      $("driveBtn").scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  } catch (e) {
+    flash(e.message, true);
+    if (e.row) {
+      const tr = $("rows").querySelectorAll("tr")[e.row - 1];
+      if (tr) { tr.classList.add("bad"); tr.querySelector(".course").focus(); }
+    }
+  } finally {
+    $("save").disabled = false;
+    $("saveHint").textContent = "";
+  }
+};
+
+let drivePoll = null;
+$("driveBtn").onclick = async () => {
+  try {
+    await api("/api/drive/login", {});
+    renderDrive({ connected: false, running: true, error: "" });
+    flash("A Google sign-in page should have opened. Finish there, then come back here.");
+    clearInterval(drivePoll);
+    drivePoll = setInterval(async () => {
+      try {
+        const s = await api("/api/setup");
+        renderDrive(s.drive);
+        if (!s.drive.running) {
+          clearInterval(drivePoll);
+          if (s.drive.connected) { flash("Google Drive connected."); render(s); }
+          checkup();
+        }
+      } catch (e) { /* retry next tick */ }
+    }, 1500);
+  } catch (e) {
+    flash(e.message, true);
+  }
+};
+
+$("driveOff").onclick = async () => {
+  if (!confirm("Disconnect Google Drive? You can connect again any time.")) return;
+  try { await api("/api/drive/disconnect", {}); await load(); await checkup(); }
+  catch (e) { flash(e.message, true); }
+};
+
+$("recheck").onclick = checkup;
+
+// Theme follows the control panel's saved choice; there are no buttons here
+// because the panel is where you pick it.
+load().then(checkup);
+</script>
+</body>
+</html>

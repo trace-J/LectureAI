@@ -49,8 +49,8 @@ failed upload never costs you the transcription you already paid for.
 
 ## Setup
 
-You need a Mac, Homebrew, an OpenAI API key, and an Anthropic API key. Five
-commands:
+You need a Mac, Homebrew, an OpenAI API key, and an Anthropic API key. Three
+commands in Terminal, then the rest happens in your browser:
 
 ```bash
 brew install ffmpeg pipx
@@ -61,27 +61,35 @@ pipx install git+https://github.com/trace-J/LectureAI
 ```
 
 ```bash
+lectureai panel
+```
+
+That opens the control panel in your browser. The first time, with nothing
+configured, it lands on the **Setup** page: paste your two keys, pick a
+microphone from the list, add a row for every time a class meets, tick Notion
+if you want it, and click **Connect Google Drive**, which opens a Google
+sign-in tab. A checkup at the bottom of the page shows what still needs doing
+and turns green as you go. Everything is saved on your Mac in `~/.lectureai`;
+nothing is sent anywhere but to the services you gave keys for.
+
+Come back to the Setup page any time from the gear in the panel's header.
+Saved keys are shown masked and a blank field keeps what is there, so
+changing one thing never means retyping the rest.
+
+The same setup works from Terminal if you prefer:
+
+```bash
 lectureai setup
 ```
 
-```bash
-lectureai doctor
-```
+It asks for the two keys, shows the microphones ffmpeg can see, takes your
+class schedule one line at a time (`Tue 14 ACCT-4321`, blank line when done),
+asks once about Notion, and offers to authorize Google Drive at the end.
 
-```bash
-lectureai record
-```
-
-`lectureai setup` asks for the two keys, shows the microphones ffmpeg can see
-and lets you pick one, then takes your class schedule one line at a time
-(`Tue 14 ACCT-4321`, blank line when done). Notion is optional and it asks once.
-At the end it offers to authorize Google Drive, which opens a browser. Run it
-again any time: it shows what is there and Enter keeps each value, so changing
-one key does not mean retyping the rest.
-
-`lectureai doctor` prints one line per thing that has to be right, with the
-exact fix next to anything that is not. It is the first thing to run when
-something misbehaves, and it never touches the network.
+Either way, `lectureai doctor` is the check to run when something misbehaves.
+It prints one line per thing that has to be right, with the exact fix next to
+anything that is not, and it never touches the network. The Setup page's
+checkup is the same list.
 
 ```
 ok    Python               3.12.14
@@ -118,7 +126,8 @@ a new terminal. To update later: `pipx upgrade lectureai`.
 lectureai panel
 ```
 
-Then open <http://127.0.0.1:5173>. One page to start and stop a recording,
+It opens <http://127.0.0.1:5173> in your browser (add `--no-browser` to skip
+that). One page to start and stop a recording,
 start and stop the watcher, see what's waiting in the inbox, and open recent
 lectures in Drive. It drives the same modules the CLI does, so a recording
 started here is identical to one started with `lectureai record`.
@@ -265,6 +274,10 @@ permanently.
 **A recording was filed under the wrong course.** Rename it with the course
 code in the filename and drop it back in `inbox/`. The filename fallback will
 catch it.
+
+**The panel opens on the Setup page instead of the controls.** Both keys and
+at least one class are needed before anything can be recorded and filed. Fill
+them in and the panel is one click away in the header.
 
 **You installed before the home directory existed.** Your `.env`, token, and
 log are still next to the code. The first `lectureai` command you run offers

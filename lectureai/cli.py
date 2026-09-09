@@ -5,7 +5,7 @@
     lectureai record           record from this Mac's microphone
     lectureai watch            process the inbox until Ctrl-C
     lectureai watch --once F   process one file and exit
-    lectureai panel            the local control panel
+    lectureai panel            the control panel, and setup, in your browser
     lectureai login            authorize Google Drive
     lectureai notion --check   what the Notion integration sees
     lectureai notion --setup   add the Notion properties it needs
@@ -74,19 +74,6 @@ def offer_migration(ask=input, say=log) -> bool:
     return True
 
 
-def _reload_settings() -> None:
-    """Re-read .env after a migration so this same process sees the keys."""
-    from dotenv import load_dotenv
-    load_dotenv(config.ENV_FILE)
-    import os
-    for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "NOTION_TOKEN",
-                 "NOTION_DATABASE", "NOTION_TARGET", "RECORD_DEVICE",
-                 "DRIVE_PARENT_FOLDER_ID", "DRIVE_ROOT_FOLDER_NAME"):
-        if os.getenv(name) is not None:
-            setattr(config, name, os.getenv(name))
-    config.reload_schedule()
-
-
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
 
@@ -110,9 +97,10 @@ def main(argv: list[str] | None = None) -> int:
     # on a prompt nobody sees.
     if command != "setup" and sys.stdin.isatty() and config.legacy_files():
         if offer_migration():
-            _reload_settings()
+            config.reload()
 
     if command in NEEDS_SCHEDULE and "--list-devices" not in rest \
+            and "--no-browser" not in rest and command != "panel" \
             and "-h" not in rest and "--help" not in rest:
         try:
             config.schedule()
