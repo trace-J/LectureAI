@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from datetime import date, datetime
 from pathlib import Path
 
 import requests
@@ -278,13 +279,20 @@ def add_task(data_source_id: str, mapping: dict, schema: dict, item: dict,
 
 def push(items: list[dict], course: str, source_url: str = "",
          dry_run: bool = False) -> dict:
-    """Add a lecture's action items to the configured Notion database.
+    """Add a lecture's action items to Notion.
 
-    Returns counts of what happened. Skips items already present, so a
-    re-processed lecture doesn't duplicate anything.
+    Two shapes of destination exist and they are not interchangeable. The
+    checklist people actually tick lives in page blocks: a weekly page with a
+    column per day. Database rows are a separate surface with real Due and
+    Course fields, invisible from the weekly page and vice versa. NOTION_TARGET
+    picks which one, defaulting to the weekly page because that is the one you
+    look at.
     """
     if not items:
         return {"added": 0, "skipped": 0, "failed": 0, "urls": []}
+
+    if config.NOTION_TARGET == "weekly":
+        return push_to_weekly(items, course, source_url, dry_run)
 
     data_source_id, db_title = resolve_data_source()
     schema = get_schema(data_source_id)
@@ -317,6 +325,221 @@ def push(items: list[dict], course: str, source_url: str = "",
             log(f"  could not add {label}: {exc}")
 
     return {"added": added, "skipped": skipped, "failed": failed, "urls": urls}
+
+
+# --- Weekly page ----------------------------------------------------------
+#
+# The to-do database holds a page per week, and inside it a column per day
+# with checkboxes. That is where the checklist actually lives; the database
+# rows are a different surface entirely, which is why a task can be filed
+# correctly as a row and still be nowhere you would ever see it.
+
+WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+MONTHS = {m: i for i, m in enumerate(
+    ("jan", "feb", "mar", "apr", "may", "jun",
+     "jul", "aug", "sep", "oct", "nov", "dec"), start=1)}
+
+# "Sep 9 - Sep 13", "Sep 9 – 13", "September 28 - October 4". Any dash.
+WEEK_RANGE_RE = re.compile(
+    r"([A-Za-z]{3,9})\.?\s+(\d{1,2})\s*[-–—]+\s*(?:([A-Za-z]{3,9})\.?\s+)?(\d{1,2})"
+)
+
+
+def _plain(block: dict) -> str:
+    """The text of a block, whatever kind of block it is."""
+    body = block.get(block.get("type", ""), {}) or {}
+    return "".join(part.get("plain_text", "") for part in body.get("rich_text", []))
+
+
+def _children(block_id: str) -> list[dict]:
+    return _request("GET", f"/blocks/{block_id}/children?page_size=100").get("results", [])
+
+
+def parse_week_range(text: str, near: date) -> tuple[date, date] | None:
+    """Turn a week heading into a date range, or None if it isn't one.
+
+    Notion headings carry no year, so the year is taken from the date we are
+    filing and checked against its neighbours. That is what keeps the last
+    week of December working.
+    """
+    match = WEEK_RANGE_RE.search(text or "")
+    if not match:
+        return None
+    start_month_name, start_day, end_month_name, end_day = match.groups()
+    start_month = MONTHS.get(start_month_name[:3].lower())
+    end_month = MONTHS.get((end_month_name or start_month_name)[:3].lower())
+    if not start_month or not end_month:
+        return None
+
+    for year in (near.year, near.year - 1, near.year + 1):
+        try:
+            start = date(year, start_month, int(start_day))
+            end = date(year, end_month, int(end_day))
+        except ValueError:
+            continue
+        # A range that ends before it starts has rolled into the new year.
+        if end < start:
+            try:
+                end = date(year + 1, end_month, int(end_day))
+            except ValueError:
+                continue
+        if start <= near <= end:
+            return start, end
+    return None
+
+
+def weekly_pages() -> list[dict]:
+    """Every page in the database, with its first heading.
+
+    One request per page, so this stays cheap only because a to-do database
+    holds a handful of weeks, not thousands of rows.
+    """
+    ds, _ = resolve_data_source()
+    rows = _request("POST", f"/data_sources/{ds}/query", {"page_size": 100})
+    pages = []
+    for row in rows.get("results", []):
+        title_prop = next((p for p in row["properties"].values()
+                           if p.get("type") == "title"), {})
+        title = "".join(t.get("plain_text", "") for t in title_prop.get("title", []))
+        heading = ""
+        for block in _children(row["id"]):
+            if block["type"].startswith("heading"):
+                heading = _plain(block)
+                break
+        pages.append({"id": row["id"], "title": title, "heading": heading})
+    return pages
+
+
+def find_week_page(due: date) -> dict | None:
+    """The weekly page whose heading covers `due`, or None.
+
+    Returning None rather than guessing is deliberate: writing a task into the
+    wrong week is worse than not writing it, because you would not notice.
+    """
+    for page in weekly_pages():
+        span = parse_week_range(page["heading"], due)
+        if span:
+            return dict(page, span=span)
+    return None
+
+
+def find_day_column(page_id: str, due: date) -> str | None:
+    """The id of the column whose heading names `due`'s weekday."""
+    wanted = WEEKDAYS[due.weekday()]
+    for block in _children(page_id):
+        if block["type"] != "column_list":
+            continue
+        for column in _children(block["id"]):
+            for child in _children(column["id"]):
+                if not child["type"].startswith("heading"):
+                    continue
+                # Headings carry stray spaces and emoji, and say "Tues" and
+                # "Thur" rather than "Tue" and "Thu".
+                letters = "".join(c for c in _plain(child) if c.isalpha()).lower()
+                if letters.startswith(wanted):
+                    return column["id"]
+    return None
+
+
+def _column_todos(column_id: str) -> list[dict]:
+    return [b for b in _children(column_id) if b["type"] == "to_do"]
+
+
+def _todo_text(task: str, course: str, source_url: str = "") -> list[dict]:
+    """Rich text for one checkbox: the course, the task, and a link to notes."""
+    label = f"{course}: {task}" if course else task
+    parts = [{"type": "text", "text": {"content": label[:1800]}}]
+    if source_url:
+        parts.append({"type": "text",
+                      "text": {"content": "  notes", "link": {"url": source_url}}})
+    return parts
+
+
+def add_to_day(column_id: str, task: str, course: str, source_url: str = "") -> str:
+    """Put a checkbox in a day column. Fills a blank one before adding more.
+
+    The weekly template ships three empty checkboxes per day. Filling those
+    first keeps the column looking like the one you set up, instead of
+    stacking new items underneath a row of blanks.
+    """
+    for existing in _column_todos(column_id):
+        if not _plain(existing).strip():
+            _request("PATCH", f"/blocks/{existing['id']}",
+                     {"to_do": {"rich_text": _todo_text(task, course, source_url)}})
+            return existing["id"]
+
+    created = _request("PATCH", f"/blocks/{column_id}/children", {
+        "children": [{"object": "block", "type": "to_do",
+                      "to_do": {"rich_text": _todo_text(task, course, source_url),
+                                "checked": False}}]
+    })
+    return created.get("results", [{}])[0].get("id", "")
+
+
+def _already_on_page(page_id: str, task: str, course: str) -> bool:
+    """Whether this task is already a checkbox somewhere on the weekly page."""
+    label = (f"{course}: {task}" if course else task).strip().lower()
+    for block in _children(page_id):
+        if block["type"] != "column_list":
+            continue
+        for column in _children(block["id"]):
+            for todo in _column_todos(column["id"]):
+                if _plain(todo).strip().lower().startswith(label):
+                    return True
+    return False
+
+
+def push_to_weekly(items: list[dict], course: str, source_url: str = "",
+                   dry_run: bool = False) -> dict:
+    """Add each action item as a checkbox under its due day."""
+    added, skipped, failed, notes = 0, 0, 0, []
+
+    for item in items:
+        task = item["task"]
+        due_text = item.get("due_date") or ""
+        try:
+            due = datetime.strptime(due_text, "%Y-%m-%d").date()
+        except ValueError:
+            failed += 1
+            notes.append(f"{task[:50]}: no due date, so no day to file it under")
+            continue
+
+        page = find_week_page(due)
+        if not page:
+            failed += 1
+            notes.append(
+                f"{task[:50]}: no weekly page covers {due_text}. Duplicate the "
+                f"weekly page and set its heading to that week.")
+            continue
+
+        column = find_day_column(page["id"], due)
+        if not column:
+            failed += 1
+            notes.append(f"{task[:50]}: {page['title']!r} has no "
+                         f"{due.strftime('%A')} column")
+            continue
+
+        try:
+            if _already_on_page(page["id"], task, course):
+                skipped += 1
+                log(f"  already on the weekly page: {task[:60]}")
+                continue
+            if dry_run:
+                added += 1
+                log(f"  would add {task[:50]} under {due.strftime('%a')} "
+                    f"in {page['title']!r}")
+                continue
+            add_to_day(column, task, course, source_url)
+            added += 1
+            log(f"  added under {due.strftime('%a')} ({due_text}): {task[:60]}")
+        except NotionError as exc:
+            failed += 1
+            notes.append(f"{task[:50]}: {exc}")
+
+    for note in notes:
+        log(f"  could not file {note}")
+    return {"added": added, "skipped": skipped, "failed": failed, "notes": notes}
 
 
 def _course_options() -> list[dict]:
@@ -379,8 +602,46 @@ def setup_properties(dry_run: bool = False) -> dict:
     return {"added": sorted(additions), "database": title}
 
 
+def describe_weekly() -> str:
+    """What the weekly pages look like, and where today's tasks would land."""
+    from datetime import timedelta
+    lines = []
+    pages = weekly_pages()
+    if not pages:
+        return "no pages found in the database"
+
+    lines.append(f"{len(pages)} page(s) in the database:")
+    for page in pages:
+        # Headings carry no year, so probe outward from today rather than
+        # from a year ago: the nearest reading is the one a person means.
+        span = None
+        for probe in sorted(range(-370, 371), key=abs):
+            span = parse_week_range(page["heading"], date.today() + timedelta(days=probe))
+            if span:
+                break
+        window = f"{span[0]} to {span[1]}" if span else "no date range in its heading"
+        lines.append(f"  {page['title']!r}  heading={page['heading']!r}  ({window})")
+
+    lines += ["", "where the next seven days would go:"]
+    for offset in range(7):
+        due = date.today() + timedelta(days=offset)
+        page = find_week_page(due)
+        if not page:
+            lines.append(f"  {due} {due.strftime('%a')}  no weekly page covers this")
+            continue
+        column = find_day_column(page["id"], due)
+        where = "column found" if column else "NO matching day column"
+        lines.append(f"  {due} {due.strftime('%a')}  {page['title']!r}: {where}")
+    return "\n".join(lines)
+
+
 def describe() -> str:
     """Human-readable report of what this script sees in your database."""
+    if config.NOTION_TARGET == "weekly":
+        data_source_id, db_title = resolve_data_source()
+        return (f"database:    {db_title}\ntarget:      weekly page columns "
+                f"(NOTION_TARGET=weekly)\n\n" + describe_weekly())
+
     data_source_id, db_title = resolve_data_source()
     schema = get_schema(data_source_id)
     mapping = map_properties(schema)

@@ -281,12 +281,39 @@ NOTION_PROP_DUE=Deadline
 NOTION_PROP_COURSE=Class
 ```
 
+**Where tasks land.** A Notion database has two entirely separate surfaces,
+and this matters more than it sounds. Database **rows** have real Due and
+Course fields. Page **blocks** are where a weekly checklist actually lives: a
+page per week, a column per day, checkboxes inside. A row is invisible from
+the weekly page and vice versa, so a task can be filed perfectly and still be
+nowhere you would ever see it. That happened.
+
+By default (`NOTION_TARGET=weekly`) each action item becomes a **checkbox in
+the day column matching its due date**, prefixed with the course and carrying
+a link back to the Drive summary. Set `NOTION_TARGET=database` to create rows
+with Due/Course/Source fields instead.
+
+The weekly page is found by its date heading, e.g. `Sep 9 - Sep 13`, matched
+against the task's due date. Headings carry no year, so the year is inferred
+from the date being filed and checked against its neighbours, which is what
+keeps the last week of December working. **If no page covers that date, the
+task is skipped and reported** rather than filed into whatever page happens to
+exist: a task hidden in a week you already finished is worse than one that
+never arrived. Duplicate the weekly page and set its heading, and the next run
+picks it up.
+
+Within a day column, a blank checkbox from the template is filled before any
+new one is appended, so the column keeps the shape you set up.
+
+Run `notion_tasks.py --check` to see every page, the date range read from each
+heading, and where the next seven days would land.
+
 **Dates.** A deadline the instructor actually stated is used as-is, with
 anything relative ("next Thursday") resolved against the lecture date. An item
 with no stated deadline is dated to the **next time that class meets**,
 computed from `SCHEDULE`, and labeled `assumed` in the Drive summary so you can
-tell the two apart. Nothing lands undated, because an undated task sinks in a
-list sorted by date.
+tell the two apart. Nothing lands undated, because an undated task has no day
+column to go in and gets skipped.
 
 **Re-runs don't duplicate.** Before adding anything, the database is checked
 for a task with the same title and due date. Re-processing a lecture adds
