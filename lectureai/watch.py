@@ -215,6 +215,7 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
     # by this point, so a Notion outage or a misconfigured database must not
     # cost the recording, and the tasks are recoverable from the summary Doc.
     notion_result = None
+    notion_warning = ""
     if notion_tasks.enabled():
         status("notion", f"{len(result['action_items'])} action items")
         try:
@@ -224,8 +225,14 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
             log(f"  notion: {notion_result['added']} added, "
                 f"{notion_result['skipped']} already there, "
                 f"{notion_result['failed']} failed")
+            notion_warning = notion_tasks.outcome_warning(
+                notion_result, len(result["action_items"]))
         except Exception as exc:
             log(f"  notion: skipped ({exc})")
+            notion_warning = f"Notion was not reached: {exc}"
+        # Recorded with the lecture, not just logged to stderr: a dropped
+        # to-do is silent otherwise, and the panel is where it gets noticed.
+        notion_warning = " ".join(notion_warning.split())[:300]
     elif result["action_items"]:
         log(f"  {len(result['action_items'])} action items (Notion not configured)")
 
@@ -239,7 +246,10 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
             shutil.move(str(path), str(destination))
         original = str(destination)
 
-    write_log_line(course, path.name, final_stem, md_url)
+    # The sixth field only exists when there is something to warn about, so a
+    # clean run's line stays the five fields it has always been.
+    write_log_line(course, path.name, final_stem, md_url,
+                   *([notion_warning] if notion_warning else []))
     log(f"  done: {final_stem}")
     log(f"  summary:    {md_url}")
     log(f"  transcript: {txt_url}")
@@ -247,7 +257,7 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
     return {
         "course": course, "date": date, "stem": final_stem,
         "summary_url": md_url, "transcript_url": txt_url,
-        "original": original,
+        "original": original, "notion_warning": notion_warning,
     }
 
 

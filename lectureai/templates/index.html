@@ -152,6 +152,11 @@
     background: var(--brand-soft); color: var(--brand-deep);
   }
   .tag.err { background: rgba(194,47,61,.12); color: var(--err); }
+  .tag.warn { background: rgba(178,92,0,.12); color: var(--warn); }
+  .row-warn {
+    font-size: 12px; color: var(--warn); font-weight: 400; margin-top: 4px;
+    line-height: 1.4;
+  }
 
   .btn {
     font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
@@ -434,10 +439,16 @@ function render(s) {
           <div class="row-sub">${when} · ${escapeHtml(x.error).slice(0, 120)}</div>
         </div><span class="tag err">failed</span></div>`;
       }
+      // A lecture whose to-dos were dropped used to look like a clean run.
+      const warn = x.warning
+        ? `<div class="row-warn">${escapeHtml(x.warning)}</div>` : "";
+      const tag = x.warning
+        ? `<span class="tag warn">${escapeHtml(x.course)}</span>`
+        : `<span class="tag">${escapeHtml(x.course)}</span>`;
       return `<div class="row"><div class="row-main">
         <a class="row-title" href="${x.url}" target="_blank" rel="noopener">${escapeHtml(x.name)}</a>
-        <div class="row-sub">${when}</div>
-      </div><span class="tag">${escapeHtml(x.course)}</span></div>`;
+        <div class="row-sub">${when}</div>${warn}
+      </div>${tag}</div>`;
     }).join("");
   }
 

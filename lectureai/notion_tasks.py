@@ -277,6 +277,43 @@ def add_task(data_source_id: str, mapping: dict, schema: dict, item: dict,
     return page.get("url", "")
 
 
+def _report(problems: list[tuple[str, str]]) -> dict:
+    """The failure half of a push result, from (task, reason) pairs.
+
+    `notes` reads as a sentence per item, for a log a person is scanning.
+    `reasons` holds the distinct causes on their own, which is what the run
+    summary shows: five items dropped for one missing week heading is one
+    thing to fix, not five.
+    """
+    notes, reasons = [], []
+    for task, reason in problems:
+        notes.append(f"{task[:50]}: {reason}")
+        if reason not in reasons:
+            reasons.append(reason)
+    return {"failed": len(problems), "notes": notes, "reasons": reasons}
+
+
+def outcome_warning(outcome: dict | None, total: int) -> str:
+    """One line naming what never reached Notion, or "" when nothing did.
+
+    The watcher records this alongside the lecture so the control panel can
+    show it. Without it, a lecture whose action items were dropped looked
+    exactly like one that filed all of them, and the only trace was a line on
+    the watcher's stderr that nobody reads.
+
+    Collapsed to single spaces because it goes into a tab-separated log.
+    """
+    if not outcome or not outcome.get("failed"):
+        return ""
+    reasons = outcome.get("reasons") or []
+    line = f"{outcome['failed']} of {total} to-dos did not reach Notion"
+    if reasons:
+        line += ": " + "; ".join(reasons[:2])
+        if len(reasons) > 2:
+            line += f"; and {len(reasons) - 2} more"
+    return " ".join(line.split())
+
+
 def push(items: list[dict], course: str, source_url: str = "",
          dry_run: bool = False) -> dict:
     """Add a lecture's action items to Notion.
@@ -289,7 +326,7 @@ def push(items: list[dict], course: str, source_url: str = "",
     look at.
     """
     if not items:
-        return {"added": 0, "skipped": 0, "failed": 0, "urls": []}
+        return dict(_report([]), added=0, skipped=0, urls=[])
 
     if config.NOTION_TARGET == "weekly":
         return push_to_weekly(items, course, source_url, dry_run)
@@ -302,7 +339,8 @@ def push(items: list[dict], course: str, source_url: str = "",
         log(f"  would add to {db_title!r}, mapped as: "
             + ", ".join(f"{role}={name!r}" for role, name in mapping.items()))
 
-    added, skipped, failed, urls = 0, 0, 0, []
+    added, skipped, urls = 0, 0, []
+    problems: list[tuple[str, str]] = []
     for item in items:
         label = f"{item['task'][:60]}"
         try:
@@ -321,10 +359,10 @@ def push(items: list[dict], course: str, source_url: str = "",
             log(f"  added to Notion: {label}")
         except NotionError as exc:
             # One bad item must not cost the rest of the lecture's tasks.
-            failed += 1
+            problems.append((item["task"], str(exc)))
             log(f"  could not add {label}: {exc}")
 
-    return {"added": added, "skipped": skipped, "failed": failed, "urls": urls}
+    return dict(_report(problems), added=added, skipped=skipped, urls=urls)
 
 
 # --- Weekly page ----------------------------------------------------------
@@ -538,7 +576,10 @@ def _already_on_page(page_id: str, task: str, course: str) -> bool:
 def push_to_weekly(items: list[dict], course: str, source_url: str = "",
                    dry_run: bool = False) -> dict:
     """Add each action item as a checkbox under its due day."""
-    added, skipped, failed, notes = 0, 0, 0, []
+    added, skipped = 0, 0
+    # (task, reason) rather than a formatted string, so the caller can report
+    # the reason on its own instead of parsing it back out of a sentence.
+    problems: list[tuple[str, str]] = []
 
     for item in items:
         task = item["task"]
@@ -546,25 +587,20 @@ def push_to_weekly(items: list[dict], course: str, source_url: str = "",
         try:
             due = datetime.strptime(due_text, "%Y-%m-%d").date()
         except ValueError:
-            failed += 1
-            notes.append(f"{task[:50]}: no due date, so no day to file it under")
+            problems.append((task, "no due date, so no day to file it under"))
             continue
 
         page = find_week_page(due)
         if not page:
-            failed += 1
-            notes.append(
-                f"{task[:50]}: no week heading covers {due_text}. Add a heading "
-                f"naming that week (e.g. \"Sep 21 - 27\") above its day "
-                f"columns.")
+            problems.append((task, f"no week heading covers {due_text}. Add a "
+                                   f"heading naming that week (e.g. "
+                                   f"\"Sep 21 - 27\") above its day columns."))
             continue
 
         column = find_day_column(page, due)
         if not column:
-            failed += 1
-            notes.append(f"{task[:50]}: {page['heading']!r} in "
-                         f"{page['title']!r} has no "
-                         f"{due.strftime('%A')} column")
+            problems.append((task, f"{page['heading']!r} in {page['title']!r} "
+                                   f"has no {due.strftime('%A')} column"))
             continue
 
         try:
@@ -582,12 +618,12 @@ def push_to_weekly(items: list[dict], course: str, source_url: str = "",
             log(f"  added under {due.strftime('%a')} ({due_text}) of "
                 f"{page['heading']!r}: {task[:60]}")
         except NotionError as exc:
-            failed += 1
-            notes.append(f"{task[:50]}: {exc}")
+            problems.append((task, str(exc)))
 
-    for note in notes:
+    report = _report(problems)
+    for note in report["notes"]:
         log(f"  could not file {note}")
-    return {"added": added, "skipped": skipped, "failed": failed, "notes": notes}
+    return dict(report, added=added, skipped=skipped)
 
 
 def _course_options() -> list[dict]:
