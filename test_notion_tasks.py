@@ -386,28 +386,40 @@ def _as_read(todo: dict) -> dict:
 
 
 class FakeWeekly:
-    """A weekly page: a heading and seven day columns of blank checkboxes."""
+    """A weekly page: one or more week headings, each with seven day columns.
+
+    `headings` takes several weeks to mirror the real page, which stacks the
+    new week above the old one instead of starting a fresh page. Column ids
+    are `col-<week>-<weekday>` so a test can name the exact week it expects.
+    """
 
     DAYS = (" Mon", " Tues", " Wed", " Thur", " Fri", " Sat", " Sun")
 
-    def __init__(self, heading="Sep 9 - Sep 13", blanks=3):
+    def __init__(self, heading="Sep 9 - Sep 13", blanks=3, headings=None):
         self.blocks = {}
         self.appended = []
         self.updated = []
         self.page = "page-1"
-        head = {"id": "h1", "type": "heading_1",
-                "heading_1": {"rich_text": [{"plain_text": heading}]}}
-        cols = []
-        for i, label in enumerate(self.DAYS):
-            kids = [{"id": f"h-{i}", "type": "heading_3",
-                     "heading_3": {"rich_text": [{"plain_text": label}]}}]
-            for b in range(blanks):
-                kids.append({"id": f"todo-{i}-{b}", "type": "to_do",
-                             "to_do": {"rich_text": [], "checked": False}})
-            self.blocks[f"col-{i}"] = kids
-            cols.append({"id": f"col-{i}", "type": "column"})
-        self.blocks["cl-1"] = cols
-        self.blocks[self.page] = [head, {"id": "cl-1", "type": "column_list"}]
+        self.headings = list(headings) if headings else [heading]
+        # Notion pages open with an intro paragraph, ahead of any heading.
+        page_blocks = [{"id": "intro", "type": "paragraph",
+                        "paragraph": {"rich_text": [{"plain_text": "Add your to-dos"}]}}]
+        for w, text in enumerate(self.headings):
+            page_blocks.append({"id": f"h1-{w}", "type": "heading_1",
+                                "heading_1": {"rich_text": [{"plain_text": text}]}})
+            page_blocks.append({"id": f"div-{w}", "type": "divider", "divider": {}})
+            cols = []
+            for i, label in enumerate(self.DAYS):
+                kids = [{"id": f"h-{w}-{i}", "type": "heading_3",
+                         "heading_3": {"rich_text": [{"plain_text": label}]}}]
+                for b in range(blanks):
+                    kids.append({"id": f"todo-{w}-{i}-{b}", "type": "to_do",
+                                 "to_do": {"rich_text": [], "checked": False}})
+                self.blocks[f"col-{w}-{i}"] = kids
+                cols.append({"id": f"col-{w}-{i}", "type": "column"})
+            self.blocks[f"cl-{w}"] = cols
+            page_blocks.append({"id": f"cl-{w}", "type": "column_list"})
+        self.blocks[self.page] = page_blocks
 
     def __call__(self, method, path, payload=None):
         if method == "GET" and path.startswith("/databases/"):
@@ -437,11 +449,12 @@ class FakeWeekly:
             return {"id": bid}
         raise AssertionError(f"unexpected {method} {path}")
 
-    def texts(self, day_index):
+    def texts(self, day_index, week=0):
         return [
             "".join(p.get("plain_text") or p.get("text", {}).get("content", "")
                     for p in b["to_do"]["rich_text"])
-            for b in self.blocks[f"col-{day_index}"] if b["type"] == "to_do"
+            for b in self.blocks[f"col-{week}-{day_index}"]
+            if b["type"] == "to_do"
         ]
 
 
@@ -497,7 +510,7 @@ def t22():
     fake = FakeWeekly(heading="Oct 5 - Oct 11"); nt._request = fake
     out = nt.push_to_weekly(ITEM, "ACCT-4321")
     assert out["added"] == 0 and out["failed"] == 1, out
-    assert "no weekly page covers" in out["notes"][0], out["notes"]
+    assert "no week heading covers" in out["notes"][0], out["notes"]
     assert not fake.updated and not fake.appended, "wrote into the wrong week"
 results.append(run("no matching week means skip and say so, not guess", t22))
 
@@ -524,6 +537,54 @@ def t24():
     assert any((p["text"].get("link") or {}).get("url") == "https://drive/doc"
                for p in parts), parts
 results.append(run("the checkbox carries the course and links to the notes", t24))
+
+
+def t22b():
+    """The bug that dropped two of a lecture's three action items.
+
+    The page stacked "Sep 14 - 20" above "Sep 9 - Sep 13", and only the first
+    heading was ever read, so anything due in the lower week was reported as
+    having no page at all.
+    """
+    reset_overrides()
+    fake = FakeWeekly(headings=["Sep 14 - 20", "Sep 9 - Sep 13"])
+    nt._request = fake
+    out = nt.push_to_weekly(ITEM, "ACCT-4321")   # due 2026-09-10, a Thursday
+    assert out["added"] == 1 and out["failed"] == 0, out
+    # Week 1 is "Sep 9 - Sep 13"; index 3 is Thursday.
+    assert any("Read chapter 7" in t for t in fake.texts(3, week=1)), \
+        fake.texts(3, week=1)
+results.append(run("a week lower down the page is found, not just the first", t22b))
+
+
+def t22c():
+    """A day column is looked up inside the matched week, not page-wide.
+
+    Every week has a Thursday column, so a search that scans the page in order
+    lands in whichever week sits highest -- silently filing the task a week
+    early or late.
+    """
+    reset_overrides()
+    fake = FakeWeekly(headings=["Sep 14 - 20", "Sep 9 - Sep 13"])
+    nt._request = fake
+    nt.push_to_weekly(ITEM, "ACCT-4321")
+    assert not any(t.strip() for t in fake.texts(3, week=0)), \
+        f"filed into the wrong week: {fake.texts(3, week=0)}"
+
+
+results.append(run("the day column comes from the matched week", t22c))
+
+
+def t22d():
+    """Sections are split on headings, and the intro paragraph belongs to none."""
+    reset_overrides()
+    fake = FakeWeekly(headings=["Sep 14 - 20", "Sep 9 - Sep 13"])
+    nt._request = fake
+    sections = nt.week_sections(fake.page)
+    assert [s["heading"] for s in sections] == ["Sep 14 - 20", "Sep 9 - Sep 13"], \
+        sections
+    assert [s["column_lists"] for s in sections] == [["cl-0"], ["cl-1"]], sections
+results.append(run("each heading owns the columns that follow it", t22d))
 
 
 def t25():

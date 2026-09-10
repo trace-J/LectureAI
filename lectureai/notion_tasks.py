@@ -329,10 +329,16 @@ def push(items: list[dict], course: str, source_url: str = "",
 
 # --- Weekly page ----------------------------------------------------------
 #
-# The to-do database holds a page per week, and inside it a column per day
-# with checkboxes. That is where the checklist actually lives; the database
-# rows are a different surface entirely, which is why a task can be filed
-# correctly as a row and still be nowhere you would ever see it.
+# The to-do database holds pages of day columns with checkboxes. That is where
+# the checklist actually lives; the database rows are a different surface
+# entirely, which is why a task can be filed correctly as a row and still be
+# nowhere you would ever see it.
+#
+# A week is a HEADING, not a page. One page commonly stacks several weeks --
+# "Sep 14 - 20" and its columns, then "Sep 9 - Sep 13" and its columns -- and
+# people add the new week above the old one rather than starting a new page.
+# So a heading owns the column_list blocks that follow it, up to the next
+# heading, and matching a due date means matching a section inside a page.
 
 WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
@@ -389,10 +395,26 @@ def parse_week_range(text: str, near: date) -> tuple[date, date] | None:
     return None
 
 
-def weekly_pages() -> list[dict]:
-    """Every page in the database, with its first heading.
+def week_sections(page_id: str) -> list[dict]:
+    """The week sections on one page, in the order they appear.
 
-    One request per page, so this stays cheap only because a to-do database
+    Each heading starts a section that owns every column_list after it until
+    the next heading. Blocks ahead of the first heading (the page's intro
+    paragraph) belong to no week and are ignored.
+    """
+    sections: list[dict] = []
+    for block in _children(page_id):
+        if block["type"].startswith("heading"):
+            sections.append({"heading": _plain(block), "column_lists": []})
+        elif block["type"] == "column_list" and sections:
+            sections[-1]["column_lists"].append(block["id"])
+    return sections
+
+
+def weekly_pages() -> list[dict]:
+    """Every page in the database, with each week section inside it.
+
+    A few requests per page, so this stays cheap only because a to-do database
     holds a handful of weeks, not thousands of rows.
     """
     ds, _ = resolve_data_source()
@@ -402,35 +424,53 @@ def weekly_pages() -> list[dict]:
         title_prop = next((p for p in row["properties"].values()
                            if p.get("type") == "title"), {})
         title = "".join(t.get("plain_text", "") for t in title_prop.get("title", []))
-        heading = ""
-        for block in _children(row["id"]):
-            if block["type"].startswith("heading"):
-                heading = _plain(block)
-                break
-        pages.append({"id": row["id"], "title": title, "heading": heading})
+        sections = week_sections(row["id"])
+        pages.append({
+            "id": row["id"],
+            "title": title,
+            "sections": sections,
+            # The first heading, kept for messages that name the page.
+            "heading": sections[0]["heading"] if sections else "",
+        })
     return pages
 
 
 def find_week_page(due: date) -> dict | None:
-    """The weekly page whose heading covers `due`, or None.
+    """The week section covering `due`, or None.
+
+    Returns the page it lives on plus that section's own column_lists, so the
+    day column is looked up inside the right week rather than in whichever
+    week happens to sit highest on the page.
 
     Returning None rather than guessing is deliberate: writing a task into the
     wrong week is worse than not writing it, because you would not notice.
     """
     for page in weekly_pages():
-        span = parse_week_range(page["heading"], due)
-        if span:
-            return dict(page, span=span)
+        for section in page["sections"]:
+            span = parse_week_range(section["heading"], due)
+            if span:
+                return dict(page, span=span, heading=section["heading"],
+                            column_lists=section["column_lists"])
     return None
 
 
-def find_day_column(page_id: str, due: date) -> str | None:
-    """The id of the column whose heading names `due`'s weekday."""
+def find_day_column(page: dict | str, due: date) -> str | None:
+    """The id of the column whose heading names `due`'s weekday.
+
+    Takes the section dict from `find_week_page` so the search is confined to
+    that week's columns. A bare page id is still accepted, and then every
+    column on the page is in scope -- which is only unambiguous when the page
+    holds a single week.
+    """
+    if isinstance(page, str):
+        column_lists = [b["id"] for b in _children(page)
+                        if b["type"] == "column_list"]
+    else:
+        column_lists = page["column_lists"]
+
     wanted = WEEKDAYS[due.weekday()]
-    for block in _children(page_id):
-        if block["type"] != "column_list":
-            continue
-        for column in _children(block["id"]):
+    for column_list in column_lists:
+        for column in _children(column_list):
             for child in _children(column["id"]):
                 if not child["type"].startswith("heading"):
                     continue
@@ -478,7 +518,12 @@ def add_to_day(column_id: str, task: str, course: str, source_url: str = "") -> 
 
 
 def _already_on_page(page_id: str, task: str, course: str) -> bool:
-    """Whether this task is already a checkbox somewhere on the weekly page."""
+    """Whether this task is already a checkbox somewhere on the weekly page.
+
+    The whole page, deliberately, not just the week being filed: a task you
+    ticked off or dragged into a neighbouring day must not come back on the
+    next run of the same lecture.
+    """
     label = (f"{course}: {task}" if course else task).strip().lower()
     for block in _children(page_id):
         if block["type"] != "column_list":
@@ -509,14 +554,16 @@ def push_to_weekly(items: list[dict], course: str, source_url: str = "",
         if not page:
             failed += 1
             notes.append(
-                f"{task[:50]}: no weekly page covers {due_text}. Duplicate the "
-                f"weekly page and set its heading to that week.")
+                f"{task[:50]}: no week heading covers {due_text}. Add a heading "
+                f"naming that week (e.g. \"Sep 21 - 27\") above its day "
+                f"columns.")
             continue
 
-        column = find_day_column(page["id"], due)
+        column = find_day_column(page, due)
         if not column:
             failed += 1
-            notes.append(f"{task[:50]}: {page['title']!r} has no "
+            notes.append(f"{task[:50]}: {page['heading']!r} in "
+                         f"{page['title']!r} has no "
                          f"{due.strftime('%A')} column")
             continue
 
@@ -528,11 +575,12 @@ def push_to_weekly(items: list[dict], course: str, source_url: str = "",
             if dry_run:
                 added += 1
                 log(f"  would add {task[:50]} under {due.strftime('%a')} "
-                    f"in {page['title']!r}")
+                    f"of {page['heading']!r}")
                 continue
             add_to_day(column, task, course, source_url)
             added += 1
-            log(f"  added under {due.strftime('%a')} ({due_text}): {task[:60]}")
+            log(f"  added under {due.strftime('%a')} ({due_text}) of "
+                f"{page['heading']!r}: {task[:60]}")
         except NotionError as exc:
             failed += 1
             notes.append(f"{task[:50]}: {exc}")
@@ -618,28 +666,38 @@ def describe_weekly() -> str:
     if not pages:
         return "no pages found in the database"
 
-    lines.append(f"{len(pages)} page(s) in the database:")
+    total = sum(len(page["sections"]) for page in pages)
+    lines.append(f"{len(pages)} page(s), {total} week heading(s):")
     for page in pages:
-        # Headings carry no year, so probe outward from today rather than
-        # from a year ago: the nearest reading is the one a person means.
-        span = None
-        for probe in sorted(range(-370, 371), key=abs):
-            span = parse_week_range(page["heading"], date.today() + timedelta(days=probe))
-            if span:
-                break
-        window = f"{span[0]} to {span[1]}" if span else "no date range in its heading"
-        lines.append(f"  {page['title']!r}  heading={page['heading']!r}  ({window})")
+        lines.append(f"  {page['title']!r}")
+        if not page["sections"]:
+            lines.append("    (no headings, so no week can be matched)")
+        for section in page["sections"]:
+            # Headings carry no year, so probe outward from today rather than
+            # from a year ago: the nearest reading is the one a person means.
+            span = None
+            for probe in sorted(range(-370, 371), key=abs):
+                span = parse_week_range(section["heading"],
+                                        date.today() + timedelta(days=probe))
+                if span:
+                    break
+            window = (f"{span[0]} to {span[1]}" if span
+                      else "no date range in this heading")
+            columns = len(section["column_lists"])
+            lines.append(f"    {section['heading']!r}  ({window}, "
+                         f"{columns} column block(s))")
 
     lines += ["", "where the next seven days would go:"]
     for offset in range(7):
         due = date.today() + timedelta(days=offset)
         page = find_week_page(due)
         if not page:
-            lines.append(f"  {due} {due.strftime('%a')}  no weekly page covers this")
+            lines.append(f"  {due} {due.strftime('%a')}  no week heading covers this")
             continue
-        column = find_day_column(page["id"], due)
+        column = find_day_column(page, due)
         where = "column found" if column else "NO matching day column"
-        lines.append(f"  {due} {due.strftime('%a')}  {page['title']!r}: {where}")
+        lines.append(f"  {due} {due.strftime('%a')}  {page['heading']!r} in "
+                     f"{page['title']!r}: {where}")
     return "\n".join(lines)
 
 
