@@ -14,10 +14,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _test_home import fresh_home  # noqa: E402
 
-fresh_home()  # before config is imported, so nothing touches ~/.lectureai
+fresh_home()  # before config is imported, so nothing touches ~/.intake
 
-from lectureai import config  # noqa: E402
-from lectureai import gui  # noqa: E402
+from intake import config  # noqa: E402
+from intake import gui  # noqa: E402
 
 
 def run(label, fn):
@@ -206,7 +206,7 @@ results.append(run("the status payload has everything the page reads", t12))
 
 def t12b():
     import json as _json
-    from lectureai import watch
+    from intake import watch
     status = tmp / "status.json"
     config.STATUS_FILE = status
     config.LOCK_FILE = tmp / "no-such.lock"
@@ -224,7 +224,7 @@ results.append(run("the watcher's status is read back by the panel", t12b))
 
 
 def t12c():
-    from lectureai import watch
+    from intake import watch
     config.STATUS_FILE = tmp / "status.json"
     watch.write_status("summarizing", "lecture.m4a")
     # A watcher that died mid-lecture leaves this behind; a stale stage shown
@@ -244,7 +244,7 @@ results.append(run("stale, foreign, or corrupt status reads as idle", t12c))
 
 def t12d():
     import os as _os
-    from lectureai import watch
+    from intake import watch
     config.STATUS_FILE = tmp / "status.json"
     watch.write_status("uploading", "lecture.m4a", "ACCT-4321")
     body = client.get("/api/status").get_json()
@@ -372,7 +372,7 @@ def t20():
     out = res.get_json()
     assert out["ok"] and out["configured"] and out["classes"] == 2, out
 
-    from lectureai import setup_wizard
+    from intake import setup_wizard
     env = setup_wizard.read_env(setup_home / ".env")
     assert env["OPENAI_API_KEY"] == "sk-openai-test-key-000000", env
     assert env["RECORD_DEVICE"] == "MacBook Pro Microphone", env
@@ -421,7 +421,7 @@ def t21():
         "notion": {"enabled": False},
     })
     assert res.status_code == 200, res.get_json()
-    from lectureai import setup_wizard
+    from intake import setup_wizard
     env = setup_wizard.read_env(setup_home / ".env")
     assert env["OPENAI_API_KEY"] == "sk-openai-test-key-000000", "blank key wiped the saved one"
     assert env["ANTHROPIC_API_KEY"] == "sk-ant-test-key-0000000000"
@@ -452,7 +452,7 @@ def t23():
         assert want in names, f"doctor is missing {want}"
     assert "sk-openai-test-key-000000" not in json.dumps(body), "doctor leaked a key"
     drive = next(c for c in body["checks"] if c["name"] == "Drive authorization")
-    assert drive["ok"] is False and drive["fix"] == "lectureai login"
+    assert drive["ok"] is False and drive["fix"] == "intake login"
     assert body["healthy"] is False
     assert "ok" not in body, "an ok field would read as a failed request on the page"
 results.append(run("the checkup endpoint mirrors doctor without exposing secrets", t23))

@@ -19,7 +19,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
-from lectureai import config, google_client
+from intake import config, google_client
 
 FOLDER_MIME = "application/vnd.google-apps.folder"
 
@@ -87,7 +87,7 @@ def get_credentials(interactive: bool = True) -> Credentials:
     if not interactive:
         raise RuntimeError(
             "Google authorization is needed but nothing can open a browser here. "
-            "Run:  lectureai login"
+            "Run:  intake login"
         )
 
     log("  opening browser for Google authorization ...")

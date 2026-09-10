@@ -2,7 +2,7 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "lectureai-gui",
+      "name": "intake-gui",
       "runtimeExecutable": ".venv/bin/python",
       "runtimeArgs": ["gui.py"],
       "port": 5173

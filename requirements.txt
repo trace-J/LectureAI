@@ -1,4 +1,4 @@
 # Dependencies are declared once, in pyproject.toml. This installs the
 # package into the current venv in editable mode, which also gives you the
-# `lectureai` command there.
+# `intake` command there.
 -e .

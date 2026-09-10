@@ -12,7 +12,7 @@ developer who wants to test against a different Cloud project.
 TODO(trace): the bundled client belongs to a Cloud project that is still in
 Testing. Until it is switched to Production in the Google Cloud console
 (APIs & Services > OAuth consent screen > Publishing status), only accounts
-added as test users can complete `lectureai login`, and their refresh tokens
+added as test users can complete `intake login`, and their refresh tokens
 expire every 7 days. Flip it to Production before handing this to anyone else.
 """
 
@@ -22,7 +22,7 @@ import json
 from importlib import resources
 from pathlib import Path
 
-from lectureai import config
+from intake import config
 
 BUNDLED_NAME = "credentials.json"
 
@@ -30,7 +30,7 @@ BUNDLED_NAME = "credentials.json"
 def bundled_client_config() -> dict:
     """The client config shipped inside the package, as the Google libraries
     expect it: {"installed": {"client_id": ..., "client_secret": ..., ...}}."""
-    text = resources.files("lectureai").joinpath(BUNDLED_NAME).read_text()
+    text = resources.files("intake").joinpath(BUNDLED_NAME).read_text()
     return json.loads(text)
 
 
@@ -48,7 +48,7 @@ def client_config() -> dict:
 
 
 def describe() -> str:
-    """One line saying which client is in use, for `lectureai doctor`."""
+    """One line saying which client is in use, for `intake doctor`."""
     override = override_path()
     if override is not None:
         return f"override at {override}"

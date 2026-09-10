@@ -1,9 +1,10 @@
 """Settings, class schedule, and paths for the lecture pipeline.
 
 Everything the pipeline reads or writes lives in one home directory, separate
-from the code: $LECTUREAI_HOME if set, otherwise ~/.lectureai. The code
-directory holds only code, so the same install serves any Mac and the repo
-never fills up with recordings, tokens, and logs.
+from the code: $INTAKE_HOME if set, otherwise ~/.intake ($LECTUREAI_HOME, the
+variable's name before the rename, is still honored when the new one is
+unset). The code directory holds only code, so the same install serves any Mac
+and the repo never fills up with recordings, tokens, and logs.
 """
 
 from __future__ import annotations
@@ -25,22 +26,40 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 # is a site-packages directory and nothing below looks for anything in it.
 CODE_ROOT = PACKAGE_DIR.parent
 
-HOME_ENV_VAR = "LECTUREAI_HOME"
-DEFAULT_HOME = Path("~/.lectureai")
+HOME_ENV_VAR = "INTAKE_HOME"
+# The variable's name before the rename to intake. Still read when the new one
+# is unset, so an existing install keeps finding its data without anyone
+# editing a shell profile. Set INTAKE_HOME instead; this one goes away later.
+LEGACY_HOME_ENV_VAR = "LECTUREAI_HOME"
+DEFAULT_HOME = Path("~/.intake")
+# Where the data lived before the rename. A default install with nothing in
+# ~/.intake yet is offered a move from here (see legacy_files below).
+OLD_DEFAULT_HOME = Path("~/.lectureai")
+
+
+def home_source(env: dict | None = None) -> str:
+    """Which setting decides the home: the env var's name, or "default"."""
+    source = os.environ if env is None else env
+    for name in (HOME_ENV_VAR, LEGACY_HOME_ENV_VAR):
+        if (source.get(name) or "").strip():
+            return name
+    return "default"
 
 
 def resolve_home(env: dict | None = None) -> Path:
-    """The data directory: $LECTUREAI_HOME if set, otherwise ~/.lectureai.
+    """The data directory: $INTAKE_HOME if set, else $LECTUREAI_HOME, else ~/.intake.
 
     Takes the environment as an argument so tests can resolve against a fake
     one without touching the process environment.
     """
     source = os.environ if env is None else env
-    raw = (source.get(HOME_ENV_VAR) or "").strip()
-    return (Path(raw) if raw else DEFAULT_HOME).expanduser().resolve()
+    name = home_source(source)
+    chosen = DEFAULT_HOME if name == "default" else Path(source[name].strip())
+    return chosen.expanduser().resolve()
 
 
 HOME_DIR = resolve_home()
+HOME_SOURCE = home_source()
 
 # Kept for anything that still spells the old name. New code should say
 # HOME_DIR, which is what this has always meant: where the data goes.
@@ -88,31 +107,78 @@ def ensure_home() -> Path:
 
 ensure_home()
 
-# --- Migration from a pre-home-directory checkout --------------------------
+# --- Migration from an older install ---------------------------------------
+#
+# Two kinds of older install leave data where this version does not look: one
+# from before the home directory existed kept everything next to the code, and
+# one from before the rename kept it in ~/.lectureai. Either is offered a move
+# into the home directory the first time the CLI runs against an empty one,
+# and the same code does the moving.
 
-# Files an older install kept next to the code. Offered for a move into the
-# home directory the first time the CLI runs against an empty one.
+# Data files an older install kept next to the code.
 LEGACY_FILES = (".env", "token.json", ".drive_root", "pipeline.log")
+# The old home held these as well; setup wrote them there, never to a checkout.
+LEGACY_HOME_FILES = LEGACY_FILES + ("schedule.toml", "credentials.json")
 LEGACY_DIRS = ("inbox", "processed")
 
 
-def legacy_files() -> list[Path]:
-    """Data files an old install left next to the code, if this is a checkout.
+def old_default_home() -> Path | None:
+    """~/.lectureai, when this install uses the new default and it is on disk.
 
-    Only meaningful when the home directory has no .env yet: once it does, the
-    move has happened (or was declined) and anything left in the checkout is
-    the developer's business.
+    Only the default home is a candidate. Someone who set $INTAKE_HOME or
+    $LECTUREAI_HOME has said where their data is, and the tests, which always
+    set one, must never be offered the real thing.
     """
-    if ENV_FILE.exists() or not (CODE_ROOT / "pyproject.toml").exists():
-        return []
-    if CODE_ROOT == HOME_DIR:
-        return []
-    found = [CODE_ROOT / name for name in LEGACY_FILES if (CODE_ROOT / name).is_file()]
+    if HOME_SOURCE != "default":
+        return None
+    old = OLD_DEFAULT_HOME.expanduser().resolve()
+    if old == HOME_DIR or not old.is_dir():
+        return None
+    return old
+
+
+def legacy_roots() -> list[tuple[Path, tuple[str, ...]]]:
+    """Where an older install may have left data, and the file names to look for."""
+    roots: list[tuple[Path, tuple[str, ...]]] = []
+    old_home = old_default_home()
+    if old_home is not None:
+        roots.append((old_home, LEGACY_HOME_FILES))
+    if (CODE_ROOT / "pyproject.toml").exists() and CODE_ROOT != HOME_DIR:
+        roots.append((CODE_ROOT, LEGACY_FILES))
+    return roots
+
+
+def data_files_in(root: Path, names: tuple[str, ...]) -> list[Path]:
+    """The named files plus the recordings in inbox/ and processed/ under root."""
+    found = [root / name for name in names if (root / name).is_file()]
     for sub in LEGACY_DIRS:
-        folder = CODE_ROOT / sub
+        folder = root / sub
         if folder.is_dir():
             found += sorted(p for p in folder.iterdir()
                             if p.is_file() and not p.name.startswith("."))
+    return found
+
+
+def legacy_root(path: Path) -> Path:
+    """The older-install directory a path from legacy_files() came from."""
+    for root, _names in legacy_roots():
+        if root in path.parents:
+            return root
+    raise ValueError(f"{path} is not inside an older install")
+
+
+def legacy_files() -> list[Path]:
+    """Data files an older install left behind: old home first, then checkout.
+
+    Only meaningful when the home directory has no .env yet: once it does, the
+    move has happened (or was declined) and anything left elsewhere is the
+    owner's business.
+    """
+    if ENV_FILE.exists():
+        return []
+    found: list[Path] = []
+    for root, names in legacy_roots():
+        found += data_files_in(root, names)
     return found
 
 
@@ -236,7 +302,7 @@ STABILITY_TIMEOUT_SECONDS = 3600  # give up waiting on a file still growing
 # --- Class schedule -------------------------------------------------------
 #
 # The schedule is a file in the home directory, schedule.toml, written by
-# `lectureai setup` and editable by hand: one row per class meeting with the
+# `intake setup` and editable by hand: one row per class meeting with the
 # day, the start hour, and the course code. It is read on first use and
 # cached, so a missing or broken file is reported by whichever command needs
 # it rather than by every import.
@@ -398,7 +464,7 @@ def load_schedule(path: Path | None = None) -> Schedule:
     file = Path(path) if path is not None else SCHEDULE_FILE
     if not file.exists():
         raise ScheduleError(
-            f"no class schedule at {file}. Run:  lectureai setup"
+            f"no class schedule at {file}. Run:  intake setup"
         )
     return parse_schedule(file.read_text(), file.name)
 
@@ -410,7 +476,7 @@ SCHEDULE_TEMPLATE = """\
 # start   the hour the class begins, 24-hour clock (14 means 2pm)
 # course  the code used for the Drive folder and filenames
 #
-# Edit this file by hand or rerun `lectureai setup`. Only courses listed here
+# Edit this file by hand or rerun `intake setup`. Only courses listed here
 # are recognized, so a stray number in a filename cannot invent a folder.
 
 classes = [
@@ -690,7 +756,7 @@ def require(name: str) -> str:
     value = globals().get(name, "")
     if not value:
         raise RuntimeError(
-            f"{name} is not set. Run:  lectureai setup   "
+            f"{name} is not set. Run:  intake setup   "
             f"(or add it to {ENV_FILE})"
         )
     return value

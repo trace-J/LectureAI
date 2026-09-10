@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lectureai"
+name = "intake"
 description = "Record a lecture, transcribe it, summarize it with Claude, file it in Drive."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,15 +22,18 @@ dependencies = [
 ]
 
 [project.scripts]
-lectureai = "lectureai.cli:main"
+intake = "intake.cli:main"
+# The command's name before the rename: the same entry point, kept for now so
+# nothing that still says `lectureai` breaks. Drop it once everything says intake.
+lectureai = "intake.cli:main"
 
 [tool.setuptools]
-packages = ["lectureai"]
+packages = ["intake"]
 
 [tool.setuptools.dynamic]
-version = {attr = "lectureai.__version__"}
+version = {attr = "intake.__version__"}
 
 # The bundled Google OAuth client and the control panel's page and images
 # travel with the package. Nothing else outside the .py files is needed.
 [tool.setuptools.package-data]
-lectureai = ["credentials.json", "templates/*.html", "static/*.png"]
+intake = ["credentials.json", "templates/*.html", "static/*.png"]

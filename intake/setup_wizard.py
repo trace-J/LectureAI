@@ -1,4 +1,4 @@
-"""`lectureai setup`: the interactive first run.
+"""`intake setup`: the interactive first run.
 
 Asks for the two API keys, the microphone, the class schedule, and optionally
 Notion, then writes .env and schedule.toml into the home directory. Never
@@ -20,7 +20,7 @@ from typing import Callable
 
 from dotenv import dotenv_values
 
-from lectureai import config
+from intake import config
 
 Ask = Callable[[str], str]
 Say = Callable[[str], None]
@@ -33,14 +33,14 @@ MANAGED_KEYS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "RECORD_DEVICE",
                 "NOTION_TOKEN", "NOTION_DATABASE")
 
 ENV_TEMPLATE = """\
-# LectureAI settings. Written by `lectureai setup`; safe to edit by hand.
-# Rerun `lectureai setup` to change one value without retyping the rest.
+# LectureAI settings. Written by `intake setup`; safe to edit by hand.
+# Rerun `intake setup` to change one value without retyping the rest.
 
 OPENAI_API_KEY={openai}
 ANTHROPIC_API_KEY={anthropic}
 
 # Which microphone to record from: a substring of the device name as ffmpeg
-# reports it (lectureai record --list-devices). Names beat indices, which get
+# reports it (intake record --list-devices). Names beat indices, which get
 # reshuffled whenever a phone or headset connects.
 RECORD_DEVICE={device}
 
@@ -171,7 +171,7 @@ class Wizard:
             return self._devices
         if shutil.which("ffmpeg") is None:
             return []
-        from lectureai import record
+        from intake import record
         return record.list_devices()
 
     def ask_microphone(self, values: dict[str, str]) -> None:
@@ -317,15 +317,15 @@ class Wizard:
         except EOFError:
             answer = "n"
         if not _yes(answer, default=True):
-            self.say("Skipped. Run `lectureai login` before the first recording.")
+            self.say("Skipped. Run `intake login` before the first recording.")
             return
-        from lectureai import upload
+        from intake import upload
         try:
             upload.get_credentials(interactive=True)
             self.say("Drive authorized.")
         except Exception as exc:  # the flow reports its own detail
             self.say(f"Drive authorization did not finish: {exc}")
-            self.say("Run `lectureai login` to try again.")
+            self.say("Run `intake login` to try again.")
 
     # --- the run ------------------------------------------------------------
 
@@ -335,7 +335,7 @@ class Wizard:
             self.say("Existing settings found; Enter keeps any value shown in brackets.")
 
         if config.legacy_files() and self.home == config.HOME_DIR:
-            from lectureai import cli
+            from intake import cli
             self.say("")
             cli.offer_migration(ask=self.ask, say=self.say)
 
@@ -362,14 +362,14 @@ class Wizard:
         self.offer_login()
 
         self.say("")
-        self.say("Next:  lectureai doctor    to confirm everything is in place")
-        self.say("       lectureai record    to record a lecture")
+        self.say("Next:  intake doctor    to confirm everything is in place")
+        self.say("       intake record    to record a lecture")
         return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="lectureai setup",
+        prog="intake setup",
         description="Interactive first run: API keys, microphone, class schedule.",
     )
     parser.add_argument("--no-login", action="store_true",

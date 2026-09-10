@@ -16,7 +16,7 @@ from pathlib import Path
 import anthropic
 from pydantic import BaseModel, Field
 
-from lectureai import config
+from intake import config
 
 MAX_SLUG_WORDS = 4
 FALLBACK_SLUG = "Lecture-Notes"

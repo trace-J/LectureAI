@@ -1,12 +1,12 @@
 """A small local control panel for the lecture pipeline.
 
-    lectureai panel          # opens http://127.0.0.1:5173 in your browser
+    intake panel          # opens http://127.0.0.1:5173 in your browser
 
 Start and stop a recording, see whether the watcher is running, and check on
 recent lectures, without remembering any commands. It drives the same modules
 the CLI does, so anything started here behaves identically to the CLI.
 
-The Setup page (/setup) is the browser version of `lectureai setup`: keys,
+The Setup page (/setup) is the browser version of `intake setup`: keys,
 microphone, class schedule, Notion, and the Google Drive login, writing the
 same .env and schedule.toml into the home directory. The panel opens it
 first when nothing is configured yet.
@@ -30,10 +30,10 @@ from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
 
-from lectureai import config, doctor, setup_wizard
-from lectureai import notion_tasks
-from lectureai import record as recording
-from lectureai import transcribe
+from intake import config, doctor, setup_wizard
+from intake import notion_tasks
+from intake import record as recording
+from intake import transcribe
 
 app = Flask(__name__)
 
@@ -296,7 +296,7 @@ def watcher_start():
     # from a checkout (where that is the repo root) and from a pipx install
     # (where it is site-packages) without either needing the other's setup.
     subprocess.Popen(
-        [sys.executable, "-m", "lectureai.watch"],
+        [sys.executable, "-m", "intake.watch"],
         cwd=str(config.CODE_ROOT), stdin=subprocess.DEVNULL,
         stdout=handle, stderr=handle, start_new_session=True,
     )
@@ -448,7 +448,7 @@ def doctor_report():
 
 
 def _run_drive_login() -> None:
-    from lectureai import upload
+    from intake import upload
     try:
         upload.get_credentials(interactive=True)
         _drive_login["error"] = ""
@@ -485,7 +485,7 @@ def _open_browser_later(url: str, delay: float = 0.8) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="lectureai panel",
+    parser = argparse.ArgumentParser(prog="intake panel",
                                      description="Local control panel for LectureAI.")
     parser.add_argument("--port", type=int, default=5173)
     parser.add_argument("--host", default="127.0.0.1",

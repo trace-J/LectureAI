@@ -18,7 +18,7 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from lectureai import config
+from intake import config
 
 
 def log(msg: str) -> None:

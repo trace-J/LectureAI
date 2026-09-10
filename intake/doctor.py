@@ -1,4 +1,4 @@
-"""`lectureai doctor`: one line per check, pass or fail, and the exact fix.
+"""`intake doctor`: one line per check, pass or fail, and the exact fix.
 
 Nothing here touches the network. Every check reads the machine and the home
 directory and says what it found, so this is safe to run at any time and is
@@ -9,14 +9,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from lectureai import config, google_client
+from intake import config, google_client
 
 MIN_PYTHON = (3, 11)
 
@@ -49,9 +48,16 @@ def check_ffmpeg() -> Check:
 
 def check_home() -> Check:
     home = config.HOME_DIR
-    source = f"from ${config.HOME_ENV_VAR}" if os.environ.get(config.HOME_ENV_VAR) else "default"
-    return Check("home directory", home.is_dir(), f"{home} ({source})",
-                 "lectureai setup")
+    source = config.HOME_SOURCE
+    if source == "default":
+        where = "default"
+    elif source == config.LEGACY_HOME_ENV_VAR:
+        where = (f"from ${source}, the old name; set ${config.HOME_ENV_VAR} "
+                 f"instead, both work for now")
+    else:
+        where = f"from ${source}"
+    return Check("home directory", home.is_dir(), f"{home} ({where})",
+                 "intake setup")
 
 
 def check_key(label: str, name: str) -> Check:
@@ -60,22 +66,22 @@ def check_key(label: str, name: str) -> Check:
         shown = f"{value[:7]}...{value[-4:]}" if len(value) > 14 else "set"
         return Check(label, True, shown)
     return Check(label, False, f"{name} is not set in {config.ENV_FILE}",
-                 "lectureai setup")
+                 "intake setup")
 
 
 def check_schedule() -> Check:
     try:
         loaded = config.load_schedule()
     except config.ScheduleError as exc:
-        fix = "lectureai setup" if not config.SCHEDULE_FILE.exists() \
-            else f"fix the row it names in {config.SCHEDULE_FILE}, or rerun lectureai setup"
+        fix = "intake setup" if not config.SCHEDULE_FILE.exists() \
+            else f"fix the row it names in {config.SCHEDULE_FILE}, or rerun intake setup"
         return Check("class schedule", False, str(exc), fix)
     count = len(loaded.meetings)
     courses = ", ".join(loaded.courses()) or "no courses"
     if count == 0:
         return Check("class schedule", False,
                      f"{config.SCHEDULE_FILE} has no classes",
-                     "lectureai setup, and enter at least one class")
+                     "intake setup, and enter at least one class")
     return Check("class schedule", True,
                  f"{count} class meeting{'s' if count != 1 else ''}, "
                  f"{courses}, tolerance {loaded.tolerance_minutes} min")
@@ -97,18 +103,18 @@ def check_drive_token(now: datetime | None = None) -> Check:
     token = config.TOKEN_FILE
     if not token.exists():
         return Check("Drive authorization", False, f"no {token.name} yet",
-                     "lectureai login")
+                     "intake login")
     try:
         data = json.loads(token.read_text())
     except (OSError, ValueError):
         return Check("Drive authorization", False, f"{token} is not readable JSON",
-                     f"delete it and run lectureai login")
+                     f"delete it and run intake login")
 
     scopes = set(data.get("scopes") or [])
     if scopes and scopes != set(config.DRIVE_SCOPES):
         return Check("Drive authorization", False,
                      f"token was issued for different scopes ({', '.join(sorted(scopes))})",
-                     "lectureai login")
+                     "intake login")
 
     if data.get("refresh_token"):
         # The access token expires hourly by design; the refresh token is what
@@ -126,15 +132,15 @@ def check_drive_token(now: datetime | None = None) -> Check:
             if expiry > current:
                 return Check("Drive authorization", True,
                              f"access token valid until {expiry:%Y-%m-%d %H:%M} UTC "
-                             f"(no refresh token; will need lectureai login after that)")
+                             f"(no refresh token; will need intake login after that)")
             return Check("Drive authorization", False,
                          f"access token expired {expiry:%Y-%m-%d %H:%M} UTC and "
-                         f"there is no refresh token", "lectureai login")
+                         f"there is no refresh token", "intake login")
         except ValueError:
             pass
     return Check("Drive authorization", False,
                  f"{token.name} has neither a refresh token nor a readable expiry",
-                 "lectureai login")
+                 "intake login")
 
 
 NOTION_SKIP_MARKER = "# notion: skipped"
@@ -156,7 +162,7 @@ def check_notion() -> Check:
     if token or database:
         missing = "NOTION_DATABASE" if token else "NOTION_TOKEN"
         return Check("Notion", False, f"half configured: {missing} is missing",
-                     "lectureai setup, or clear both NOTION_ values to skip Notion",
+                     "intake setup, or clear both NOTION_ values to skip Notion",
                      required=False)
     if notion_skipped():
         return Check("Notion", True, "skipped in setup (optional)", required=False)
@@ -168,7 +174,7 @@ def check_microphone() -> Check:
     if shutil.which("ffmpeg") is None:
         return Check("microphone", False, "cannot check without ffmpeg",
                      "brew install ffmpeg")
-    from lectureai import record
+    from intake import record
     devices = record.list_devices()
     if not devices:
         # The same conclusion record.py draws: no devices from a Mac that has
@@ -183,19 +189,40 @@ def check_microphone() -> Check:
                      f"will record from {name}")
     except RuntimeError as exc:
         return Check("microphone", False, str(exc),
-                     "lectureai setup and pick a microphone that is attached")
+                     "intake setup and pick a microphone that is attached")
 
 
 def check_legacy() -> Check | None:
-    """Only reported when an older install's files are sitting by the code."""
+    """Only reported when an older install's data has not been moved yet."""
     found = config.legacy_files()
     if not found:
         return None
+    roots = " and ".join(sorted({str(config.legacy_root(p)) for p in found}))
     names = ", ".join(p.name for p in found[:4]) + (" ..." if len(found) > 4 else "")
     return Check("older install", False,
-                 f"{len(found)} data file(s) still next to the code: {names}",
-                 f"lectureai setup (it offers to move them into {config.HOME_DIR})",
+                 f"{len(found)} data file(s) still in {roots}: {names}",
+                 f"intake setup (it offers to move them into {config.HOME_DIR})",
                  required=False)
+
+
+def check_old_home() -> Check | None:
+    """Only reported while ~/.lectureai, the home before the rename, exists.
+
+    Before the move, check_legacy carries the files and the fix. Once the new
+    home has its .env this is the line that says the move happened, or that
+    the old folder still holds data nothing reads any more.
+    """
+    old = config.old_default_home()
+    if old is None or not config.ENV_FILE.exists():
+        return None
+    left = config.data_files_in(old, config.LEGACY_HOME_FILES)
+    if not left:
+        return Check("older home", True,
+                     f"{old} migrated into {config.HOME_DIR}; only scratch files "
+                     f"remain there", required=False)
+    return Check("older home", True,
+                 f"{old} still holds {len(left)} data file(s) nothing reads now; "
+                 f"{config.HOME_DIR} is the home in use", required=False)
 
 
 def run_checks() -> list[Check]:
@@ -211,9 +238,9 @@ def run_checks() -> list[Check]:
         check_notion(),
         check_microphone(),
     ]
-    legacy = check_legacy()
-    if legacy:
-        checks.append(legacy)
+    for extra in (check_legacy(), check_old_home()):
+        if extra:
+            checks.append(extra)
     return checks
 
 
@@ -234,13 +261,13 @@ def render(checks: list[Check]) -> str:
         lines.append(f"Ready to run. {len(optional)} optional item(s) need attention.")
     else:
         lines.append(f"{len(failed)} required check(s) failed. Fix those and rerun "
-                     f"lectureai doctor.")
+                     f"intake doctor.")
     return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="lectureai doctor",
+        prog="intake doctor",
         description="Check this install and say exactly how to fix what is wrong.",
     )
     parser.parse_args(argv)

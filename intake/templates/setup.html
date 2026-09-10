@@ -161,7 +161,7 @@
     <a class="back" href="/">Control panel &rarr;</a>
   </header>
   <p class="intro">
-    Everything here is saved on this Mac only, in <code id="homePath">~/.lectureai</code>.
+    Everything here is saved on this Mac only, in <code id="homePath">~/.intake</code>.
     Come back any time to change one thing; the rest stays as it is.
   </p>
 
@@ -273,7 +273,7 @@
   <!-- Checkup -->
   <div class="card">
     <h2>Checkup <button type="button" class="btn small" id="recheck" style="margin-left:auto">Run again</button></h2>
-    <p class="lead">The same checks as <code>lectureai doctor</code>, so you can see what still needs doing.</p>
+    <p class="lead">The same checks as <code>intake doctor</code>, so you can see what still needs doing.</p>
     <div class="checks" id="checks"><div class="hint">Checking&hellip;</div></div>
   </div>
 
@@ -436,8 +436,8 @@ function renderFix(fix) {
   // Anything the page itself can do is phrased for the page; the rest is a
   // command, shown as one.
   const text = escapeHtml(fix);
-  if (/lectureai setup/.test(fix)) return "fill in the section above and save";
-  if (/lectureai login/.test(fix)) return "click Connect Google Drive above";
+  if (/intake setup/.test(fix)) return "fill in the section above and save";
+  if (/intake login/.test(fix)) return "click Connect Google Drive above";
   return text.replace(/(brew install \S+)/, "<code>$1</code>");
 }
 

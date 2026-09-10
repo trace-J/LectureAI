@@ -1,7 +1,7 @@
 """Push a lecture's action items into a Notion to-do database.
 
-    lectureai notion --check          # show what it matched in your database
-    lectureai notion --setup          # add Due / Course / Source if missing
+    intake notion --check          # show what it matched in your database
+    intake notion --setup          # add Due / Course / Source if missing
 
 Nothing here is required. With NOTION_TOKEN unset the pipeline skips Notion
 entirely and behaves exactly as it did before.
@@ -22,7 +22,7 @@ from pathlib import Path
 
 import requests
 
-from lectureai import config
+from intake import config
 
 API = "https://api.notion.com/v1"
 TIMEOUT = 30
@@ -768,7 +768,7 @@ def describe() -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="lectureai notion",
+        prog="intake notion",
         description="Send lecture action items to a Notion to-do database."
     )
     parser.add_argument("--check", action="store_true",
@@ -798,7 +798,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--transcript, --course and --date are required "
                          "unless --check or --setup is given")
 
-        from lectureai import summarize
+        from intake import summarize
         text = Path(args.transcript).expanduser().read_text()
         result = summarize.summarize(text, args.course, args.date)
         outcome = push(result["action_items"], args.course,
