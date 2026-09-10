@@ -375,7 +375,9 @@ function render(s) {
     $("timer").classList.remove("idle");
     const size = r.bytes ? ` · ${(r.bytes / 1048576).toFixed(1)} MB` : "";
     $("recMeta").innerHTML = `<strong>${r.planned}</strong><br>${r.device}${size}`;
-    $("recNote").textContent = "Click again to stop. The file moves to the inbox when finalized.";
+    $("recNote").textContent = r.resumed
+      ? "Started by an earlier panel and still going; nothing was lost. Click to stop and file it."
+      : "Click again to stop. The file moves to the inbox when finalized.";
   } else {
     $("timer").textContent = "Ready";
     $("timer").classList.add("idle");

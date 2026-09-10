@@ -65,6 +65,11 @@ LOG_FILE = HOME_DIR / "pipeline.log"
 # lecture is finished, which leaves the whole transcription invisible.
 STATUS_FILE = WORK_DIR / "status.json"
 LOCK_FILE = HOME_DIR / ".watcher.lock"   # guards against two watchers at once
+# The recording in progress, if any: ffmpeg's pid, where it is writing, when it
+# began. ffmpeg is started in its own session so it survives whoever started
+# it; this file is how the next panel or CLI finds it again and stops it
+# properly instead of leaving a lecture recording with nobody at the controls.
+RECORDING_STATE_FILE = WORK_DIR / "recording.json"
 
 # A Google OAuth client placed here overrides the one bundled with the
 # package (see google_client.py). Almost nobody needs to.
