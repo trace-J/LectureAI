@@ -494,6 +494,73 @@ def t25():
 results.append(run("the panel starts without Flask's cwd .env, on localhost, landing on setup", t25))
 
 
+def t26():
+    # The panel that started a recording was closed; ffmpeg kept going. A new
+    # panel must show that recording as live and be able to stop it, instead
+    # of saying "Not recording" while the microphone is still open.
+    import subprocess
+    from datetime import datetime as _dt
+    rec_mod = gui.recording
+    state_file = config.RECORDING_STATE_FILE
+    staging = config.WORK_DIR / "recording_20260910-123340.m4a"
+    staging.parent.mkdir(parents=True, exist_ok=True)
+    staging.write_bytes(b"x" * 500)
+    proc = subprocess.Popen(["sleep", "60"], start_new_session=True)
+    rec_mod._write_state(proc.pid, staging, _dt(2026, 9, 10, 12, 33, 40),
+                         "ENTR-3306", "MacBook Pro Microphone")
+    real_owner = rec_mod._process_is_recording
+    rec_mod._process_is_recording = lambda pid, path: pid == proc.pid
+    gui._recorder = None
+    try:
+        body = client.get("/api/status").get_json()
+        r = body["recording"]
+        assert r["active"] is True, r
+        assert r["resumed"] is True, r
+        assert r["planned"] == "ENTR-3306_2026-09-10_1233.m4a", r
+        assert r["bytes"] == 500 and r["elapsed"] > 60, r
+        # Starting another one is refused while it runs.
+        res = client.post("/api/record/start", json={})
+        assert res.status_code == 409, res.status_code
+        res = client.post("/api/record/stop", json={})
+        assert res.status_code == 200, (res.status_code, res.get_json())
+        out = res.get_json()
+        assert out["name"] == "ENTR-3306_2026-09-10_1233.m4a", out
+        assert (config.INBOX_DIR / out["name"]).exists()
+        assert not state_file.exists() and not staging.exists()
+        assert gui._recorder is None
+        assert client.get("/api/status").get_json()["recording"]["active"] is False
+    finally:
+        rec_mod._process_is_recording = real_owner
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+        state_file.unlink(missing_ok=True)
+        staging.unlink(missing_ok=True)
+        gui._recorder = None
+results.append(run("a recording an earlier panel started is shown and can be stopped", t26))
+
+
+def t27():
+    # ffmpeg hit its time cap and exited while the panel was open. The next
+    # status poll files the finished recording instead of leaving it in .work/.
+    from datetime import datetime as _dt
+    rec_mod = gui.recording
+    staging = config.WORK_DIR / "recording_20260910-140000.m4a"
+    staging.write_bytes(b"x" * 500)
+    done = rec_mod.Recorder(course="ACCT-4321")
+    done.started = _dt(2026, 9, 10, 14, 0, 0)
+    done._staging = staging
+    done._proc = rec_mod._ExternalProcess(2 ** 22 - 1)  # already gone
+    gui._recorder = done
+    body = client.get("/api/status").get_json()
+    assert body["recording"]["active"] is False, body["recording"]
+    assert gui._recorder is None
+    filed = config.INBOX_DIR / "ACCT-4321_2026-09-10_1400.m4a"
+    assert filed.exists(), sorted(p.name for p in config.INBOX_DIR.iterdir())
+    filed.unlink()
+results.append(run("a recording that ended on its own is filed on the next poll", t27))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

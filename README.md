@@ -155,12 +155,14 @@ and read your pipeline log, none of which belongs on the network. The setup
 row at the bottom reports which pieces are configured by presence alone, so no
 key or token is ever sent to the browser.
 
-Two limits worth knowing. Recording state lives in the panel's memory, so
-quitting the panel mid-recording orphans the ffmpeg process and leaves the
-file in `.work/` rather than filing it: stop the recording before you quit.
-The watcher is the opposite, and on purpose: it is started detached, so
-closing the panel leaves a lecture midway through transcription alone to
-finish.
+Both the recorder and the watcher are started detached, on purpose, so
+closing the panel abandons neither. A recording keeps going if the panel
+quits or is killed mid-lecture; the next panel (or `lectureai record`) finds
+it through `.work/recording.json`, shows it as live with a note that it was
+picked up, and the stop button files it as usual. If nobody ever comes back,
+ffmpeg stops itself at `RECORD_MAX_MINUTES` (240) and writes a valid file,
+which the next panel files into the inbox on its first status poll. The
+watcher likewise finishes a lecture midway through transcription on its own.
 
 ## Recording on this Mac
 

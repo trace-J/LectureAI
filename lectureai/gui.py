@@ -44,6 +44,42 @@ _recorder: recording.Recorder | None = None
 WATCHER_LOG = config.WORK_DIR / "watcher-gui.log"
 
 
+def _say(msg: str) -> None:
+    print(msg, file=sys.stderr, flush=True)
+
+
+def _current_recorder() -> recording.Recorder | None:
+    """The recording in progress, whoever started it.
+
+    ffmpeg runs in its own session and outlives this panel, so a recording
+    the previous panel started is still going when this one opens. Showing
+    "Not recording" then is a lie with a cost: the person starts a second
+    recording, or assumes the lecture is lost. The state file record.py keeps
+    is how we find and take over that ffmpeg. This is also where a recording
+    that ended on its own (ffmpeg's time cap) gets filed into inbox/.
+    """
+    global _recorder
+    if _recorder is not None and not _recorder.is_recording:
+        finished, _recorder = _recorder, None
+        try:
+            filed = finished.finish()
+            if filed is None:
+                _say("recording was stopped and filed from elsewhere")
+            else:
+                _say(f"recording ended on its own; filed {filed.name}")
+        except RuntimeError as exc:
+            _say(f"recording ended on its own: {exc}")
+    if _recorder is None:
+        filed = recording.finish_abandoned()
+        if filed is not None:
+            _say(f"filed an earlier recording nobody stopped: {filed.name}")
+        _recorder = recording.Recorder.adopt()
+        if _recorder is not None:
+            _say(f"picking up a recording already running since "
+                 f"{_recorder.started:%H:%M} (pid {_recorder._proc.pid})")
+    return _recorder
+
+
 def _watcher_pid() -> int | None:
     """PID of the running watcher, from the lock file, or None."""
     if not config.LOCK_FILE.exists():
@@ -174,15 +210,18 @@ def setup_page():
 @app.get("/api/status")
 def status():
     pid = _watcher_pid()
-    active = _recorder is not None and _recorder.is_recording
+    rec = _current_recorder()
+    active = rec is not None and rec.is_recording
     return jsonify({
         "recording": {
             "active": active,
-            "elapsed": round(_recorder.elapsed, 1) if active else 0,
-            "device": _recorder.device_name if active else "",
-            "planned": _recorder.planned_name if active else "",
-            "bytes": _recorder.staged_bytes if active else 0,
-            "course": (_recorder.course or "") if active else "",
+            "elapsed": round(rec.elapsed, 1) if active else 0,
+            "device": rec.device_name if active else "",
+            "planned": rec.planned_name if active else "",
+            "bytes": rec.staged_bytes if active else 0,
+            "course": (rec.course or "") if active else "",
+            # Started by an earlier panel and picked up by this one.
+            "resumed": rec.adopted if active else False,
         },
         "watcher": {"running": pid is not None, "pid": pid},
         "processing": _processing(pid),
@@ -198,7 +237,7 @@ def status():
 @app.post("/api/record/start")
 def record_start():
     global _recorder
-    if _recorder is not None and _recorder.is_recording:
+    if _current_recorder() is not None:
         return jsonify({"ok": False, "error": "already recording"}), 409
 
     payload = request.get_json(silent=True) or {}
@@ -219,14 +258,15 @@ def record_start():
 @app.post("/api/record/stop")
 def record_stop():
     global _recorder
-    if _recorder is None:
+    rec = _current_recorder()
+    if rec is None:
         return jsonify({"ok": False, "error": "not recording"}), 409
     try:
-        destination = _recorder.stop()
+        destination = rec.stop()
     except Exception as exc:
         _recorder = None
         return jsonify({"ok": False, "error": str(exc)}), 500
-    wall = _recorder.elapsed
+    wall = rec.elapsed
     _recorder = None
 
     # Report the audio the file actually holds, not how long the button was
@@ -460,6 +500,9 @@ def main(argv: list[str] | None = None) -> int:
     if not _configured():
         print("  nothing is set up yet, so the Setup page opens first",
               file=sys.stderr, flush=True)
+    # Say so now, in the terminal, if a lecture is already being recorded;
+    # the page will show it too once it loads.
+    _current_recorder()
     if not args.no_browser:
         _open_browser_later(url)
     # load_dotenv=False: Flask would otherwise read a .env from the current
