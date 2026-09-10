@@ -1,7 +1,7 @@
 """Orchestrator: audio file in, transcript and summary out, filed in Drive.
 
-    lectureai watch --once ~/.lectureai/inbox/lecture.m4a   # one file, then exit
-    lectureai watch                                          # watch inbox/ until Ctrl-C
+    intake watch --once ~/.intake/inbox/lecture.m4a   # one file, then exit
+    intake watch                                          # watch inbox/ until Ctrl-C
 
 The watcher never dies on a bad file. Anything that fails is logged and left
 in inbox/ so it can be retried, and the next recording still gets processed.
@@ -24,11 +24,11 @@ from pathlib import Path
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from lectureai import config
-from lectureai import notion_tasks
-from lectureai import summarize
-from lectureai import transcribe
-from lectureai import upload as drive
+from intake import config
+from intake import notion_tasks
+from intake import summarize
+from intake import transcribe
+from intake import upload as drive
 
 
 def acquire_single_instance_lock():
@@ -46,7 +46,7 @@ def acquire_single_instance_lock():
         handle.close()
         raise RuntimeError(
             f"another watcher already holds {config.LOCK_FILE.name}. "
-            f"Stop it first:  pkill -f 'lectureai.*watch'"
+            f"Stop it first:  pkill -f 'intake.*watch'"
         )
     handle.write(str(os.getpid()))
     handle.flush()
@@ -339,7 +339,7 @@ def run_watcher() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="lectureai watch",
+        prog="intake watch",
         description="Process lecture recordings into transcripts and summaries."
     )
     parser.add_argument("--once", metavar="FILE",

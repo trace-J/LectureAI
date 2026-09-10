@@ -13,10 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _test_home import fresh_home  # noqa: E402
 
-fresh_home()  # before config is imported, so nothing touches ~/.lectureai
+fresh_home()  # before config is imported, so nothing touches ~/.intake
 
-from lectureai import config  # noqa: E402
-from lectureai import record  # noqa: E402
+from intake import config  # noqa: E402
+from intake import record  # noqa: E402
 
 # Real output from `ffmpeg -f avfoundation -list_devices true -i ""`, including
 # the curly apostrophe macOS puts in device names.
@@ -157,7 +157,7 @@ results.append(run("the date in a name invents no course", t10))
 import os  # noqa: E402
 import subprocess  # noqa: E402
 import time  # noqa: E402
-from lectureai import transcribe  # noqa: E402
+from intake import transcribe  # noqa: E402
 
 STATE = config.RECORDING_STATE_FILE
 STAGING = config.WORK_DIR / "recording_20260910-123340.m4a"

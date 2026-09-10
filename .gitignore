@@ -9,7 +9,7 @@ dist/
 # git; the copy inside the package is shipped on purpose (see google_client.py)
 .env
 /credentials.json
-!lectureai/credentials.json
+!intake/credentials.json
 token.json
 .drive_root
 

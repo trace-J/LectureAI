@@ -1,7 +1,7 @@
-"""Tests for the home directory resolver, the schedule file, and `lectureai setup`.
+"""Tests for the home directory resolver, the schedule file, and `intake setup`.
 
 Everything runs against throwaway directories with scripted answers: no
-network, no keys, no microphone, and nothing under ~/.lectureai or in this
+network, no keys, no microphone, and nothing under ~/.intake or in this
 checkout is read or written. From the project root:
 
     .venv/bin/python test_setup.py
@@ -19,12 +19,12 @@ from _test_home import SAMPLE_SCHEDULE, fresh_home  # noqa: E402
 
 HOME = fresh_home()  # before config is imported
 
-from lectureai import cli, config, doctor, setup_wizard  # noqa: E402
+from intake import cli, config, doctor, setup_wizard  # noqa: E402
 
 # The migration check looks for an older install next to the code, and during
 # tests "the code" is this checkout, which really does have one. Point it at
 # an empty fake checkout so no test can ever offer to move the real files.
-FAKE_CODE_ROOT = Path(tempfile.mkdtemp(prefix="lectureai-fake-checkout-"))
+FAKE_CODE_ROOT = Path(tempfile.mkdtemp(prefix="intake-fake-checkout-"))
 (FAKE_CODE_ROOT / "pyproject.toml").write_text("[project]\nname = 'x'\n")
 config.CODE_ROOT = FAKE_CODE_ROOT
 
@@ -47,18 +47,31 @@ results = []
 # --- home directory --------------------------------------------------------
 
 def t1():
-    got = config.resolve_home({"LECTUREAI_HOME": "/tmp/somewhere"})
+    got = config.resolve_home({"INTAKE_HOME": "/tmp/somewhere"})
     assert got == Path("/tmp/somewhere").resolve(), got
-    got = config.resolve_home({"LECTUREAI_HOME": "~/lectures"})
+    got = config.resolve_home({"INTAKE_HOME": "~/lectures"})
     assert got == (Path.home() / "lectures").resolve(), got
-results.append(run("$LECTUREAI_HOME wins, with ~ expanded", t1))
+results.append(run("$INTAKE_HOME wins, with ~ expanded", t1))
+
+
+def t1b():
+    got = config.resolve_home({"LECTUREAI_HOME": "/tmp/old-name"})
+    assert got == Path("/tmp/old-name").resolve(), got
+    got = config.resolve_home({"INTAKE_HOME": "/tmp/new-name", "LECTUREAI_HOME": "/tmp/old-name"})
+    assert got == Path("/tmp/new-name").resolve(), "the new name must win"
+    assert config.home_source({"LECTUREAI_HOME": "x"}) == "LECTUREAI_HOME"
+    assert config.home_source({"INTAKE_HOME": "x", "LECTUREAI_HOME": "y"}) == "INTAKE_HOME"
+    assert config.home_source({"INTAKE_HOME": "  ", "LECTUREAI_HOME": ""}) == "default"
+    assert config.HOME_SOURCE == "INTAKE_HOME", config.HOME_SOURCE
+results.append(run("$LECTUREAI_HOME, the old name, still works until $INTAKE_HOME is set", t1b))
 
 
 def t2():
-    for env in ({}, {"LECTUREAI_HOME": ""}, {"LECTUREAI_HOME": "   "}):
+    for env in ({}, {"INTAKE_HOME": ""}, {"INTAKE_HOME": "   "},
+                {"INTAKE_HOME": "", "LECTUREAI_HOME": ""}):
         got = config.resolve_home(env)
-        assert got == (Path.home() / ".lectureai").resolve(), (env, got)
-results.append(run("unset or blank falls back to ~/.lectureai", t2))
+        assert got == (Path.home() / ".intake").resolve(), (env, got)
+results.append(run("unset or blank falls back to ~/.intake", t2))
 
 
 def t3():
@@ -75,8 +88,8 @@ results.append(run("every data path lives under the home, none under the code", 
 def t4():
     for sub in ("inbox", "processed", ".work"):
         assert (HOME / sub).is_dir(), f"{sub} was not created"
-    assert not (Path.home() / ".lectureai").exists() or \
-        os.environ.get("LECTUREAI_HOME"), "tests must not create the real home"
+    assert not (Path.home() / ".intake").exists() or \
+        os.environ.get("INTAKE_HOME"), "tests must not create the real home"
 results.append(run("importing config creates the home's subfolders", t4))
 
 
@@ -118,13 +131,13 @@ def t8():
     try:
         config.load_schedule(missing)
     except config.ScheduleError as exc:
-        assert "lectureai setup" in str(exc), exc
+        assert "intake setup" in str(exc), exc
         assert str(missing) in str(exc), exc
     else:
         raise AssertionError("a missing file should raise ScheduleError")
     assert issubclass(config.ScheduleError, RuntimeError), \
         "the module mains catch RuntimeError, so ScheduleError must be one"
-results.append(run("a missing schedule says so and points at lectureai setup", t8))
+results.append(run("a missing schedule says so and points at intake setup", t8))
 
 
 def t9():
@@ -390,6 +403,60 @@ def t19():
 results.append(run("an old install next to the code is offered, then moved, once", t19))
 
 
+def t19b():
+    old = Path(tempfile.mkdtemp(prefix="intake-old-home-")).resolve()
+    for name, text in ((".env", "OPENAI_API_KEY=old\n"), ("token.json", "{}"),
+                       ("schedule.toml", SAMPLE_SCHEDULE), (".drive_root", "id")):
+        (old / name).write_text(text)
+    (old / "inbox").mkdir()
+    (old / "inbox" / "lecture.m4a").write_bytes(b"x")
+    (old / ".work").mkdir()
+    (old / ".work" / "recording_x.m4a").write_bytes(b"x")   # scratch: not offered
+
+    saved = (config.HOME_SOURCE, config.OLD_DEFAULT_HOME, config.HOME_DIR, config.ENV_FILE)
+    home = Path(tempfile.mkdtemp())
+    config.HOME_SOURCE, config.OLD_DEFAULT_HOME = "default", old
+    config.HOME_DIR, config.ENV_FILE = home, home / ".env"
+    try:
+        found = {p.relative_to(old).as_posix() for p in config.legacy_files()}
+        assert found == {".env", "token.json", "schedule.toml", ".drive_root",
+                         "inbox/lecture.m4a"}, found
+        waiting = doctor.check_legacy()
+        assert waiting is not None and not waiting.ok and str(old) in waiting.detail, waiting
+        assert doctor.check_old_home() is None, "no 'migrated' line before the move"
+
+        script = Script([""])
+        assert cli.offer_migration(ask=script.ask, say=script.say) is True
+        assert str(old) in script.output() and str(home) in script.output()
+        assert (home / ".env").read_text() == "OPENAI_API_KEY=old\n"
+        assert config.load_schedule(home / "schedule.toml").by_slot[("Tue", 14)] == "ACCT-4321"
+        assert (home / "token.json").exists() and (home / "inbox" / "lecture.m4a").exists()
+        assert not (old / ".env").exists()
+        assert (old / ".work" / "recording_x.m4a").exists(), "scratch must stay put"
+
+        assert config.legacy_files() == [] and doctor.check_legacy() is None
+        migrated = doctor.check_old_home()
+        assert migrated is not None and migrated.ok and not migrated.required, migrated
+        assert migrated.name == "older home", migrated.name
+        assert str(old) in migrated.detail and str(home) in migrated.detail, migrated.detail
+        rendered = doctor.render([doctor.check_home(), migrated])
+        assert "ok    older home" in rendered, rendered
+
+        # Data left behind after a declined move is mentioned, not flagged.
+        (old / "token.json").write_text("{}")
+        leftover = doctor.check_old_home()
+        assert leftover.ok and "1 data file" in leftover.detail, leftover
+
+        # With a variable set, the old default is nobody's business.
+        config.HOME_SOURCE = "INTAKE_HOME"
+        (home / ".env").unlink()
+        assert config.old_default_home() is None
+        assert config.legacy_files() == [] and doctor.check_old_home() is None
+    finally:
+        (config.HOME_SOURCE, config.OLD_DEFAULT_HOME, config.HOME_DIR, config.ENV_FILE) = saved
+results.append(run("the home from before the rename is offered, moved, then reported as migrated", t19b))
+
+
 def t20():
     # A pipx install has no pyproject next to the package, so never offers.
     saved = config.CODE_ROOT
@@ -416,12 +483,12 @@ def t21():
                                       doctor.check_key("Anthropic key", "ANTHROPIC_API_KEY"),
                                       doctor.check_schedule(), doctor.check_drive_token(),
                                       doctor.check_drive_client(), doctor.check_notion())}
-        assert not checks["OpenAI key"].ok and checks["OpenAI key"].fix == "lectureai setup"
+        assert not checks["OpenAI key"].ok and checks["OpenAI key"].fix == "intake setup"
         assert checks["Anthropic key"].ok
         assert "0000000000" not in checks["Anthropic key"].detail, "key shown in full"
         assert checks["class schedule"].ok and "8 class meetings" in checks["class schedule"].detail
         assert not checks["Drive authorization"].ok
-        assert checks["Drive authorization"].fix == "lectureai login"
+        assert checks["Drive authorization"].fix == "intake login"
         assert checks["Drive OAuth client"].ok, checks["Drive OAuth client"]
         assert checks["Notion"].ok and not checks["Notion"].required
 
@@ -439,7 +506,7 @@ def t21():
         assert not broken.ok and "row 1" in broken.detail, broken
 
         rendered = doctor.render(list(checks.values()))
-        assert "FAIL  OpenAI key" in rendered and "fix: lectureai setup" in rendered
+        assert "FAIL  OpenAI key" in rendered and "fix: intake setup" in rendered
         assert "ok    Anthropic key" in rendered
     finally:
         (config.OPENAI_API_KEY, config.ANTHROPIC_API_KEY, config.TOKEN_FILE,
@@ -458,7 +525,7 @@ def t22():
         with contextlib.redirect_stderr(err):
             code = cli.main(["record", "--minutes", "1"])
         assert code == 1, code
-        assert "lectureai setup" in err.getvalue(), err.getvalue()
+        assert "intake setup" in err.getvalue(), err.getvalue()
         assert "Traceback" not in err.getvalue()
         with contextlib.redirect_stderr(io.StringIO()):
             assert cli.main(["bogus"]) == 2

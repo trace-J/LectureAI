@@ -1,17 +1,17 @@
-"""The `lectureai` command: one entry point over every module.
+"""The `intake` command: one entry point over every module.
 
-    lectureai setup            first run: keys, microphone, schedule
-    lectureai doctor           check the install and say how to fix it
-    lectureai record           record from this Mac's microphone
-    lectureai watch            process the inbox until Ctrl-C
-    lectureai watch --once F   process one file and exit
-    lectureai panel            the control panel, and setup, in your browser
-    lectureai login            authorize Google Drive
-    lectureai notion --check   what the Notion integration sees
-    lectureai notion --setup   add the Notion properties it needs
+    intake setup            first run: keys, microphone, schedule
+    intake doctor           check the install and say how to fix it
+    intake record           record from this Mac's microphone
+    intake watch            process the inbox until Ctrl-C
+    intake watch --once F   process one file and exit
+    intake panel            the control panel, and setup, in your browser
+    intake login            authorize Google Drive
+    intake notion --check   what the Notion integration sees
+    intake notion --setup   add the Notion properties it needs
 
 Every subcommand hands its remaining arguments to the module it wraps, so
-`lectureai record --minutes 80` is the same as `python record.py --minutes 80`
+`intake record --minutes 80` is the same as `python record.py --minutes 80`
 from a checkout.
 """
 
@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import shutil
 import sys
+from pathlib import Path
 
-from lectureai import __version__, config
+from intake import __version__, config
 
 USAGE = __doc__.split("\n\n")[1]
 
@@ -36,32 +37,38 @@ def log(msg: str) -> None:
 
 
 def offer_migration(ask=input, say=log) -> bool:
-    """Move an old install's data files into the home directory, if asked.
+    """Move an older install's data files into the home directory, if asked.
 
-    Runs when the home directory has no .env yet and the checkout this code
-    lives in still has one next to it, which is exactly what an install from
-    before the home directory existed looks like. Returns True if files moved.
+    Runs when the home directory has no .env yet and either ~/.lectureai, the
+    home before the rename, or the checkout this code lives in still has data
+    in it. Both are what an install from before this version looks like.
+    Returns True if files moved.
     """
     found = config.legacy_files()
     if not found:
         return False
 
-    say(f"Found data from an older install next to the code in {config.CODE_ROOT}:")
+    by_root: dict[Path, list[Path]] = {}
     for path in found:
-        say(f"  {path.relative_to(config.CODE_ROOT)}")
-    say(f"LectureAI now keeps its data in {config.HOME_DIR}.")
+        by_root.setdefault(config.legacy_root(path), []).append(path)
+    for root, paths in by_root.items():
+        where = "next to the code in" if root == config.CODE_ROOT else "in"
+        say(f"Found data from an older install {where} {root}:")
+        for path in paths:
+            say(f"  {path.relative_to(root)}")
+    say(f"Data now lives in {config.HOME_DIR}.")
     try:
         answer = ask("Move these files there now? [Y/n] ").strip().lower()
     except EOFError:
         answer = "n"
     if answer not in ("", "y", "yes"):
-        say("Left them where they are. Run `lectureai setup` to start fresh, or "
+        say("Left them where they are. Run `intake setup` to start fresh, or "
             "move them by hand.")
         return False
 
     config.ensure_home()
     for path in found:
-        relative = path.relative_to(config.CODE_ROOT)
+        relative = path.relative_to(config.legacy_root(path))
         destination = config.HOME_DIR / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         if destination.exists():
@@ -78,16 +85,16 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
 
     if not args or args[0] in ("-h", "--help", "help"):
-        print(f"usage: lectureai <command> [options]\n\n{USAGE}\n\n"
-              f"Data lives in {config.HOME_DIR} (set $LECTUREAI_HOME to move it).")
+        print(f"usage: intake <command> [options]\n\n{USAGE}\n\n"
+              f"Data lives in {config.HOME_DIR} (set ${config.HOME_ENV_VAR} to move it).")
         return 0
     if args[0] in ("-V", "--version", "version"):
-        print(f"lectureai {__version__}")
+        print(f"intake {__version__}")
         return 0
 
     command, rest = args[0], args[1:]
     if command not in COMMANDS:
-        log(f"lectureai: unknown command {command!r}. "
+        log(f"intake: unknown command {command!r}. "
             f"Commands: {', '.join(COMMANDS)}")
         return 2
 
@@ -109,25 +116,25 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     if command == "setup":
-        from lectureai import setup_wizard
+        from intake import setup_wizard
         return setup_wizard.main(rest)
     if command == "doctor":
-        from lectureai import doctor
+        from intake import doctor
         return doctor.main(rest)
     if command == "record":
-        from lectureai import record
+        from intake import record
         return record.main(rest)
     if command == "watch":
-        from lectureai import watch
+        from intake import watch
         return watch.main(rest)
     if command == "panel":
-        from lectureai import gui
+        from intake import gui
         return gui.main(rest)
     if command == "login":
-        from lectureai import upload
+        from intake import upload
         return upload.main(["--login", *rest])
     if command == "notion":
-        from lectureai import notion_tasks
+        from intake import notion_tasks
         return notion_tasks.main(rest)
     return 2  # unreachable
 

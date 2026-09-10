@@ -12,15 +12,15 @@ once both uploads land.
 ## How a recording flows through
 
 ```
-lectureai panel     a local control panel over everything below
+intake panel        a local control panel over everything below
    |
    v
-lectureai record    records from this Mac's mic into .work/, then moves the
+intake record       records from this Mac's mic into .work/, then moves the
    |                finished file into inbox/ (or sync one from your phone)
    v
 inbox/lecture.m4a
    |
-   |  lectureai watch   waits for the file to stop growing, then infers
+   |  intake watch      waits for the file to stop growing, then infers
    |                    the course and date from the recording's START time
    |                    (mtime minus duration), falling back to the filename
    v
@@ -39,10 +39,11 @@ inbox/lecture.m4a
 pipeline.log        one line per lecture: timestamp, course, source file, URL
 ```
 
-Everything the pipeline reads or writes lives in one place, `~/.lectureai`:
+Everything the pipeline reads or writes lives in one place, `~/.intake`:
 your keys in `.env`, your `schedule.toml`, the `inbox/` and `processed/`
-folders, the Drive token, and `pipeline.log`. Set `LECTUREAI_HOME` to put it
-somewhere else. The code never keeps anything next to itself.
+folders, the Drive token, and `pipeline.log`. Set `INTAKE_HOME` to put it
+somewhere else (`LECTUREAI_HOME`, the variable's old name, still works when the
+new one is unset). The code never keeps anything next to itself.
 
 Local copies are staged in `processed/` before upload and removed after, so a
 failed upload never costs you the transcription you already paid for.
@@ -61,7 +62,7 @@ pipx install git+https://github.com/trace-J/LectureAI
 ```
 
 ```bash
-lectureai panel
+intake panel
 ```
 
 That opens the control panel in your browser. The first time, with nothing
@@ -69,7 +70,7 @@ configured, it lands on the **Setup** page: paste your two keys, pick a
 microphone from the list, add a row for every time a class meets, tick Notion
 if you want it, and click **Connect Google Drive**, which opens a Google
 sign-in tab. A checkup at the bottom of the page shows what still needs doing
-and turns green as you go. Everything is saved on your Mac in `~/.lectureai`;
+and turns green as you go. Everything is saved on your Mac in `~/.intake`;
 nothing is sent anywhere but to the services you gave keys for.
 
 Come back to the Setup page any time from the gear in the panel's header.
@@ -79,14 +80,14 @@ changing one thing never means retyping the rest.
 The same setup works from Terminal if you prefer:
 
 ```bash
-lectureai setup
+intake setup
 ```
 
 It asks for the two keys, shows the microphones ffmpeg can see, takes your
 class schedule one line at a time (`Tue 14 ACCT-4321`, blank line when done),
 asks once about Notion, and offers to authorize Google Drive at the end.
 
-Either way, `lectureai doctor` is the check to run when something misbehaves.
+Either way, `intake doctor` is the check to run when something misbehaves.
 It prints one line per thing that has to be right, with the exact fix next to
 anything that is not, and it never touches the network. The Setup page's
 checkup is the same list.
@@ -94,13 +95,13 @@ checkup is the same list.
 ```
 ok    Python               3.12.14
 ok    ffmpeg               /opt/homebrew/bin/ffmpeg
-ok    home directory       /Users/you/.lectureai (default)
+ok    home directory       /Users/you/.intake (default)
 ok    OpenAI key           sk-proj...Xk2A
 ok    Anthropic key        sk-ant-...9fQ1
 ok    class schedule       8 class meetings, ACCT-4321, ENTR-3306, ENTR-4306, RELI-3304, tolerance 45 min
-ok    Drive OAuth client   bundled with the package (Cloud project lectureai)
+ok    Drive OAuth client   bundled with the package (Cloud project friendly-bazaar-507320-b7)
 FAIL  Drive authorization  no token.json yet
-                           fix: lectureai login
+                           fix: intake login
 ok    Notion               skipped in setup (optional)
 ok    microphone           3 inputs, will record from MacBook Pro Microphone
 ```
@@ -109,28 +110,34 @@ For Drive, the Google OAuth client ships with the package, so there is no
 Cloud project to create. If setup did not already do it:
 
 ```bash
-lectureai login
+intake login
 ```
 
-That caches `token.json` in `~/.lectureai`. The app uses the `drive.file`
+That caches `token.json` in `~/.intake`. The app uses the `drive.file`
 scope, which only reaches files it created, so it makes its own "Lecture
 Notes" folder in My Drive rather than writing into one you made by hand. Move
 that folder anywhere afterward; access follows it.
 
 If `pipx` says the command is not on your PATH, run `pipx ensurepath` and open
-a new terminal. To update later: `pipx upgrade lectureai`.
+a new terminal. To update later: `pipx upgrade intake`.
+
+If you installed when the command was still called `lectureai`, pipx knows the
+package by that name and `upgrade` will not carry it across the rename. Run
+`pipx uninstall lectureai`, then the install line above. The old command keeps
+working as a second name for `intake` for now, and your data is picked up as
+described under "You installed when this was called lectureai" below.
 
 ## The control panel
 
 ```bash
-lectureai panel
+intake panel
 ```
 
 It opens <http://127.0.0.1:5173> in your browser (add `--no-browser` to skip
 that). One page to start and stop a recording,
 start and stop the watcher, see what's waiting in the inbox, and open recent
 lectures in Drive. It drives the same modules the CLI does, so a recording
-started here is identical to one started with `lectureai record`.
+started here is identical to one started with `intake record`.
 
 While a lecture is being processed the panel shows the stage it is in:
 waiting for the file to finish copying, transcribing (with the part number, so
@@ -157,7 +164,7 @@ key or token is ever sent to the browser.
 
 Both the recorder and the watcher are started detached, on purpose, so
 closing the panel abandons neither. A recording keeps going if the panel
-quits or is killed mid-lecture; the next panel (or `lectureai record`) finds
+quits or is killed mid-lecture; the next panel (or `intake record`) finds
 it through `.work/recording.json`, shows it as live with a note that it was
 picked up, and the stop button files it as usual. If nobody ever comes back,
 ffmpeg stops itself at `RECORD_MAX_MINUTES` (240) and writes a valid file,
@@ -167,19 +174,19 @@ watcher likewise finishes a lecture midway through transcription on its own.
 ## Recording on this Mac
 
 ```bash
-lectureai record
+intake record
 ```
 
 Records until Ctrl-C, names the file from your schedule, and drops it in
-`~/.lectureai/inbox/`. The first run asks for microphone permission; if it
+`~/.intake/inbox/`. The first run asks for microphone permission; if it
 was denied, grant it under System Settings > Privacy & Security > Microphone
 and try again.
 
 ```bash
-lectureai record --minutes 80          # stop on its own
-lectureai record --course RELI-3304    # override the schedule
-lectureai record --device "MacBook"    # pick a different mic
-lectureai record --list-devices
+intake record --minutes 80          # stop on its own
+intake record --course RELI-3304    # override the schedule
+intake record --device "MacBook"    # pick a different mic
+intake record --list-devices
 ```
 
 Three things worth knowing:
@@ -193,8 +200,8 @@ Three things worth knowing:
   a file that is still growing.
 - **The microphone is chosen by name, not index.** avfoundation numbers devices
   in connection order, so index 0 is often a nearby iPhone rather than the
-  built-in mic. `lectureai setup` picks by name; so does `RECORD_DEVICE` in
-  `~/.lectureai/.env`.
+  built-in mic. `intake setup` picks by name; so does `RECORD_DEVICE` in
+  `~/.intake/.env`.
 
 Stopping with Ctrl-C is the supported way to end a recording: it lets ffmpeg
 write the file's trailer. Killing the process instead leaves an m4a nothing can
@@ -203,7 +210,7 @@ open.
 ## Running it
 
 ```bash
-lectureai watch
+intake watch
 ```
 
 Watches the inbox until Ctrl-C. It never dies on a bad file: the error goes to
@@ -212,20 +219,20 @@ still gets processed. A lock file stops two watchers from racing on the same
 inbox. To stop a stray one:
 
 ```bash
-pkill -f 'lectureai.*watch'
+pkill -f 'intake.*watch'
 ```
 
 One file at a time, without the watcher:
 
 ```bash
-lectureai watch --once ~/.lectureai/inbox/lecture.m4a
+intake watch --once ~/.intake/inbox/lecture.m4a
 ```
 
 ## The class schedule
 
-`~/.lectureai/schedule.toml` maps each class meeting to a course code. One
+`~/.intake/schedule.toml` maps each class meeting to a course code. One
 row per meeting: the day, the hour it starts on a 24-hour clock, and the code.
-`lectureai setup` writes it; editing it by hand is just as good, and is the
+`intake setup` writes it; editing it by hand is just as good, and is the
 only thing you need to touch each semester.
 
 ```toml
@@ -254,11 +261,11 @@ schedule are accepted, so a stray number in a filename cannot invent a course
 folder. Failing both, it goes to `UNKNOWN/`.
 
 A missing or broken schedule stops `record`, `watch`, and `panel` with one
-line saying which row is wrong and pointing at `lectureai setup`.
+line saying which row is wrong and pointing at `intake setup`.
 
 ## Things worth knowing when it misbehaves
 
-**Start with `lectureai doctor`.** It checks every piece the pipeline depends
+**Start with `intake doctor`.** It checks every piece the pipeline depends
 on and prints the fix for the ones that are missing.
 
 **A summary comes back thin or oddly formatted.** The transcript is probably
@@ -270,7 +277,7 @@ truncation warnings.
 **Uploads suddenly fail with an auth error.** The Google Cloud project behind
 the bundled client is still in External + Testing, so refresh tokens expire
 every 7 days and only accounts added as test users can log in at all.
-`lectureai login` gets you going again; publishing the project ends it
+`intake login` gets you going again; publishing the project ends it
 permanently.
 
 **A recording was filed under the wrong course.** Rename it with the course
@@ -282,9 +289,20 @@ at least one class are needed before anything can be recorded and filed. Fill
 them in and the panel is one click away in the header.
 
 **You installed before the home directory existed.** Your `.env`, token, and
-log are still next to the code. The first `lectureai` command you run offers
-to move them into `~/.lectureai`; say yes and restart any watcher or panel that
+log are still next to the code. The first `intake` command you run offers
+to move them into `~/.intake`; say yes and restart any watcher or panel that
 was already running.
+
+**You installed when this was called lectureai.** Your data is in
+`~/.lectureai`. The first `intake` command you run at a terminal offers to
+move your `.env`, `schedule.toml`, Drive token, log, and any recordings in
+`inbox/` and `processed/` into `~/.intake`; the panel does not ask, so use
+`intake setup` or `intake doctor` for that first run. Until you say yes,
+`intake doctor` lists what is waiting under "older install"; afterward it
+reports the old folder under "older home", and you can delete it once
+nothing is recording into its `.work/`. Scratch files in `.work/` are not
+moved. If you had `LECTUREAI_HOME` set, nothing moves: the variable is still
+read, and the doctor line for the home directory suggests renaming it.
 
 ## Re-runs, duplicates, and two-part lectures
 
@@ -307,7 +325,7 @@ one of those lectures, the file is claimed by name and stamped from then on.
 ## Action items in Notion
 
 Every deadline a lecture mentions becomes a task in your Notion to-do
-database, dated. This is optional: skip it in `lectureai setup` and the
+database, dated. This is optional: skip it in `intake setup` and the
 pipeline behaves exactly as it did before.
 
 **Setup**, which is mostly in the browser:
@@ -319,8 +337,8 @@ pipeline behaves exactly as it did before.
    **Connections** and add that integration. Without this step every request
    comes back 404, because the integration cannot see a database nobody shared
    with it.
-3. Give both values to `lectureai setup` when it asks, or put them in
-   `~/.lectureai/.env` yourself:
+3. Give both values to `intake setup` when it asks, or put them in
+   `~/.intake/.env` yourself:
 
 ```
 NOTION_TOKEN=ntn_...
@@ -330,7 +348,7 @@ NOTION_DATABASE=https://www.notion.so/...   # just paste the database URL
 Then confirm it can see your database and worked out the right properties:
 
 ```bash
-lectureai notion --check
+intake notion --check
 ```
 
 That prints every property in your database and which role it was matched to.
@@ -343,8 +361,8 @@ If it reports that no date property matched, your database has nowhere to put
 a deadline. Add what's needed:
 
 ```bash
-lectureai notion --setup --dry-run   # see what it would add
-lectureai notion --setup
+intake notion --setup --dry-run   # see what it would add
+intake notion --setup
 ```
 
 That adds `Due` (date), `Course` (select, pre-filled with the codes in your
@@ -361,7 +379,7 @@ property is left alone so new tasks get whatever default your workflow already
 uses. Each property serves one role only: if a single select has to cover both
 course and type, course wins, since knowing the class matters more than
 knowing it was a reading. If a guess is wrong, override it by exact name in
-`~/.lectureai/.env`:
+`~/.intake/.env`:
 
 ```
 NOTION_PROP_DUE=Deadline
@@ -392,7 +410,7 @@ picks it up.
 Within a day column, a blank checkbox from the template is filled before any
 new one is appended, so the column keeps the shape you set up.
 
-Run `lectureai notion --check` to see every page, the date range read from
+Run `intake notion --check` to see every page, the date range read from
 each heading, and where the next seven days would land.
 
 **Dates.** A deadline the instructor actually stated is used as-is, with
@@ -412,13 +430,14 @@ else; the action items are still in the summary Doc.
 
 ## Development
 
-The code is a plain Python package in `lectureai/`, and the `lectureai`
-command is one console script over it. To work on it:
+The code is a plain Python package in `intake/`, and the `intake`
+command is one console script over it (`lectureai` is a second name for the
+same entry point, kept for now). To work on it:
 
 ```bash
 git clone https://github.com/trace-J/LectureAI && cd LectureAI
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt   # installs the package editable, with the lectureai command
+.venv/bin/pip install -r requirements.txt   # installs the package editable, with the intake command
 ```
 
 Dependencies are declared once, in `pyproject.toml`; `requirements.txt` just
@@ -431,18 +450,18 @@ the package, so these are the same code the CLI runs:
 
 ```bash
 .venv/bin/python record.py --list-devices
-.venv/bin/python watch.py --once ~/.lectureai/inbox/lecture.m4a
+.venv/bin/python watch.py --once ~/.intake/inbox/lecture.m4a
 .venv/bin/python transcribe.py lecture.m4a > transcript.txt
 .venv/bin/python summarize.py transcript.txt ACCT-4321 2026-09-03
 .venv/bin/python upload.py summary.md ACCT-4321
 .venv/bin/python gui.py
 ```
 
-A dev checkout and a pipx install share `~/.lectureai` by default. To keep a
+A dev checkout and a pipx install share `~/.intake` by default. To keep a
 scratch install from touching your real recordings and keys:
 
 ```bash
-LECTUREAI_HOME=/tmp/lectureai-scratch lectureai setup
+INTAKE_HOME=/tmp/intake-scratch intake setup
 ```
 
 The Google OAuth client the app identifies itself with is `credentials.json`
@@ -456,7 +475,7 @@ Every suite is self-contained: the upload tests run against an in-memory fake
 Drive, the recording tests open no microphone, the setup tests drive the
 wizard with scripted answers into a temp directory. None needs network,
 credentials, or an API key, none costs anything to run, and none can touch
-`~/.lectureai`.
+`~/.intake`.
 
 ```bash
 .venv/bin/python test_upload_collisions.py   # collisions, re-runs, two-part days
@@ -485,7 +504,7 @@ complexity.
 ### Loose ends
 
 - **Publish the Google Cloud project.** The bundled OAuth client's project is
-  still in Testing, so `lectureai login` only works for accounts listed as
+  still in Testing, so `intake login` only works for accounts listed as
   test users and their tokens expire weekly. Switching it to Production is
   what makes the friend path above work for anyone.
 - **Recover the September 3, 13:56 ACCT lecture.** Audio and transcript are

@@ -1,8 +1,8 @@
 """Record a lecture from this Mac's microphone, straight into inbox/.
 
-    lectureai record                  # record until Ctrl-C
-    lectureai record --minutes 80     # or stop on its own
-    lectureai record --list-devices
+    intake record                  # record until Ctrl-C
+    intake record --minutes 80     # or stop on its own
+    intake record --list-devices
 
 Recording goes to .work/ and is moved into inbox/ only once it is finalized,
 so the watcher never sees a half-written file. Everything downstream is
@@ -24,8 +24,8 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from lectureai import config
-from lectureai import transcribe
+from intake import config
+from intake import transcribe
 
 DEVICE_LINE = re.compile(r"^\[AVFoundation indev @ [^\]]*\] \[(\d+)\] (.+)$")
 
@@ -92,7 +92,7 @@ def resolve_device(spec: str | None = None) -> tuple[int, str]:
                     return device_index, name
             raise RuntimeError(
                 f"no audio device with index {index}. "
-                f"Run:  lectureai record --list-devices"
+                f"Run:  intake record --list-devices"
             )
         for device_index, name in devices:
             if text.lower() in name.lower():
@@ -101,7 +101,7 @@ def resolve_device(spec: str | None = None) -> tuple[int, str]:
     if spec is not None:
         raise RuntimeError(
             f"no audio device matching {spec!r}. "
-            f"Run:  lectureai record --list-devices"
+            f"Run:  intake record --list-devices"
         )
 
     fallback = devices[0]
@@ -339,7 +339,7 @@ class Recorder:
             raise RuntimeError(
                 f"a recording is already running: {other.planned_name}, started "
                 f"{other.started:%H:%M} by an earlier panel or terminal. Stop "
-                f"that one first; the panel shows it, or run  lectureai record"
+                f"that one first; the panel shows it, or run  intake record"
             )
 
         device_index, self.device_name = resolve_device(self.device)
@@ -370,7 +370,7 @@ class Recorder:
     def adopt(cls) -> "Recorder | None":
         """Take over a recording that an earlier process started and lost.
 
-        The panel gets closed, the terminal that ran `lectureai record` dies,
+        The panel gets closed, the terminal that ran `intake record` dies,
         and ffmpeg keeps recording on its own in its own session. Without this,
         the next panel opens saying "Not recording" while the microphone is
         still live, and the lecture ends up in .work/ with no trailer and no
@@ -394,7 +394,7 @@ class Recorder:
         """File a recording whose ffmpeg has already exited.
 
         Two front ends can hold the same recording (a panel that started it
-        and a `lectureai record` that adopted it); whichever stops it first
+        and a `intake record` that adopted it); whichever stops it first
         moves the file. The other finds the file gone and the state cleared,
         and must not mistake that for a failed recording. Returns None in
         that case, the inbox path otherwise.
@@ -553,7 +553,7 @@ def record(
         log("  the watcher is running and will pick it up")
     else:
         log(f"  no watcher running. Process it with:")
-        log(f"    lectureai watch --once {destination}")
+        log(f"    intake watch --once {destination}")
 
     return destination
 
@@ -573,7 +573,7 @@ def _diagnose(stderr: str, device_name: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="lectureai record",
+        prog="intake record",
         description="Record a lecture from this Mac's microphone into inbox/."
     )
     parser.add_argument("--minutes", type=float, default=None,
