@@ -98,21 +98,26 @@ def _recent(limit: int = 12) -> list[dict]:
     """Recent lectures, newest first, parsed out of pipeline.log.
 
     Success lines carry five tab-separated fields and error lines four, so the
-    field count is what distinguishes them.
+    field count is what distinguishes them. A sixth field, when present, says
+    what did not reach Notion; lines written before that field existed have
+    five and are read exactly as before.
     """
     if not config.LOG_FILE.exists():
         return []
     rows = []
     for line in config.LOG_FILE.read_text().splitlines():
         fields = line.split("\t")
-        if len(fields) == 5:
-            when, course, source, name, url = fields
+        if len(fields) in (5, 6):
+            when, course, source, name, url = fields[:5]
+            warning = fields[5] if len(fields) == 6 else ""
             rows.append({"when": when, "course": course, "source": source,
-                         "name": name, "url": url, "error": None})
+                         "name": name, "url": url, "error": None,
+                         "warning": warning})
         elif len(fields) == 4 and fields[1] == "ERROR":
             when, _, source, message = fields
             rows.append({"when": when, "course": "ERROR", "source": source,
-                         "name": "", "url": "", "error": message})
+                         "name": "", "url": "", "error": message,
+                         "warning": ""})
     return list(reversed(rows))[:limit]
 
 

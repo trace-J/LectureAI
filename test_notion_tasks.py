@@ -299,7 +299,8 @@ def t13():
     fake = FakeNotion()
     nt._request = fake
     out = nt.push([], "ACCT-4321")
-    assert out == {"added": 0, "skipped": 0, "failed": 0, "urls": []}, out
+    assert out == {"added": 0, "skipped": 0, "failed": 0, "urls": [],
+                   "notes": [], "reasons": []}, out
     assert fake.created == [], "a lecture with no action items must not call Notion"
 results.append(run("no action items means no Notion calls at all", t13))
 
@@ -585,6 +586,44 @@ def t22d():
         sections
     assert [s["column_lists"] for s in sections] == [["cl-0"], ["cl-1"]], sections
 results.append(run("each heading owns the columns that follow it", t22d))
+
+
+def t22e():
+    """A dropped to-do produces a line the panel can show."""
+    reset_overrides()
+    fake = FakeWeekly(heading="Oct 5 - Oct 11"); nt._request = fake
+    out = nt.push_to_weekly(ITEM, "ACCT-4321")
+    line = nt.outcome_warning(out, len(ITEM))
+    assert line.startswith("1 of 1 to-dos did not reach Notion"), line
+    assert "no week heading covers 2026-09-10" in line, line
+    # It goes into a tab-separated log, so it has to stay one line.
+    assert "\t" not in line and "\n" not in line, repr(line)
+results.append(run("a dropped to-do is reported as one showable line", t22e))
+
+
+def t22f():
+    """Nothing failed means nothing to warn about."""
+    reset_overrides()
+    fake = FakeWeekly(); nt._request = fake
+    out = nt.push_to_weekly(ITEM, "ACCT-4321")
+    assert out["failed"] == 0, out
+    assert nt.outcome_warning(out, len(ITEM)) == "", out
+    assert nt.outcome_warning(None, 3) == ""
+results.append(run("a clean run warns about nothing", t22f))
+
+
+def t22g():
+    """One cause behind many dropped items is reported once, not per item."""
+    reset_overrides()
+    fake = FakeWeekly(heading="Oct 5 - Oct 11"); nt._request = fake
+    items = [dict(ITEM[0], task=f"Task {i}") for i in range(4)]
+    out = nt.push_to_weekly(items, "ACCT-4321")
+    assert out["failed"] == 4, out
+    assert len(out["reasons"]) == 1, out["reasons"]
+    line = nt.outcome_warning(out, len(items))
+    assert line.startswith("4 of 4 to-dos did not reach Notion"), line
+    assert line.count("no week heading covers") == 1, line
+results.append(run("one cause behind four dropped items is stated once", t22g))
 
 
 def t25():

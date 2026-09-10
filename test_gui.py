@@ -89,6 +89,26 @@ def t4():
 results.append(run("a missing or malformed log yields nothing, not an error", t4))
 
 
+def t4b():
+    """The sixth field says what did not reach Notion; five-field lines predate it."""
+    log_file = tmp / "warned.log"
+    warned = "\t".join([
+        "2026-09-09T09:54:13", "ENTR-4306", "ENTR-4306_2026-09-09_0859.m4a",
+        "ENTR-4306_2026-09-09_Exploitation-Vs-Exploration",
+        "https://docs.google.com/document/d/CCC/edit",
+        "2 of 3 to-dos did not reach Notion: no week heading covers 2026-09-11",
+    ]) + "\n"
+    log_file.write_text(LOG + warned)
+    config.LOG_FILE = log_file
+    rows = gui._recent()
+    assert rows[0]["warning"].startswith("2 of 3 to-dos"), rows[0]
+    assert rows[0]["name"].endswith("Exploitation-Vs-Exploration"), rows[0]
+    assert rows[0]["error"] is None, rows[0]
+    # Lines written before the field existed still read as clean runs.
+    assert all(r["warning"] == "" for r in rows[1:]), rows[1:]
+results.append(run("a lecture with dropped to-dos carries a warning", t4b))
+
+
 # --- inbox ----------------------------------------------------------------
 
 def t5():
