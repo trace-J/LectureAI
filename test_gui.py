@@ -657,6 +657,30 @@ def t31():
     assert "no audio" in rows[0]["error"], rows[0]
 results.append(run("a recording that captured nothing appears in the recent list as failed", t31))
 
+def t32():
+    # The panel has no login. Binding it beyond this Mac hands process control
+    # and the keys in .env to anyone who can reach the port, so a non-loopback
+    # --host is refused unless --expose says that was the intent.
+    captured = {}
+    real_run, real_open = gui.app.run, gui._open_browser_later
+    gui.app.run = lambda **kw: captured.update(kw)
+    gui._open_browser_later = lambda url, delay=0: captured.update(opened=url)
+    try:
+        assert gui.main(["--no-browser", "--host", "0.0.0.0"]) == 2
+        assert not captured, "the server started on 0.0.0.0 without --expose"
+        assert gui.main(["--no-browser", "--host", "192.168.1.20", "--port", "5557"]) == 2
+        assert not captured, "the server started on a LAN address without --expose"
+        for host in ("127.0.0.1", "localhost", "::1", "127.0.0.2"):
+            captured.clear()
+            assert gui.main(["--no-browser", "--host", host, "--port", "5557"]) == 0, host
+            assert captured["host"] == host, captured
+        captured.clear()
+        assert gui.main(["--no-browser", "--host", "0.0.0.0", "--expose"]) == 0
+        assert captured["host"] == "0.0.0.0", captured
+    finally:
+        gui.app.run, gui._open_browser_later = real_run, real_open
+results.append(run("a non-localhost --host is refused unless --expose says so", t32))
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

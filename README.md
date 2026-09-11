@@ -19,6 +19,12 @@ schedule, the audio is compressed and split to clear the transcription API's
 size limit, Claude writes the summary, and the original recording is deleted
 once both uploads land.
 
+Syllabus has a home on the web at <https://maincoursemedia.com/syllabus/>.
+That page is the one to send someone who wants it: what it does, what it
+needs, and the install commands. The app itself runs on your Mac, and nothing
+about it is hosted anywhere. That is also why this repository is public: the
+install line below fetches straight from it.
+
 ## How a recording flows through
 
 ```
@@ -175,6 +181,13 @@ It binds to localhost only, and deliberately: it can start and stop processes
 and read your pipeline log, none of which belongs on the network. The setup
 row at the bottom reports which pieces are configured by presence alone, so no
 key or token is ever sent to the browser.
+
+`--host` can point it at another address, but only together with `--expose`,
+and without that flag the panel refuses and says why: there is no login on
+it, so anyone who can reach the port can start processes and rewrite the keys
+in `.env`. If you ever need it off this Mac, put something that authenticates
+in front of it first (an SSH tunnel, or a Cloudflare Tunnel behind Access)
+and pass `--expose` to say you have.
 
 Both the recorder and the watcher are started detached, on purpose, so
 closing the panel abandons neither. A recording keeps going if the panel
@@ -535,6 +548,22 @@ inside the package, read by `google_client.py`. A `credentials.json` in the
 home directory overrides it. The one at the repo root, if you have one from
 before, stays gitignored.
 
+That file holds a `client_secret`, and the repository is public, so it is
+worth being exact about what that means. The client is a Google **Desktop**
+client, and Google's own guidance is that a desktop client's secret is not
+confidential: it ships inside every copy of the app and cannot be kept from
+the person running it, which is why the flow does not rely on it for
+security. What protects your Drive is the token in `~/.intake/syllabus`,
+which never leaves your Mac, and the `drive.file` scope, which reaches only
+files the app created. The exposure is that someone could put up their own
+consent screen under this app's name; while the Cloud project is in Testing
+only its listed test users can complete that screen at all. Never reuse this
+client for anything server-side: a web app needs a **Web** client whose
+secret stays on the server. Should its secret ever need resetting,
+reset it on this same client in the Cloud console, put the new file in the
+package, and the next release carries it; existing tokens keep working,
+because they are tied to the client id, which does not change.
+
 ### Tests
 
 Every suite is self-contained: the upload tests run against an in-memory fake
@@ -567,6 +596,33 @@ in rough order of how soon each one bites.
 
 Dropped: **slide OCR**, decided against on 2026-09-08 as not worth the
 complexity.
+
+### The desktop app, and sign-ins
+
+Syllabus is meant to become a real Mac app that other people can use, with an
+account behind it. The web page at maincoursemedia.com/syllabus is the first
+piece of that, and the rest is planned in this order:
+
+- **Publish the Google Cloud project** (below), so Drive sign-in works for
+  anyone and tokens stop expiring weekly. Everything else waits on this.
+- **A Mac app bundle.** The panel already is the app; what is missing is the
+  wrapper. Plan: a `pywebview` window around the same Flask panel, packaged
+  with PyInstaller into `Syllabus.app`, signed and notarized, with ffmpeg
+  bundled so Homebrew stops being a requirement. The pipx install stays as
+  the path for people who prefer a terminal.
+- **Sign-ins.** Today "signing in" means the Google Drive login, which is
+  per-user already. Accounts proper need a small web backend, which does not
+  exist yet: the marketing site is static. The likely shape is a
+  `syllabus.maincoursemedia.com` service (Cloudflare Workers plus D1, the
+  same stack `mcm-dashboard` is scaffolded on) that owns sign-in, holds the
+  **Web** OAuth client for Drive, and hands the desktop app a session. That
+  is also what would let Syllabus pay for transcription centrally instead of
+  asking every student for two API keys. Until it exists, the "early access"
+  address on the web page is the sign-up list.
+- **Hosting the panel itself on the web is not on this list.** It records
+  from the Mac's microphone and starts processes on the Mac; a hosted copy
+  would record nothing. The `--expose` flag exists so nobody discovers that
+  by putting it on the internet.
 
 ### Loose ends
 
