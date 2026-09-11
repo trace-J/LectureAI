@@ -23,6 +23,10 @@ dependencies = [
 
 [project.scripts]
 intake = "intake.cli:main"
+# The same entry point with the profile chosen: syllabus for lectures, sous
+# for client calls. `sous record` is `intake --profile sous record`.
+syllabus = "intake.cli:syllabus"
+sous = "intake.cli:sous"
 # The command's name before the rename: the same entry point, kept for now so
 # nothing that still says `lectureai` breaks. Drop it once everything says intake.
 lectureai = "intake.cli:main"

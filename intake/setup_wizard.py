@@ -33,7 +33,7 @@ MANAGED_KEYS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "RECORD_DEVICE",
                 "NOTION_TOKEN", "NOTION_DATABASE")
 
 ENV_TEMPLATE = """\
-# LectureAI settings. Written by `intake setup`; safe to edit by hand.
+# {title} settings. Written by `intake setup`; safe to edit by hand.
 # Rerun `intake setup` to change one value without retyping the rest.
 
 OPENAI_API_KEY={openai}
@@ -85,6 +85,7 @@ def render_env(values: dict[str, str], notion_skipped: bool) -> str:
                   f"NOTION_DATABASE={_quote(values.get('NOTION_DATABASE', ''))}")
 
     text = ENV_TEMPLATE.format(
+        title=config.PROFILE.title,
         openai=_quote(values.get("OPENAI_API_KEY", "")),
         anthropic=_quote(values.get("ANTHROPIC_API_KEY", "")),
         device=_quote(values.get("RECORD_DEVICE", "")),
@@ -139,7 +140,7 @@ class Wizard:
         self.say = say
         self.home = Path(home) if home is not None else config.HOME_DIR
         self.env_file = self.home / ".env"
-        self.schedule_file = self.home / "schedule.toml"
+        self.schedule_file = self.home / config.SCHEDULE_FILE.name
         self.token_file = self.home / "token.json"
         # Injected for tests; otherwise asked of ffmpeg when needed.
         self._devices = devices
@@ -330,7 +331,7 @@ class Wizard:
     # --- the run ------------------------------------------------------------
 
     def run(self) -> int:
-        self.say(f"LectureAI setup. Settings go in {self.home}")
+        self.say(f"{config.PROFILE.title} setup. Settings go in {self.home}")
         if self.env_file.exists():
             self.say("Existing settings found; Enter keeps any value shown in brackets.")
 

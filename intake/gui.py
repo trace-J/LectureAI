@@ -1,6 +1,9 @@
-"""A small local control panel for the lecture pipeline.
+"""A small local control panel for the pipeline.
 
     intake panel          # opens http://127.0.0.1:5173 in your browser
+
+The port is the profile's: 5173 for Syllabus, 5174 for Sous, so both panels
+can run at once. --port overrides it.
 
 Start and stop a recording, see whether the watcher is running, and check on
 recent lectures, without remembering any commands. It drives the same modules
@@ -499,9 +502,11 @@ def _open_browser_later(url: str, delay: float = 0.8) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="intake panel",
-                                     description="Local control panel for LectureAI.")
-    parser.add_argument("--port", type=int, default=5173)
+    parser = argparse.ArgumentParser(
+        prog="intake panel",
+        description=f"Local control panel for {config.PROFILE.title}.")
+    parser.add_argument("--port", type=int, default=config.PROFILE.panel_port,
+                        help=f"{config.PROFILE.panel_port} for this profile")
     parser.add_argument("--host", default="127.0.0.1",
                         help="localhost by default; this can start processes")
     parser.add_argument("--no-browser", action="store_true",
@@ -510,7 +515,7 @@ def main(argv: list[str] | None = None) -> int:
 
     page = "" if _configured() else "setup"
     url = f"http://{args.host}:{args.port}/{page}"
-    print(f"LectureAI control panel:  {url}", file=sys.stderr, flush=True)
+    print(f"{config.PROFILE.title} control panel:  {url}", file=sys.stderr, flush=True)
     if not _configured():
         print("  nothing is set up yet, so the Setup page opens first",
               file=sys.stderr, flush=True)

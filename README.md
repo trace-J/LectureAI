@@ -4,6 +4,16 @@ Record a lecture on your Mac, or drop one in the inbox from your phone. Get a
 study summary as a Google Doc in the right course folder in Drive, with the raw
 transcript filed one level down.
 
+The same pipeline now runs under two names. **Syllabus** is LectureAI: lectures,
+a class schedule, study notes. **Sous** records client Zoom calls for the
+account team: call notes instead of study notes, a "Client Calls" folder in
+Drive, to-dos filed as database rows. Each is a *profile*: its own home under
+`~/.intake`, its own keys, token, inbox, and log, so the two can never share a
+recording or a credential. Choose one with the `syllabus` or `sous` command,
+with `intake --profile sous`, or with `INTAKE_PROFILE=sous`; with nothing
+said, `intake` is Syllabus. Everything below is written for Syllabus and holds
+for Sous with the paths and names swapped.
+
 Everything in between is automatic: the course is inferred from your class
 schedule, the audio is compressed and split to clear the transcription API's
 size limit, Claude writes the summary, and the original recording is deleted
@@ -39,11 +49,14 @@ inbox/lecture.m4a
 pipeline.log        one line per lecture: timestamp, course, source file, URL
 ```
 
-Everything the pipeline reads or writes lives in one place, `~/.intake`:
-your keys in `.env`, your `schedule.toml`, the `inbox/` and `processed/`
-folders, the Drive token, and `pipeline.log`. Set `INTAKE_HOME` to put it
-somewhere else (`LECTUREAI_HOME`, the variable's old name, still works when the
-new one is unset). The code never keeps anything next to itself.
+Everything the pipeline reads or writes lives in one place, the profile's
+home: `~/.intake/syllabus/` for Syllabus, `~/.intake/sous/` for Sous. Each
+holds that profile's keys in `.env`, its schedule file (`schedule.toml` for
+Syllabus, `calls.toml` for Sous), the `inbox/` and `processed/` folders, the
+Drive token, and `pipeline.log`. Set `INTAKE_HOME` to put the whole `~/.intake`
+root somewhere else (`LECTUREAI_HOME`, the variable's old name, still works
+when the new one is unset); the profile folders move with it. The code never
+keeps anything next to itself.
 
 Local copies are staged in `processed/` before upload and removed after, so a
 failed upload never costs you the transcription you already paid for.
@@ -70,7 +83,7 @@ configured, it lands on the **Setup** page: paste your two keys, pick a
 microphone from the list, add a row for every time a class meets, tick Notion
 if you want it, and click **Connect Google Drive**, which opens a Google
 sign-in tab. A checkup at the bottom of the page shows what still needs doing
-and turns green as you go. Everything is saved on your Mac in `~/.intake`;
+and turns green as you go. Everything is saved on your Mac in `~/.intake/syllabus`;
 nothing is sent anywhere but to the services you gave keys for.
 
 Come back to the Setup page any time from the gear in the panel's header.
@@ -113,7 +126,7 @@ Cloud project to create. If setup did not already do it:
 intake login
 ```
 
-That caches `token.json` in `~/.intake`. The app uses the `drive.file`
+That caches `token.json` in `~/.intake/syllabus`. The app uses the `drive.file`
 scope, which only reaches files it created, so it makes its own "Lecture
 Notes" folder in My Drive rather than writing into one you made by hand. Move
 that folder anywhere afterward; access follows it.
@@ -134,7 +147,8 @@ intake panel
 ```
 
 It opens <http://127.0.0.1:5173> in your browser (add `--no-browser` to skip
-that). One page to start and stop a recording,
+that). The Sous panel is <http://127.0.0.1:5174>, so both can be open at once;
+`--port` overrides either. One page to start and stop a recording,
 start and stop the watcher, see what's waiting in the inbox, and open recent
 lectures in Drive. It drives the same modules the CLI does, so a recording
 started here is identical to one started with `intake record`.
@@ -195,7 +209,7 @@ intake record
 ```
 
 Records until Ctrl-C, names the file from your schedule, and drops it in
-`~/.intake/inbox/`. The first run asks for microphone permission; if it
+`~/.intake/syllabus/inbox/`. The first run asks for microphone permission; if it
 was denied, grant it under System Settings > Privacy & Security > Microphone
 and try again.
 
@@ -218,7 +232,7 @@ Three things worth knowing:
 - **The microphone is chosen by name, not index.** avfoundation numbers devices
   in connection order, so index 0 is often a nearby iPhone rather than the
   built-in mic. `intake setup` picks by name; so does `RECORD_DEVICE` in
-  `~/.intake/.env`.
+  `~/.intake/syllabus/.env`.
 - **Press Stop before closing the lid.** Sleep ends the capture. The Mac is
   held awake for as long as ffmpeg runs (`caffeinate -w`, started alongside
   it), so a dimmed display or an idle timer cannot end a lecture early, but
@@ -247,12 +261,12 @@ pkill -f 'intake.*watch'
 One file at a time, without the watcher:
 
 ```bash
-intake watch --once ~/.intake/inbox/lecture.m4a
+intake watch --once ~/.intake/syllabus/inbox/lecture.m4a
 ```
 
 ## The class schedule
 
-`~/.intake/schedule.toml` maps each class meeting to a course code. One
+`~/.intake/syllabus/schedule.toml` maps each class meeting to a course code. One
 row per meeting: the day, the hour it starts on a 24-hour clock, and the code.
 `intake setup` writes it; editing it by hand is just as good, and is the
 only thing you need to touch each semester.
@@ -317,22 +331,31 @@ microphone permission for whatever launched the panel or `intake record`:
 the terminal app, or the app whose terminal it was. Grant it under System
 Settings > Privacy & Security > Microphone. The panel now turns the timer red
 about a minute in when this is happening, so check the page after you press
-Record. ffmpeg's own log, if it said anything, is in `~/.intake/.work/`.
+Record. ffmpeg's own log, if it said anything, is in `~/.intake/syllabus/.work/`.
 
 **The panel says the watcher is running but nothing gets processed.** Restart
 the panel; older versions judged the watcher by its pid, which a watcher that
 had been killed kept answering until the panel that started it quit.
 
+**You installed before profiles existed.** Your data sits flat in `~/.intake`
+itself, where Syllabus no longer looks. The first `intake` or `syllabus`
+command you run at a terminal offers to move your `.env`, `schedule.toml`,
+Drive token, `.drive_root`, log, and any recordings in `inbox/` and
+`processed/` down into `~/.intake/syllabus/`; say yes and restart any watcher
+or panel that was already running. Only Syllabus is offered that data; Sous
+starts empty. Until you say yes, `intake doctor` lists what is waiting under
+"older install". Scratch in `~/.intake/.work/` and the old lock file stay put.
+
 **You installed before the home directory existed.** Your `.env`, token, and
 log are still next to the code. The first `intake` command you run offers
-to move them into `~/.intake`; say yes and restart any watcher or panel that
-was already running.
+to move them into `~/.intake/syllabus`; say yes and restart any watcher or
+panel that was already running.
 
 **You installed when this was called lectureai.** Your data is in
 `~/.lectureai`. The first `intake` command you run at a terminal offers to
 move your `.env`, `schedule.toml`, Drive token, log, and any recordings in
-`inbox/` and `processed/` into `~/.intake`; the panel does not ask, so use
-`intake setup` or `intake doctor` for that first run. Until you say yes,
+`inbox/` and `processed/` into `~/.intake/syllabus`; the panel does not ask,
+so use `intake setup` or `intake doctor` for that first run. Until you say yes,
 `intake doctor` lists what is waiting under "older install"; afterward it
 reports the old folder under "older home", and you can delete it once
 nothing is recording into its `.work/`. Scratch files in `.work/` are not
@@ -373,7 +396,7 @@ pipeline behaves exactly as it did before.
    comes back 404, because the integration cannot see a database nobody shared
    with it.
 3. Give both values to `intake setup` when it asks, or put them in
-   `~/.intake/.env` yourself:
+   `~/.intake/syllabus/.env` yourself:
 
 ```
 NOTION_TOKEN=ntn_...
@@ -414,7 +437,7 @@ property is left alone so new tasks get whatever default your workflow already
 uses. Each property serves one role only: if a single select has to cover both
 course and type, course wins, since knowing the class matters more than
 knowing it was a reading. If a guess is wrong, override it by exact name in
-`~/.intake/.env`:
+`~/.intake/syllabus/.env`:
 
 ```
 NOTION_PROP_DUE=Deadline
@@ -466,8 +489,12 @@ else; the action items are still in the summary Doc.
 ## Development
 
 The code is a plain Python package in `intake/`, and the `intake`
-command is one console script over it (`lectureai` is a second name for the
-same entry point, kept for now). To work on it:
+command is one console script over it. `syllabus` and `sous` are the same
+entry point with the profile chosen (`lectureai` is an older name for it,
+kept for now). The profiles themselves are in `profiles.py`, one dataclass
+each: home folder, schedule filename, summary schema and prompt (`schemas.py`),
+Drive folder, filename prefix, Notion target, panel port. Every module reads
+those from `config.PROFILE` rather than spelling them out. To work on it:
 
 ```bash
 git clone https://github.com/trace-J/LectureAI && cd LectureAI
@@ -485,7 +512,7 @@ the package, so these are the same code the CLI runs:
 
 ```bash
 .venv/bin/python record.py --list-devices
-.venv/bin/python watch.py --once ~/.intake/inbox/lecture.m4a
+.venv/bin/python watch.py --once ~/.intake/syllabus/inbox/lecture.m4a
 .venv/bin/python transcribe.py lecture.m4a > transcript.txt
 .venv/bin/python summarize.py transcript.txt ACCT-4321 2026-09-03
 .venv/bin/python upload.py summary.md ACCT-4321
@@ -493,11 +520,15 @@ the package, so these are the same code the CLI runs:
 ```
 
 A dev checkout and a pipx install share `~/.intake` by default. To keep a
-scratch install from touching your real recordings and keys:
+scratch install from touching your real recordings and keys, move the root:
 
 ```bash
 INTAKE_HOME=/tmp/intake-scratch intake setup
 ```
+
+That puts Syllabus in `/tmp/intake-scratch/syllabus/`. The root-level shims
+(`python gui.py` and friends) run whichever profile `INTAKE_PROFILE` names,
+Syllabus by default.
 
 The Google OAuth client the app identifies itself with is `credentials.json`
 inside the package, read by `google_client.py`. A `credentials.json` in the
@@ -510,7 +541,7 @@ Every suite is self-contained: the upload tests run against an in-memory fake
 Drive, the recording tests open no microphone, the setup tests drive the
 wizard with scripted answers into a temp directory. None needs network,
 credentials, or an API key, none costs anything to run, and none can touch
-`~/.intake`.
+`~/.intake`. They all run under the Syllabus profile whatever the shell says.
 
 ```bash
 .venv/bin/python test_upload_collisions.py   # collisions, re-runs, two-part days
@@ -518,6 +549,7 @@ credentials, or an API key, none costs anything to run, and none can touch
 .venv/bin/python test_notion_tasks.py        # property mapping and de-duplication
 .venv/bin/python test_gui.py                 # log parsing and API guard rails
 .venv/bin/python test_setup.py               # home directory, schedule file, setup wizard, doctor
+.venv/bin/python test_profiles.py            # syllabus vs sous: homes, ports, folders, selection, migration
 ```
 
 ## V2 roadmap
