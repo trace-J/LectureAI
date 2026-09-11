@@ -21,6 +21,7 @@ pipeline log, none of which should be reachable from the network.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import signal
@@ -496,6 +497,20 @@ def drive_disconnect():
     return jsonify({"ok": True})
 
 
+def _is_loopback(host: str) -> bool:
+    """Whether a --host value stays on this machine.
+
+    The panel has no authentication of any kind, by design: it is a local
+    control surface. So the only hosts it binds to unasked are loopback ones.
+    """
+    if host in ("localhost", ""):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def _open_browser_later(url: str, delay: float = 0.8) -> None:
     """Open the panel once the server has had a moment to bind."""
     threading.Timer(delay, lambda: webbrowser.open(url)).start()
@@ -509,9 +524,22 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"{config.PROFILE.panel_port} for this profile")
     parser.add_argument("--host", default="127.0.0.1",
                         help="localhost by default; this can start processes")
+    parser.add_argument("--expose", action="store_true",
+                        help="allow --host to reach beyond this Mac. There is no "
+                             "login on the panel: anyone who can reach the port "
+                             "can start processes and rewrite your keys")
     parser.add_argument("--no-browser", action="store_true",
                         help="do not open the page in a browser")
     args = parser.parse_args(argv)
+
+    if not _is_loopback(args.host) and not args.expose:
+        print(f"refusing to bind the panel to {args.host}: it has no login, and "
+              f"anyone who can reach it can start and stop processes, read "
+              f"pipeline.log, and rewrite the keys in .env. Keep it on this Mac, "
+              f"or put something that authenticates in front of it (an SSH "
+              f"tunnel, or a Cloudflare Tunnel behind Access) and pass --expose "
+              f"to say you have.", file=sys.stderr, flush=True)
+        return 2
 
     page = "" if _configured() else "setup"
     url = f"http://{args.host}:{args.port}/{page}"
