@@ -190,6 +190,8 @@ def env_defaults(profile: Profile) -> dict[str, str]:
         "NOTION_PROP_KIND": "",
         "NOTION_PROP_SOURCE": "",
         "RECORD_DEVICE": "MacBook Pro Microphone",
+        "PANEL_ACCESS_TEAM": "",
+        "PANEL_ACCESS_AUD": "",
     }
 
 
@@ -413,6 +415,19 @@ NOTION_PROP_SOURCE = _setting("NOTION_PROP_SOURCE")
 # often the iPhone's mic rather than the built-in one, and a lecture recorded
 # through a phone that then leaves the room is a lecture you don't have.
 RECORD_DEVICE = _setting("RECORD_DEVICE")
+
+# --- The panel on the web (gui.py) ------------------------------------------
+
+# The panel itself only ever listens on this Mac. To reach it from elsewhere
+# it is published through a Cloudflare Tunnel, and Cloudflare Access is the
+# login in front of it. These two identify that Access application: the team
+# name (the part before .cloudflareaccess.com) and the application's Audience
+# tag. With both set, any request that arrived through Cloudflare has to carry
+# a valid Access token or it is refused. With either unset, every request that
+# arrived through Cloudflare is refused, so a tunnel that is up before the
+# login is configured exposes nothing. Requests from this Mac are never gated.
+PANEL_ACCESS_TEAM = _setting("PANEL_ACCESS_TEAM")
+PANEL_ACCESS_AUD = _setting("PANEL_ACCESS_AUD")
 
 # Names to fall back through if RECORD_DEVICE matches nothing attached.
 RECORD_DEVICE_FALLBACKS = ("MacBook Pro Microphone", "Built-in", "Microphone")

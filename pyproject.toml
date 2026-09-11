@@ -15,6 +15,7 @@ dependencies = [
     "google-auth-oauthlib>=1.2",
     "google-auth-httplib2>=0.2",
     "flask>=3.0",
+    "PyJWT[crypto]>=2.8",
     "pydantic>=2.0",
     "python-dotenv>=1.0",
     "requests>=2.31",

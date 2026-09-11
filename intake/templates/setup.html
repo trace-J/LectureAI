@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LectureAI setup</title>
+<title>{{ profile.title }} setup</title>
 <link rel="icon" href="/static/icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -155,8 +155,8 @@
   <header>
     <img src="/static/icon.png" alt="">
     <div>
-      <div class="brandname">Lecture<span class="ai">AI</span> setup</div>
-      <div class="tagline">All of your lectures, in one place</div>
+      <div class="brandname"><span class="ai">{{ profile.title }}</span> setup</div>
+      <div class="tagline">{{ profile.tagline }}</div>
     </div>
     <a class="back" href="/">Control panel &rarr;</a>
   </header>

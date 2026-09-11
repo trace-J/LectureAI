@@ -263,8 +263,12 @@ def t13():
     assert "Lexend Deca" in html, "brand font missing"
     assert "#8C52FF" in html, "brand purple missing"
     assert "/static/icon.png" in html, "logo missing"
-    assert "All of your lectures, in one place" in html, "tagline missing"
-results.append(run("the page renders with the brand font, color, and logo", t13))
+    assert "AI notetaking for organization and academics." in html, "tagline missing"
+    assert ">Syllabus<" in html and "<title>Syllabus</title>" in html, "the name is not Syllabus"
+    assert "LectureAI" not in html, "the old name is still on the page"
+    setup_html = client.get("/setup").get_data(as_text=True)
+    assert "<title>Syllabus setup</title>" in setup_html, setup_html[:300]
+results.append(run("the page renders with the brand font, color, logo, and the profile's name", t13))
 
 
 def t14():
@@ -680,6 +684,115 @@ def t32():
     finally:
         gui.app.run, gui._open_browser_later = real_run, real_open
 results.append(run("a non-localhost --host is refused unless --expose says so", t32))
+
+def t33():
+    # The panel behind a Cloudflare Tunnel. A request that came through
+    # Cloudflare carries Cf-Ray; it must also carry a valid Access token for
+    # this application, or it gets nothing. Requests from this Mac are never
+    # gated. The signing key is stubbed: no network, no real team.
+    import datetime as dt
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    real_key_fn = gui._signing_key
+    gui._signing_key = lambda team, token: key.public_key()
+    now = dt.datetime.now(dt.timezone.utc)
+
+    def token(signer=key, aud="aud-1", team="myteam", email="me@example.com", exp=3600):
+        return jwt.encode({"aud": [aud], "email": email, "iss": f"https://{team}.cloudflareaccess.com",
+                           "exp": now + dt.timedelta(seconds=exp), "iat": now},
+                          signer, algorithm="RS256")
+    via = {"Cf-Ray": "8a1b2c3d4e5f-DFW"}
+    try:
+        config.PANEL_ACCESS_TEAM = config.PANEL_ACCESS_AUD = ""
+        assert client.get("/api/status").status_code == 200, "local requests must never be gated"
+        res = client.get("/api/status", headers=via)
+        assert res.status_code == 503, "a tunnel with no Access configured must expose nothing"
+        assert "PANEL_ACCESS_AUD" in res.get_json()["error"]
+        assert client.get("/", headers=via).status_code == 503
+
+        config.PANEL_ACCESS_TEAM, config.PANEL_ACCESS_AUD = "myteam.cloudflareaccess.com", "aud-1"
+        assert client.get("/api/status", headers=via).status_code == 401, "no token must be refused"
+        assert client.get("/", headers=via).status_code == 401
+        good = {**via, "Cf-Access-Jwt-Assertion": token()}
+        res = client.get("/api/status", headers=good)
+        assert res.status_code == 200, res.get_data(as_text=True)
+        assert res.get_json()["signed_in_as"] == "me@example.com", res.get_json()
+        assert client.get("/", headers=good).status_code == 200
+        client.set_cookie("CF_Authorization", token(email="cookie@example.com"))
+        assert client.get("/api/status", headers=via).get_json()["signed_in_as"] == "cookie@example.com"
+        client.delete_cookie("CF_Authorization")
+        for label, bad in (("another application's token", token(aud="aud-2")),
+                           ("another team's token", token(team="otherteam")),
+                           ("an expired token", token(exp=-60)),
+                           ("a token signed by someone else", token(signer=other)),
+                           ("garbage", "not.a.token")):
+            res = client.get("/api/status", headers={**via, "Cf-Access-Jwt-Assertion": bad})
+            assert res.status_code == 401, f"{label} got {res.status_code}"
+        assert client.get("/api/status").get_json()["signed_in_as"] == "", "local requests have no viewer"
+        assert gui._team_slug("https://myteam.cloudflareaccess.com/") == "myteam"
+        assert gui._team_slug("myteam") == "myteam"
+    finally:
+        gui._signing_key = real_key_fn
+        config.PANEL_ACCESS_TEAM = config.PANEL_ACCESS_AUD = ""
+results.append(run("through Cloudflare, only a valid Access sign-in for this app gets in; locally nothing is gated", t33))
+
+
+def t34():
+    # The launchd agent that keeps the panel running. launchctl is stubbed and
+    # the plist goes to a temp folder, so nothing here touches this Mac.
+    import plistlib
+    from intake import service
+    calls = []
+
+    class Done:
+        returncode = 0
+        stdout = "\tstate = running\n\tpid = 4242\n"
+        stderr = ""
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        return Done()
+    agents = tmp / "LaunchAgents"
+    said = []
+    real_answers = service.port_answers
+    service.port_answers = lambda port, timeout=0.5: True
+    try:
+        rc = service.install(say=said.append, run=fake_run, agents_dir=agents, wait=1)
+        assert rc == 0, said
+        path = agents / "com.maincoursemedia.syllabus.panel.plist"
+        assert path.exists(), list(agents.iterdir())
+        data = plistlib.loads(path.read_bytes())
+        assert data["Label"] == "com.maincoursemedia.syllabus.panel"
+        assert data["ProgramArguments"][0] == sys.executable, data["ProgramArguments"]
+        assert data["ProgramArguments"][1:] == ["-m", "intake.cli", "--profile", "syllabus", "panel", "--no-browser"]
+        assert data["RunAtLoad"] is True and data["KeepAlive"] is True
+        assert "/opt/homebrew/bin" in data["EnvironmentVariables"]["PATH"], "ffmpeg would not be found"
+        assert data["EnvironmentVariables"]["INTAKE_PROFILE"] == "syllabus"
+        assert data["StandardErrorPath"].endswith("panel.log")
+        verbs = [c[1] for c in calls]
+        assert verbs == ["bootout", "bootstrap", "kickstart"], verbs
+        assert calls[1][2].startswith("gui/") and calls[1][3] == str(path), calls[1]
+        assert calls[2][2] == "-k", "restart must replace a running copy"
+
+        calls.clear()
+        assert service.status(say=said.append, run=fake_run, agents_dir=agents) == 0
+        assert any("pid 4242" in line for line in said), said
+        assert any("answering" in line for line in said), said
+
+        calls.clear()
+        assert service.restart(say=said.append, run=fake_run, agents_dir=agents) == 0
+        assert calls[0][1:3] == ["kickstart", "-k"], calls
+
+        calls.clear()
+        assert service.uninstall(say=said.append, run=fake_run, agents_dir=agents) == 0
+        assert not path.exists()
+        assert calls[0][1] == "bootout", calls
+        assert service.restart(say=said.append, run=fake_run, agents_dir=agents) == 1, "restart with no agent must say so"
+    finally:
+        service.port_answers = real_answers
+results.append(run("the service command writes a launchd agent for this interpreter and drives launchctl", t34))
 
 print()
 print(f"{sum(results)}/{len(results)} passed")

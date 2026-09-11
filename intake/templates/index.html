@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LectureAI</title>
+<title>{{ profile.title }}</title>
 <link rel="icon" href="/static/icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -64,6 +64,7 @@
   .brandname { font-size: 25px; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; }
   .brandname .ai { color: var(--brand); }
   .tagline { font-size: 13px; color: var(--muted); font-weight: 300; }
+  .viewer { font-size: 12px; margin-top: 2px; }
 
   .theme {
     margin-left: auto; display: flex; gap: 2px; padding: 3px;
@@ -217,8 +218,9 @@
   <header>
     <img src="/static/icon.png" alt="">
     <div>
-      <div class="brandname">Lecture<span class="ai">AI</span></div>
-      <div class="tagline">All of your lectures, in one place</div>
+      <div class="brandname"><span class="ai">{{ profile.title }}</span></div>
+      <div class="tagline">{{ profile.tagline }}</div>
+      <div class="tagline viewer" id="viewer" hidden></div>
     </div>
     <a class="gear" href="/setup" title="Setup" aria-label="Setup" style="margin-left:auto">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -367,6 +369,9 @@ function renderCourses(s) {
 }
 
 function render(s) {
+  // Who Cloudflare Access signed in, when the page came through it.
+  $("viewer").textContent = s.signed_in_as ? "Signed in as " + s.signed_in_as : "";
+  $("viewer").hidden = !s.signed_in_as;
   state = s;
   renderCourses(s);
 

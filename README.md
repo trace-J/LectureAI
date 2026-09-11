@@ -19,11 +19,13 @@ schedule, the audio is compressed and split to clear the transcription API's
 size limit, Claude writes the summary, and the original recording is deleted
 once both uploads land.
 
-Syllabus has a home on the web at <https://maincoursemedia.com/syllabus/>.
-That page is the one to send someone who wants it: what it does, what it
-needs, and the install commands. The app itself runs on your Mac, and nothing
-about it is hosted anywhere. That is also why this repository is public: the
-install line below fetches straight from it.
+The control panel is reachable from anywhere at
+<https://maincoursemedia.com/syllabus> (it lands on
+`syllabus.maincoursemedia.com`), behind a Cloudflare Access sign-in. The
+panel still runs on the Mac that does the recording; the address is a
+Cloudflare Tunnel to it, and `intake service install` is what keeps the
+panel running there without a terminal. See "The panel on the web" below.
+This repository is public so that the install line below can fetch from it.
 
 ## How a recording flows through
 
@@ -183,11 +185,80 @@ row at the bottom reports which pieces are configured by presence alone, so no
 key or token is ever sent to the browser.
 
 `--host` can point it at another address, but only together with `--expose`,
-and without that flag the panel refuses and says why: there is no login on
-it, so anyone who can reach the port can start processes and rewrite the keys
-in `.env`. If you ever need it off this Mac, put something that authenticates
-in front of it first (an SSH tunnel, or a Cloudflare Tunnel behind Access)
-and pass `--expose` to say you have.
+and without that flag the panel refuses and says why: it has no login of its
+own, so anyone who can reach the port can start processes and rewrite the
+keys in `.env`. Reaching it from elsewhere is done differently, and without
+that flag: the panel keeps listening on localhost, a Cloudflare Tunnel on the
+same Mac carries requests to it, and Cloudflare Access is the login in front.
+That is the next section.
+
+## Keeping the panel running
+
+```bash
+intake service install
+```
+
+Installs the panel as a launchd agent for your login: it starts now, starts
+again at every login, and is restarted if it dies. It no longer belongs to
+any terminal window, so closing one, or the app you launched it from, no
+longer takes the panel down. Its output goes to `panel.log` in the profile's
+home. `intake service status`, `restart` (after updating the code or
+changing `.env`), and `uninstall` do what they say. Each profile has its
+own agent (`sous service install` for the other one).
+
+Only the panel is kept alive. Starting the watcher stays a click in the
+panel, because the watcher spends API credit and writes to Drive and Notion.
+
+The first recording after installing asks for microphone permission on
+behalf of Python, the program the agent runs. Grant it once under System
+Settings > Privacy & Security > Microphone and it sticks. The red timer
+described above is what you see if it was refused.
+
+## The panel on the web
+
+The panel is published at `syllabus.maincoursemedia.com`, and
+`maincoursemedia.com/syllabus` sends you there. Three pieces make that up,
+and only the last needs anything from you when setting up a new Mac.
+
+1. **The panel**, kept running by `intake service install`, listening on
+   `127.0.0.1:5173` as always.
+2. **A Cloudflare Tunnel** (`cloudflared`, installed with Homebrew and run
+   as its own launch agent by `cloudflared service install <token>`). It
+   holds an outbound connection to Cloudflare and hands requests for that
+   hostname to the panel's port. Nothing is opened on the router, and the
+   panel's port is still not reachable from the network. The tunnel is
+   named `syllabus-panel` in the Cloudflare account; the hostname is a CNAME
+   to `<tunnel-id>.cfargotunnel.com`.
+3. **Cloudflare Access** is the sign-in. An Access application covers the
+   hostname with a policy naming who may enter; Cloudflare shows the login
+   page and, once through, stamps every request with a signed token. The
+   panel checks that token itself, against Cloudflare's published keys,
+   using two values from the profile's `.env`:
+
+   ```
+   PANEL_ACCESS_TEAM=yourteam          # the part before .cloudflareaccess.com
+   PANEL_ACCESS_AUD=0123abcd...        # the application's Audience tag
+   ```
+
+   With both set, a request that came through Cloudflare must carry a valid
+   token for this application or it is refused. With either unset, every
+   request that came through Cloudflare is refused, so a tunnel that is up
+   before the login is configured exposes nothing. Requests from the Mac
+   itself carry no Cloudflare headers and are never gated, so
+   `http://127.0.0.1:5173` keeps working whatever the tunnel is doing. The
+   header shows who is signed in when the page came through Access.
+
+Adding a person later is done in Access, not here: add their email to the
+policy. That is also the only sign-in Syllabus has; it has no accounts of
+its own.
+
+If the address stops working, check the pieces in order: `intake service
+status` (is the panel up), `launchctl print gui/$(id -u)/com.cloudflare.cloudflared`
+and `~/Library/Logs/com.cloudflare.cloudflared.err.log` (is the tunnel
+connected), then the Access application in the Zero Trust dashboard. A 503
+page saying the panel has not been told which Access application protects
+it means `.env` is missing the two values above; a 401 means the sign-in
+did not check out, usually because the AUD does not match the application.
 
 Both the recorder and the watcher are started detached, on purpose, so
 closing the panel abandons neither. A recording keeps going if the panel
@@ -610,19 +681,19 @@ piece of that, and the rest is planned in this order:
   with PyInstaller into `Syllabus.app`, signed and notarized, with ffmpeg
   bundled so Homebrew stops being a requirement. The pipx install stays as
   the path for people who prefer a terminal.
-- **Sign-ins.** Today "signing in" means the Google Drive login, which is
-  per-user already. Accounts proper need a small web backend, which does not
-  exist yet: the marketing site is static. The likely shape is a
-  `syllabus.maincoursemedia.com` service (Cloudflare Workers plus D1, the
-  same stack `mcm-dashboard` is scaffolded on) that owns sign-in, holds the
-  **Web** OAuth client for Drive, and hands the desktop app a session. That
-  is also what would let Syllabus pay for transcription centrally instead of
-  asking every student for two API keys. Until it exists, the "early access"
-  address on the web page is the sign-up list.
-- **Hosting the panel itself on the web is not on this list.** It records
-  from the Mac's microphone and starts processes on the Mac; a hosted copy
-  would record nothing. The `--expose` flag exists so nobody discovers that
-  by putting it on the internet.
+- **Sign-ins.** Done for this Mac's panel: Cloudflare Access in front of the
+  tunnel, checked by the panel itself ("The panel on the web" above), and a
+  new person is one more email in the Access policy. What Access cannot do
+  is give each person their own panel on their own Mac under one account;
+  that needs a small web backend (Cloudflare Workers plus D1, the same
+  stack `mcm-dashboard` is scaffolded on) that owns sign-in, holds a **Web**
+  OAuth client for Drive, and hands the desktop app a session. That is also
+  what would let Syllabus pay for transcription centrally instead of asking
+  every student for two API keys.
+- **The panel on the web is this Mac's panel.** It records from this Mac's
+  microphone and starts processes here, so the address always reaches the
+  one running on the Mac that does the recording. A second person's Syllabus
+  would be a second tunnel to their Mac, under their own hostname.
 
 ### Loose ends
 
