@@ -42,6 +42,7 @@ class Profile:
     notion_target: str              # "weekly" or "database"; .env can override
     panel_port: int                 # the control panel's localhost port
     subject_label: str = "Course"   # what the schedule's code stands for
+    tagline: str = ""               # under the name in the panel header
 
     @property
     def title(self) -> str:
@@ -68,6 +69,7 @@ SYLLABUS = Profile(
     notion_target="weekly",
     panel_port=5173,
     subject_label="Course",
+    tagline="AI notetaking for organization and academics.",
 )
 
 SOUS = Profile(
@@ -81,6 +83,7 @@ SOUS = Profile(
     notion_target="database",
     panel_port=5174,
     subject_label="Client",
+    tagline="Client calls, filed as notes and to-dos.",
 )
 
 PROFILES: dict[str, Profile] = {p.name: p for p in (SYLLABUS, SOUS)}

@@ -32,7 +32,8 @@ import webbrowser
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request
+import jwt
+from flask import Flask, g, jsonify, render_template, request
 
 from intake import config, doctor, setup_wizard
 from intake import notion_tasks
@@ -211,14 +212,92 @@ def _integrations() -> dict:
     }
 
 
+# --- The login, when the panel is reached through Cloudflare -----------------
+#
+# The panel has no accounts of its own. When it is published through a
+# Cloudflare Tunnel, Cloudflare Access is the login page, and every request
+# that gets past it carries a signed token naming who signed in. That token
+# is checked here, against Cloudflare's published keys, so a tunnel that
+# somebody reaches without going through Access (or before Access was set up
+# at all) gets nothing. Requests straight from this Mac carry no Cloudflare
+# headers and are not gated, so the panel keeps working locally regardless.
+
+_jwk_clients: dict[str, jwt.PyJWKClient] = {}
+
+
+def _team_slug(team: str) -> str:
+    """'myteam', 'myteam.cloudflareaccess.com', or a URL: the team alone."""
+    team = team.strip().removeprefix("https://").removeprefix("http://")
+    return team.split("/")[0].removesuffix(".cloudflareaccess.com")
+
+
+def _signing_key(team: str, token: str):
+    """The public key that signed `token`, from the team's published set."""
+    client = _jwk_clients.get(team)
+    if client is None:
+        client = _jwk_clients[team] = jwt.PyJWKClient(
+            f"https://{team}.cloudflareaccess.com/cdn-cgi/access/certs",
+            cache_keys=True)
+    return client.get_signing_key_from_jwt(token).key
+
+
+def verify_access(token: str, team: str, aud: str) -> dict:
+    """The claims of a valid Access token for this application, or an error."""
+    team = _team_slug(team)
+    return jwt.decode(token, _signing_key(team, token), algorithms=["RS256"],
+                      audience=aud,
+                      issuer=f"https://{team}.cloudflareaccess.com")
+
+
+def _via_cloudflare() -> bool:
+    """Whether this request came in through Cloudflare's edge.
+
+    Cloudflare stamps every request it forwards with Cf-Ray, and a client
+    cannot remove it, so its absence means the request never left this Mac.
+    """
+    return "Cf-Ray" in request.headers
+
+
+def _refuse(code: int, message: str):
+    if request.path.startswith("/api/"):
+        return jsonify({"error": message}), code
+    return (f"<!doctype html><title>{config.PROFILE.title}</title>"
+            f"<p style='font: 15px/1.5 system-ui; max-width: 40em; margin: 4em auto'>"
+            f"{message}</p>"), code
+
+
+@app.before_request
+def _access_gate():
+    g.viewer = ""
+    if not _via_cloudflare():
+        return None
+    team, aud = config.PANEL_ACCESS_TEAM, config.PANEL_ACCESS_AUD
+    if not (team and aud):
+        return _refuse(503, "This panel is reachable through Cloudflare, but "
+                            "it has not been told which Access application "
+                            "protects it. Set PANEL_ACCESS_TEAM and "
+                            "PANEL_ACCESS_AUD in its .env and restart it.")
+    token = (request.headers.get("Cf-Access-Jwt-Assertion")
+             or request.cookies.get("CF_Authorization", ""))
+    if not token:
+        return _refuse(401, "Sign in through Cloudflare Access first.")
+    try:
+        claims = verify_access(token, team, aud)
+    except Exception as exc:  # any invalid token: wrong app, expired, forged
+        _say(f"refused a request through Cloudflare: {type(exc).__name__}")
+        return _refuse(401, "That sign-in is not valid for this panel.")
+    g.viewer = claims.get("email", "")
+    return None
+
+
 @app.get("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", profile=config.PROFILE)
 
 
 @app.get("/setup")
 def setup_page():
-    return render_template("setup.html")
+    return render_template("setup.html", profile=config.PROFILE)
 
 
 @app.get("/api/status")
@@ -249,6 +328,8 @@ def status():
         "courses": _courses(),
         "now_class": _current_class(),
         "configured": _configured(),
+        # Who Cloudflare Access let in, when the request came that way.
+        "signed_in_as": g.get("viewer", ""),
     })
 
 
