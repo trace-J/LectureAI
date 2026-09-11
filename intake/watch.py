@@ -58,10 +58,13 @@ def log(msg: str) -> None:
 
 
 def write_log_line(*fields: str) -> None:
-    """Append one tab-separated record to pipeline.log."""
-    stamp = datetime.now().isoformat(timespec="seconds")
-    with config.LOG_FILE.open("a") as fh:
-        fh.write("\t".join([stamp, *fields]) + "\n")
+    """Append one tab-separated record to pipeline.log.
+
+    The recorder writes its failures to the same file (config.append_log_line),
+    so a lecture that never produced audio shows up in the panel's recent
+    list the same way a transcription that failed does.
+    """
+    config.append_log_line(*fields)
 
 
 def write_status(stage: str, file: str = "", course: str = "",

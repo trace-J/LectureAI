@@ -327,6 +327,8 @@ def point_config_at(home):
 # No microphone is opened: the device list is canned, the way test_record does it.
 gui.recording.list_devices = lambda: [(0, "Someone's iPhone Microphone"),
                                       (1, "MacBook Pro Microphone")]
+# And no caffeinate is started for the `sleep` that stands in for ffmpeg.
+gui.recording._keep_awake = lambda pid: None
 
 
 def t18():
@@ -560,6 +562,100 @@ def t27():
     filed.unlink()
 results.append(run("a recording that ended on its own is filed on the next poll", t27))
 
+
+def t28():
+    # The watcher is running when its lock is held. A pid alone is not proof:
+    # a watcher this panel started and never reaped stays a zombie that
+    # answers kill(0), and the panel said "running" about one for an hour.
+    import fcntl
+    import os as _os
+    lock = tmp / "held.lock"
+    config.LOCK_FILE = lock
+    lock.write_text(str(_os.getpid()))
+    assert gui._watcher_pid() is None, "our own live pid, but nobody holds the lock"
+    handle = lock.open("r+")
+    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        assert gui._watcher_pid() == _os.getpid(), "a held lock is a running watcher"
+        body = client.get("/api/status").get_json()
+        assert body["watcher"]["running"] is True and body["watcher"]["pid"] == _os.getpid()
+    finally:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
+    assert gui._watcher_pid() is None
+    assert client.get("/api/status").get_json()["watcher"]["running"] is False
+    config.LOCK_FILE = tmp / "no-such.lock"
+results.append(run("the watcher shows as running only while its lock is held", t28))
+
+
+def t29():
+    # A watcher the panel started is reaped once it exits, so it cannot sit
+    # as a zombie for the life of the panel.
+    import subprocess
+    import time as _time
+    child = subprocess.Popen(["true"], start_new_session=True)
+    gui._children.append(child)
+    deadline = _time.monotonic() + 5
+    while child.poll() is None and _time.monotonic() < deadline:
+        _time.sleep(0.05)
+    child.wait(5)
+    gui._children.append(subprocess.Popen(["true"], start_new_session=True))
+    _time.sleep(0.3)
+    gui._watcher_pid()
+    assert child.returncode is not None
+    assert gui._children == [], gui._children
+results.append(run("watchers the panel started are reaped once they exit", t29))
+
+
+def t30():
+    # A live recording with nothing on disk after the grace period is called
+    # out in the status payload, and the page has somewhere to show it.
+    from datetime import datetime as _dt, timedelta
+    rec_mod = gui.recording
+
+    class Alive:
+        pid = 4242
+        def poll(self):
+            return None
+
+    staging = config.WORK_DIR / "recording_20260911-085900.m4a"
+    staging.parent.mkdir(parents=True, exist_ok=True)
+    staging.write_bytes(b"x" * 44)
+    rec = rec_mod.Recorder(course="ENTR-4306")
+    rec.device_name = "MacBook Pro Microphone"
+    rec.started = _dt.now() - timedelta(seconds=config.RECORD_NO_AUDIO_SECONDS + 5)
+    rec._staging, rec._proc = staging, Alive()
+    gui._recorder = rec
+    try:
+        r = client.get("/api/status").get_json()["recording"]
+        assert r["active"] is True and r["stalled"] is True, r
+        assert "No audio" in r["warning"] and "MacBook Pro Microphone" in r["warning"], r
+        staging.write_bytes(b"x" * (config.RECORD_NO_AUDIO_BYTES + 1))
+        r = client.get("/api/status").get_json()["recording"]
+        assert r["stalled"] is False and r["warning"] == "", r
+    finally:
+        gui._recorder = None
+        staging.unlink(missing_ok=True)
+    html = client.get("/").get_data(as_text=True)
+    assert "rec-warn" in html and "r.stalled" in html, "the page never shows the warning"
+    assert "Closing the lid ends the recording" in html, "the page does not warn about the lid"
+results.append(run("a stalled recording is reported to the page, which warns about the lid too", t30))
+
+
+def t31():
+    # A recording that captured nothing is written to pipeline.log by the
+    # recorder, and the panel's recent list reads it as a failure.
+    log_file = tmp / "recording-failures.log"
+    config.LOG_FILE = log_file
+    config.append_log_line("ERROR", "ENTR-4306_2026-09-11_0859.m4a",
+                           "could not record from MacBook Pro Microphone: the file "
+                           "holds no audio.\nffmpeg reported no error of its own.")
+    rows = gui._recent()
+    assert len(rows) == 1 and rows[0]["error"], rows
+    assert rows[0]["source"] == "ENTR-4306_2026-09-11_0859.m4a", rows[0]
+    assert "\n" not in log_file.read_text().rstrip("\n"), "a newline inside a field breaks the log"
+    assert "no audio" in rows[0]["error"], rows[0]
+results.append(run("a recording that captured nothing appears in the recent list as failed", t31))
 
 print()
 print(f"{sum(results)}/{len(results)} passed")

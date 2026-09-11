@@ -266,19 +266,28 @@ def _stop(proc: subprocess.Popen) -> None:
 
 def _watcher_is_running() -> bool:
     """Whether a watcher process currently holds the inbox lock."""
-    if not config.LOCK_FILE.exists():
-        return False
+    return config.watcher_pid() is not None
+
+
+def _keep_awake(pid: int) -> None:
+    """Keep the Mac from idling to sleep while ffmpeg (pid) is recording.
+
+    Sleep ends the capture: the microphone stops delivering and ffmpeg exits,
+    so a lecture recorded on battery with the display dimmed can end early
+    without anyone touching the keyboard. caffeinate -w holds the assertion
+    for exactly as long as ffmpeg lives and needs no cleanup. It cannot stop
+    a closed lid; the panel's note and the README cover that.
+    """
+    if shutil.which("caffeinate") is None:
+        return
     try:
-        pid = int(config.LOCK_FILE.read_text().strip())
-    except (ValueError, OSError):
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+        subprocess.Popen(
+            ["caffeinate", "-i", "-s", "-w", str(pid)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, start_new_session=True,
+        )
+    except OSError as exc:
+        log(f"  could not start caffeinate: {exc}")
 
 
 class Recorder:
@@ -323,6 +332,32 @@ class Recorder:
     def planned_name(self) -> str:
         return output_name(self.started or datetime.now(), self.course)
 
+    @property
+    def stalled(self) -> bool:
+        """Whether the mic has been open long enough that no audio means trouble.
+
+        ffmpeg writes the m4a header at once and the first audio within
+        seconds. A file still holding nothing after RECORD_NO_AUDIO_SECONDS
+        is a device that is open but delivering silence, usually because the
+        microphone permission was never granted to whatever launched us. The
+        timer keeps ticking either way, so this is the only visible sign.
+        """
+        return (self.is_recording
+                and self.elapsed >= config.RECORD_NO_AUDIO_SECONDS
+                and self.staged_bytes < config.RECORD_NO_AUDIO_BYTES)
+
+    @property
+    def warning(self) -> str:
+        """What to show while stalled; empty when the recording is healthy."""
+        if not self.stalled:
+            return ""
+        minutes = max(1, int(self.elapsed // 60))
+        device = self.device_name or "The microphone"
+        return (f"No audio has reached the file in {minutes} min. {device} is "
+                f"open but delivering nothing. Check System Settings > Privacy "
+                f"& Security > Microphone for the app that launched this, or "
+                f"stop and pick another microphone.")
+
     def start(self, max_minutes: float | None = None) -> None:
         """Open the microphone and begin writing to .work/.
 
@@ -334,7 +369,7 @@ class Recorder:
         if shutil.which("ffmpeg") is None:
             raise RuntimeError(
                 "ffmpeg is not on your PATH. Install it:  brew install ffmpeg")
-        other = Recorder.adopt()
+        other = Recorder.adopt(keep_awake=False)
         if other is not None:
             raise RuntimeError(
                 f"a recording is already running: {other.planned_name}, started "
@@ -365,9 +400,10 @@ class Recorder:
             )
         _write_state(self._proc.pid, self._staging, self.started,
                      self.course, self.device_name)
+        _keep_awake(self._proc.pid)
 
     @classmethod
-    def adopt(cls) -> "Recorder | None":
+    def adopt(cls, keep_awake: bool = True) -> "Recorder | None":
         """Take over a recording that an earlier process started and lost.
 
         The panel gets closed, the terminal that ran `intake record` dies,
@@ -388,6 +424,8 @@ class Recorder:
         recorder._staging = state["staging"]
         recorder._errors = state["staging"].with_suffix(".log")
         recorder._proc = _ExternalProcess(state["pid"])
+        if keep_awake:
+            _keep_awake(state["pid"])
         return recorder
 
     def finish(self) -> Path | None:
@@ -415,28 +453,57 @@ class Recorder:
         returncode_before = self._proc.poll()
         _stop(self._proc)
 
-        stderr = ""
-        if self._errors is not None:
-            try:
-                stderr = self._errors.read_text().strip()
-            except OSError:
-                pass
-            self._errors.unlink(missing_ok=True)
-        self._errors = None
+        stderr = _read_errors(self._errors)
+        errors, self._errors = self._errors, None
         staging, self._staging = self._staging, None
         proc, self._proc = self._proc, None
         _clear_state()
 
         # ffmpeg exiting on its own before we asked means it never opened the
-        # device, which is nearly always a permissions problem.
+        # device, which is nearly always a permissions problem. A file with
+        # nothing in it is the same failure with the device open: the mic was
+        # blocked and delivered no audio for as long as we sat there.
         died_early = returncode_before is not None and not staging.exists()
         if died_early or not staging.exists() or staging.stat().st_size == 0:
             staging.unlink(missing_ok=True)
-            raise RuntimeError(_diagnose(stderr, self.device_name))
+            raise RuntimeError(
+                _report_failure(self.planned_name, stderr, self.device_name, errors))
 
+        if errors is not None:
+            errors.unlink(missing_ok=True)
         destination = _file_into_inbox(staging, self.started, self.course)
         self.stderr = stderr
         return destination
+
+
+def _read_errors(errors: Path | None) -> str:
+    if errors is None:
+        return ""
+    try:
+        return errors.read_text().strip()
+    except OSError:
+        return ""
+
+
+def _report_failure(name: str, stderr: str, device_name: str,
+                    errors: Path | None) -> str:
+    """Explain a recording that produced nothing, and make sure it is seen.
+
+    The message goes back to whoever asked, but a flash on the panel lasts
+    six seconds and a line in a terminal nobody is watching lasts less, and
+    a status poll that finds ffmpeg dead during a dark wake shows nobody
+    anything. pipeline.log is what the panel's recent list reads, so the
+    failure is written there too. ffmpeg's own log, when it said anything,
+    is kept next to where the recording would have been.
+    """
+    message = _diagnose(stderr, device_name)
+    if errors is not None:
+        if stderr:
+            message += f"\nffmpeg's log was kept at {errors}"
+        else:
+            errors.unlink(missing_ok=True)
+    config.append_log_line("ERROR", name, message)
+    return message
 
 
 def _file_into_inbox(staging: Path, started: datetime, course: str | None) -> Path:
@@ -468,14 +535,20 @@ def finish_abandoned() -> Path | None:
         return None
     _clear_state()
     staging = state["staging"]
-    staging.with_suffix(".log").unlink(missing_ok=True)
+    errors = staging.with_suffix(".log")
+    name = output_name(state["started"], state["course"])
     if not staging.exists() or staging.stat().st_size == 0:
         staging.unlink(missing_ok=True)
+        message = _report_failure(name, _read_errors(errors), state["device"], errors)
+        log(f"  {name} recorded nothing: {message.splitlines()[0]}")
         return None
     if not transcribe.duration_seconds(staging):
-        log(f"  {staging.name} was never finalized and cannot be played; "
-            f"leaving it in {staging.parent}")
+        message = (f"{staging.name} was never finalized and cannot be played; "
+                   f"left in {staging.parent}")
+        log(f"  {message}")
+        config.append_log_line("ERROR", name, message)
         return None
+    errors.unlink(missing_ok=True)
     return _file_into_inbox(staging, state["started"], state["course"])
 
 
@@ -511,10 +584,14 @@ def record(
     started = recorder.started
 
     deadline = time.monotonic() + limit * 60 if limit else None
+    warned = False
     try:
         while recorder.is_recording:
             elapsed = str(datetime.now() - started).split(".")[0]
             size = recorder.staged_bytes
+            if not warned and recorder.stalled:
+                warned = True
+                log("\n  " + recorder.warning)
             # ffmpeg buffers the m4a, so the file sits at zero for the first
             # while. Showing 0.0MB during a lecture reads like a failure, so
             # only report a size once there is one.
@@ -563,12 +640,16 @@ def _diagnose(stderr: str, device_name: str) -> str:
     lowered = stderr.lower()
     if "permission" in lowered or "not authorized" in lowered or not stderr:
         return (
-            f"could not record from {device_name}. The most likely cause is "
-            f"microphone permission: open System Settings > Privacy & Security "
-            f"> Microphone and enable it for your terminal, then try again."
-            + (f"\nffmpeg said: {stderr}" if stderr else "")
+            f"could not record from {device_name}: the file holds no audio. "
+            f"The most likely cause is microphone permission: open System "
+            f"Settings > Privacy & Security > Microphone and enable it for "
+            f"your terminal, or for the app that launched the panel, then "
+            f"try again."
+            + (f"\nffmpeg said: {stderr}" if stderr
+               else "\nffmpeg reported no error of its own.")
         )
-    return f"recording failed.\nffmpeg said: {stderr}"
+    return (f"recording from {device_name} failed: the file holds no audio."
+            f"\nffmpeg said: {stderr}")
 
 
 def main(argv: list[str] | None = None) -> int:

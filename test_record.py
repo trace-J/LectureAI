@@ -163,14 +163,27 @@ STATE = config.RECORDING_STATE_FILE
 STAGING = config.WORK_DIR / "recording_20260910-123340.m4a"
 STARTED = datetime(2026, 9, 10, 12, 33, 40)  # a Thursday: ENTR-3306 at 12
 
+# Adopting or starting a recording asks caffeinate to hold the Mac awake for
+# ffmpeg's lifetime. The tests stand a `sleep` in for ffmpeg, and t22 checks
+# the real function on its own.
+REAL_KEEP_AWAKE = record._keep_awake
+record._keep_awake = lambda pid: None
+
 
 def reset():
     STATE.unlink(missing_ok=True)
     STAGING.unlink(missing_ok=True)
     STAGING.with_suffix(".log").unlink(missing_ok=True)
+    config.LOG_FILE.unlink(missing_ok=True)
     config.INBOX_DIR.mkdir(parents=True, exist_ok=True)
     for p in config.INBOX_DIR.iterdir():
         p.unlink()
+
+
+def log_lines():
+    if not config.LOG_FILE.exists():
+        return []
+    return [line.split("\t") for line in config.LOG_FILE.read_text().splitlines()]
 
 
 def t11():
@@ -288,27 +301,36 @@ results.append(run("a live pid that is not our ffmpeg is not adopted", t16))
 def t17():
     reset()
     # start() records what it launched, without launching anything here.
-    seen = {}
+    launched = []
 
     class FakePopen:
         pid = 4242
         def __init__(self, cmd, **kw):
-            seen["cmd"] = cmd
-            seen["kw"] = kw
+            launched.append((cmd, kw))
         def poll(self):
             return None
 
-    real_popen, real_which = record.subprocess.Popen, record.shutil.which
+    real_popen, real_which, real_awake = (record.subprocess.Popen, record.shutil.which,
+                                          record._keep_awake)
     record.subprocess.Popen = FakePopen
-    record.shutil.which = lambda name: "/opt/homebrew/bin/ffmpeg"
+    record.shutil.which = lambda name: f"/opt/homebrew/bin/{name}"
+    record._keep_awake = REAL_KEEP_AWAKE
     record.list_devices = fake_devices
     try:
         rec = record.Recorder(course="RELI-3304")
         rec.start(max_minutes=90)
     finally:
         record.subprocess.Popen, record.shutil.which = real_popen, real_which
-    assert seen["kw"]["start_new_session"] is True
-    assert seen["cmd"][seen["cmd"].index("-t") + 1] == "5400", seen["cmd"]
+        record._keep_awake = real_awake
+    cmds = {cmd[0]: (cmd, kw) for cmd, kw in launched}
+    assert set(cmds) == {"ffmpeg", "caffeinate"}, [c for c, _ in launched]
+    cmd, kw = cmds["ffmpeg"]
+    assert kw["start_new_session"] is True
+    assert cmd[cmd.index("-t") + 1] == "5400", cmd
+    # Idle sleep ends the capture, so the Mac is held awake for exactly as
+    # long as ffmpeg runs, by pid, with nothing to clean up afterwards.
+    awake, _ = cmds["caffeinate"]
+    assert awake[awake.index("-w") + 1] == "4242" and "-i" in awake, awake
     state = record._read_state()
     assert state is not None, "start must write the state file"
     assert state["pid"] == 4242 and state["course"] == "RELI-3304", state
@@ -341,6 +363,152 @@ def t18():
     assert filed.exists() and not STAGING.exists()
     reset()
 results.append(run("finish() tells a recording filed elsewhere from one that ended", t18))
+
+# --- a recording that captured nothing ------------------------------------
+#
+# A lecture once ran 50 minutes with the timer ticking while the microphone
+# delivered nothing; the failure flashed for six seconds, went to a terminal
+# nobody was watching, and the cleanup deleted the only evidence.
+
+def t19():
+    reset()
+    errors = STAGING.with_suffix(".log")
+    errors.write_text("[avfoundation] Input/output error\n")
+    rec = record.Recorder(course="RELI-3304")
+    rec.started = STARTED
+    rec.device_name = "MacBook Pro Microphone"
+    rec._staging, rec._errors = STAGING, errors
+    rec._proc = record._ExternalProcess(2 ** 22 - 1)  # ffmpeg already gone
+    try:
+        rec.stop()
+    except RuntimeError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("a recording with no file must raise")
+    assert "Input/output error" in message, message
+    assert str(errors) in message, "the kept log must be named"
+    assert errors.exists(), "ffmpeg's log is the only evidence; it must be kept"
+    assert not STATE.exists()
+    # pipeline.log carries the failure, named for the lecture that was lost,
+    # on one line, so the panel's recent list shows it.
+    lines = log_lines()
+    assert len(lines) == 1 and lines[0][1] == "ERROR", lines
+    assert lines[0][2] == "RELI-3304_2026-09-10_1233.m4a", lines[0]
+    assert "no audio" in lines[0][3] and "\n" not in lines[0][3], lines[0]
+    assert list(config.INBOX_DIR.iterdir()) == []
+    reset()
+results.append(run("a recording that produced nothing is logged and its ffmpeg log kept", t19))
+
+
+def t20():
+    reset()
+    # The same failure with an empty file and a silent ffmpeg: the empty file
+    # and empty log go, the failure still lands in pipeline.log.
+    STAGING.write_bytes(b"")
+    errors = STAGING.with_suffix(".log")
+    errors.write_text("")
+    rec = record.Recorder(course="RELI-3304")
+    rec.started = STARTED
+    rec.device_name = "MacBook Pro Microphone"
+    rec._staging, rec._errors = STAGING, errors
+    rec._proc = record._ExternalProcess(2 ** 22 - 1)
+    try:
+        rec.stop()
+    except RuntimeError as exc:
+        assert "Microphone" in str(exc) and "no error of its own" in str(exc), exc
+    else:
+        raise AssertionError("an empty file must raise")
+    assert not STAGING.exists() and not errors.exists()
+    assert len(log_lines()) == 1 and log_lines()[0][1] == "ERROR", log_lines()
+
+    # Found later by another process instead: same outcome.
+    reset()
+    STAGING.write_bytes(b"")
+    record._write_state(2 ** 22 - 1, STAGING, STARTED, "RELI-3304", "Some Mic")
+    assert record.finish_abandoned() is None
+    assert not STATE.exists() and not STAGING.exists()
+    lines = log_lines()
+    assert len(lines) == 1 and lines[0][2] == "RELI-3304_2026-09-10_1233.m4a", lines
+    assert "Some Mic" in lines[0][3], lines[0]
+    reset()
+results.append(run("an empty recording, stopped or found abandoned, reaches pipeline.log", t20))
+
+
+def t21():
+    reset()
+
+    class Alive:
+        pid = 4242
+        def poll(self):
+            return None
+
+    from datetime import timedelta
+    rec = record.Recorder(course="RELI-3304")
+    rec.device_name = "MacBook Pro Microphone"
+    rec._staging = STAGING
+    rec._proc = Alive()
+    STAGING.write_bytes(b"x" * 44)  # the m4a header ffmpeg writes at once
+
+    rec.started = datetime.now() - timedelta(seconds=5)
+    assert not rec.stalled, "too early to tell"
+    assert rec.warning == ""
+
+    rec.started = datetime.now() - timedelta(seconds=config.RECORD_NO_AUDIO_SECONDS + 1)
+    assert rec.stalled, "a header-only file after the grace period is a stall"
+    assert "MacBook Pro Microphone" in rec.warning and "Microphone" in rec.warning, rec.warning
+
+    STAGING.write_bytes(b"x" * (config.RECORD_NO_AUDIO_BYTES + 1))
+    assert not rec.stalled, "audio on disk means the mic is live"
+
+    rec._proc = record._ExternalProcess(2 ** 22 - 1)  # gone
+    STAGING.write_bytes(b"x" * 44)
+    assert not rec.stalled, "a finished recording is not stalled, it is over"
+    reset()
+results.append(run("a mic that delivers nothing is called out after the grace period", t21))
+
+
+def t22():
+    launched = []
+
+    class FakePopen:
+        def __init__(self, cmd, **kw):
+            launched.append((cmd, kw))
+
+    real_popen, real_which = record.subprocess.Popen, record.shutil.which
+    record.subprocess.Popen = FakePopen
+    try:
+        record.shutil.which = lambda name: None
+        REAL_KEEP_AWAKE(1234)
+        assert launched == [], "no caffeinate on this system means nothing to run"
+        record.shutil.which = lambda name: "/usr/bin/caffeinate"
+        REAL_KEEP_AWAKE(1234)
+    finally:
+        record.subprocess.Popen, record.shutil.which = real_popen, real_which
+    assert len(launched) == 1, launched
+    cmd, kw = launched[0]
+    assert cmd[0] == "caffeinate" and cmd[-2:] == ["-w", "1234"], cmd
+    assert kw["start_new_session"] is True and kw["stdin"] is subprocess.DEVNULL
+results.append(run("caffeinate follows ffmpeg's pid and is skipped where it does not exist", t22))
+
+
+def t23():
+    # Whether a watcher is running is read from the lock, not from kill(0):
+    # a pid in the file with nobody holding the lock is a dead watcher.
+    import fcntl
+    lock = config.LOCK_FILE
+    lock.write_text(str(os.getpid()))
+    assert not record._watcher_is_running(), "an unheld lock is a stopped watcher"
+    handle = lock.open("r+")
+    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        assert record._watcher_is_running(), "a held lock is a running watcher"
+    finally:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
+    assert not record._watcher_is_running()
+    lock.unlink()
+    assert not record._watcher_is_running()
+results.append(run("the watcher is running when its lock is held, not when its pid exists", t23))
 
 print()
 print(f"{sum(results)}/{len(results)} passed")
