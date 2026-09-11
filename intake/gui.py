@@ -43,6 +43,13 @@ _recorder: recording.Recorder | None = None
 
 WATCHER_LOG = config.WORK_DIR / "watcher-gui.log"
 
+# Watchers this panel started. They run detached and are meant to outlive
+# us, but while we are alive we are still their parent, and a child nobody
+# waits on stays a zombie: kill(pid, 0) keeps saying it is alive, and the
+# panel keeps reporting a watcher that died hours ago. Polling them here is
+# what reaps them.
+_children: list[subprocess.Popen] = []
+
 
 def _say(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
@@ -80,21 +87,24 @@ def _current_recorder() -> recording.Recorder | None:
     return _recorder
 
 
+def _reap_children() -> None:
+    """Collect exit statuses of watchers we started that have since ended."""
+    for child in list(_children):
+        if child.poll() is not None:
+            _children.remove(child)
+
+
 def _watcher_pid() -> int | None:
-    """PID of the running watcher, from the lock file, or None."""
-    if not config.LOCK_FILE.exists():
-        return None
-    try:
-        pid = int(config.LOCK_FILE.read_text().strip())
-    except (ValueError, OSError):
-        return None
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return None
-    except PermissionError:
-        return pid
-    return pid
+    """PID of the running watcher, or None.
+
+    Decided by whether the lock is held, not by whether the pid answers: a
+    watcher that was killed answers kill(0) as a zombie until its parent
+    (this panel, when it started the watcher) reaps it, and a stale pid can
+    be reused by an unrelated process. The flock goes away the instant the
+    watcher does, whatever state its process record is in.
+    """
+    _reap_children()
+    return config.watcher_pid()
 
 
 def _courses() -> list[str]:
@@ -222,6 +232,10 @@ def status():
             "course": (rec.course or "") if active else "",
             # Started by an earlier panel and picked up by this one.
             "resumed": rec.adopted if active else False,
+            # Open for a while with nothing on disk: the timer is ticking but
+            # the mic is delivering nothing, and the page must say so.
+            "stalled": rec.stalled if active else False,
+            "warning": rec.warning if active else "",
         },
         "watcher": {"running": pid is not None, "pid": pid},
         "processing": _processing(pid),
@@ -295,11 +309,11 @@ def watcher_start():
     # Run as a module from the directory that holds the package, so this works
     # from a checkout (where that is the repo root) and from a pipx install
     # (where it is site-packages) without either needing the other's setup.
-    subprocess.Popen(
+    _children.append(subprocess.Popen(
         [sys.executable, "-m", "intake.watch"],
         cwd=str(config.CODE_ROOT), stdin=subprocess.DEVNULL,
         stdout=handle, stderr=handle, start_new_session=True,
-    )
+    ))
     return jsonify({"ok": True})
 
 

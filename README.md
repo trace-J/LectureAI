@@ -171,6 +171,23 @@ ffmpeg stops itself at `RECORD_MAX_MINUTES` (240) and writes a valid file,
 which the next panel files into the inbox on its first status poll. The
 watcher likewise finishes a lecture midway through transcription on its own.
 
+Whether the watcher is running is read from its lock file, which it holds
+for exactly as long as it lives. The pid inside is only a label: a watcher
+the panel started and that was later killed stays a zombie that still
+answers a liveness check, and the panel once reported one as running for an
+hour while nothing was processing. The lock cannot do that, and the panel
+also reaps the watchers it started.
+
+A recording that captures nothing is called out in two places. While it is
+running, a file that still holds no audio a minute in turns the timer red
+with a note under it, because a microphone that is open but blocked (usually
+a permission never granted to whatever launched the panel) looks exactly
+like a healthy one otherwise: the timer ticks either way. And when it ends,
+the failure is written to `pipeline.log` and shows in the recent list as
+failed, with ffmpeg's own log kept in `.work/` if it said anything. A flash
+on the page and a line in the terminal are gone in seconds, and a recording
+found dead during a dark wake shows nobody anything.
+
 ## Recording on this Mac
 
 ```bash
@@ -202,6 +219,11 @@ Three things worth knowing:
   in connection order, so index 0 is often a nearby iPhone rather than the
   built-in mic. `intake setup` picks by name; so does `RECORD_DEVICE` in
   `~/.intake/.env`.
+- **Press Stop before closing the lid.** Sleep ends the capture. The Mac is
+  held awake for as long as ffmpeg runs (`caffeinate -w`, started alongside
+  it), so a dimmed display or an idle timer cannot end a lecture early, but
+  nothing can hold a closed lid open. A recording cut off by sleep is still
+  filed with whatever it captured up to that point.
 
 Stopping with Ctrl-C is the supported way to end a recording: it lets ffmpeg
 write the file's trailer. Killing the process instead leaves an m4a nothing can
@@ -287,6 +309,19 @@ catch it.
 **The panel opens on the Setup page instead of the controls.** Both keys and
 at least one class are needed before anything can be recorded and filed. Fill
 them in and the panel is one click away in the header.
+
+**The timer ran for the whole lecture and nothing reached the inbox.** The
+microphone was open but delivering nothing, and the recent list shows the
+lecture as failed with the reason. On macOS that is almost always the
+microphone permission for whatever launched the panel or `intake record`:
+the terminal app, or the app whose terminal it was. Grant it under System
+Settings > Privacy & Security > Microphone. The panel now turns the timer red
+about a minute in when this is happening, so check the page after you press
+Record. ffmpeg's own log, if it said anything, is in `~/.intake/.work/`.
+
+**The panel says the watcher is running but nothing gets processed.** Restart
+the panel; older versions judged the watcher by its pid, which a watcher that
+had been killed kept answering until the panel that started it quit.
 
 **You installed before the home directory existed.** Your `.env`, token, and
 log are still next to the code. The first `intake` command you run offers

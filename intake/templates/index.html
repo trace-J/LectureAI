@@ -124,6 +124,10 @@
   .rec-meta { font-size: 13px; color: var(--muted); margin-top: 3px; }
   .rec-meta strong { color: var(--ink); font-weight: 500; }
   .rec-note { font-size: 12px; color: var(--muted); margin-top: 8px; font-weight: 300; }
+  /* The mic is open but nothing is arriving. Red, because the ticking timer
+     above it says everything is fine. */
+  .rec-warn { font-size: 12px; color: var(--err); margin-top: 6px; font-weight: 400; }
+  .timer.stalled { color: var(--err); }
 
   select {
     font: inherit; font-size: 13px; padding: 7px 11px; border-radius: 9px;
@@ -316,6 +320,9 @@
 const $ = (id) => document.getElementById(id);
 let state = null;
 let busy = false;
+// Flashed once per recording when no audio is arriving; the red line under
+// the timer stays for as long as it is true.
+let warnedStalled = false;
 
 function hhmmss(total) {
   const s = Math.max(0, Math.floor(total));
@@ -373,13 +380,21 @@ function render(s) {
   if (r.active) {
     $("timer").textContent = hhmmss(r.elapsed);
     $("timer").classList.remove("idle");
+    $("timer").classList.toggle("stalled", !!r.stalled);
     const size = r.bytes ? ` · ${(r.bytes / 1048576).toFixed(1)} MB` : "";
-    $("recMeta").innerHTML = `<strong>${r.planned}</strong><br>${r.device}${size}`;
+    const warn = r.stalled ? `<div class="rec-warn">${escapeHtml(r.warning)}</div>` : "";
+    $("recMeta").innerHTML = `<strong>${r.planned}</strong><br>${r.device}${size}${warn}`;
     $("recNote").textContent = r.resumed
       ? "Started by an earlier panel and still going; nothing was lost. Click to stop and file it."
-      : "Click again to stop. The file moves to the inbox when finalized.";
+      : "Click again to stop. Closing the lid ends the recording, so press Stop first.";
+    if (r.stalled && !warnedStalled) {
+      warnedStalled = true;
+      flash(r.warning, true);
+    }
   } else {
+    warnedStalled = false;
     $("timer").textContent = "Ready";
+    $("timer").classList.remove("stalled");
     $("timer").classList.add("idle");
     $("recMeta").textContent = s.now_class
       ? `${s.now_class} is scheduled right now`

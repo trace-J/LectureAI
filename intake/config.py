@@ -9,8 +9,10 @@ and the repo never fills up with recordings, tokens, and logs.
 
 from __future__ import annotations
 
+import fcntl
 import os
 import re
+import time
 import tomllib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -291,6 +293,14 @@ RECORD_BITRATE = "64k"
 
 # Stop on your own; this only guards against a recorder left running all night.
 RECORD_MAX_MINUTES = 240
+
+# When to say the microphone is delivering nothing. ffmpeg writes the m4a
+# header at once and flushes audio in 32KB blocks, so at 64kbps a live mic
+# has put well over 4KB on disk within a few seconds. A recording still under
+# that after a minute is capturing silence from a blocked device: a lecture
+# once ran 50 minutes that way with the timer ticking and nothing on disk.
+RECORD_NO_AUDIO_SECONDS = 60
+RECORD_NO_AUDIO_BYTES = 4096
 
 # --- Watcher ---
 
@@ -749,6 +759,57 @@ def reload() -> None:
             value = os.environ.get(name, default)
         globals()[name] = value or default
     reload_schedule()
+
+
+def append_log_line(*fields: str) -> None:
+    """Append one tab-separated record to pipeline.log.
+
+    Successful lectures get five fields (time, course, source, name, URL);
+    failures get four (time, ERROR, source, message). The panel's recent list
+    reads both, so anything that goes wrong must land here to be seen at all.
+    Tabs and newlines inside a field would break the next reader, so they are
+    collapsed to spaces.
+    """
+    stamp = datetime.now().isoformat(timespec="seconds")
+    clean = [" ".join(str(field).split()) for field in fields]
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with LOG_FILE.open("a") as fh:
+        fh.write("\t".join([stamp, *clean]) + "\n")
+
+
+def watcher_pid() -> int | None:
+    """PID of the watcher currently running, or None.
+
+    The watcher holds an flock on LOCK_FILE for as long as it lives; the pid
+    inside is only a label. Checking that pid with kill(0) is not enough: a
+    watcher the panel spawned and never reaped answers kill(0) as a zombie
+    for as long as the panel runs, and the panel then reports it as running
+    and refuses to start another. The lock cannot lie that way, because a
+    zombie has already closed its files.
+    """
+    try:
+        handle = LOCK_FILE.open("r")
+    except OSError:
+        return None
+    with handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            held = True
+        else:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+            held = False
+        if not held:
+            return None
+        # The watcher takes the lock and then writes its pid, so a probe that
+        # lands between the two reads an empty file. Give it a moment.
+        for _ in range(3):
+            handle.seek(0)
+            text = handle.read().strip()
+            if text.isdigit():
+                return int(text)
+            time.sleep(0.05)
+    return None
 
 
 def require(name: str) -> str:
