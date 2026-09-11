@@ -118,7 +118,7 @@ def output_name(started: datetime, course: str | None = None) -> str:
     resolved = course or config.infer_course(started)
     stamp = started.strftime("%Y-%m-%d_%H%M")
     if resolved == config.UNKNOWN_COURSE:
-        return f"lecture_{stamp}.m4a"
+        return f"{config.PROFILE.filename_prefix}_{stamp}.m4a"
     return f"{resolved}_{stamp}.m4a"
 
 

@@ -1,7 +1,9 @@
-"""Transcript -> study summary, key terms, and action items, via Claude.
+"""Transcript -> summary, key terms, and action items, via Claude.
 
-One API call per lecture. The model returns JSON; everything downstream
-(filenames, the uploaded .md) is built from that plus the schedule lookup.
+One API call per recording. The schema the model is held to and the prompt it
+is given are the active profile's (schemas.py): a study summary for Syllabus,
+call notes for Sous. Everything downstream (filenames, the uploaded .md) is
+built from the result plus the schedule lookup.
 """
 
 from __future__ import annotations
@@ -14,114 +16,43 @@ from datetime import datetime
 from pathlib import Path
 
 import anthropic
-from pydantic import BaseModel, Field
 
-from intake import config
+from intake import config, schemas
 
 MAX_SLUG_WORDS = 4
-FALLBACK_SLUG = "Lecture-Notes"
 
 
-class KeyTerm(BaseModel):
-    term: str = Field(description="The term as the instructor used it.")
-    definition: str = Field(description="One line, in plain language.")
+def fallback_slug() -> str:
+    """Topic slug when the model gave none: Lecture-Notes, or the profile's."""
+    return config.PROFILE.fallback_slug
 
 
-class ActionItem(BaseModel):
-    """One thing the student has to do, with a date if the lecture gave one.
-
-    Every field is a plain string rather than a date or an enum. The schema is
-    enforced server-side, and a nullable or enum-typed field is a place for
-    that enforcement to reject a response the pipeline could otherwise have
-    used. An empty string is unambiguous and normalizing in Python is free.
-    """
-
-    task: str = Field(
-        description=(
-            "What the student has to do, phrased as an instruction to "
-            "themselves: 'Read chapter 7', 'Submit the case memo'. Do not "
-            "include the due date here."
-        )
-    )
-    due_date: str = Field(
-        description=(
-            "The due date as YYYY-MM-DD. Resolve anything relative against "
-            "the lecture date given above, so 'next Thursday' becomes a real "
-            "date. Use an empty string if the instructor gave no deadline at "
-            "all. Never guess a date that was not stated or implied."
-        )
-    )
-    kind: str = Field(
-        description=(
-            "One of: assignment, reading, quiz, exam, project, other."
-        )
-    )
+# Kept for anything that still reads the constant; the pipeline asks the profile.
+FALLBACK_SLUG = fallback_slug()
 
 
-class LectureSummary(BaseModel):
-    """Schema the model's response is constrained to.
+# The lecture schema and prompt, importable from here as they always were.
+# summarize() itself asks the active profile, which is how Sous gets its own.
+KeyTerm = schemas.KeyTerm
+ActionItem = schemas.ActionItem
+LectureSummary = schemas.LectureSummary
+SYSTEM_PROMPT = schemas.LECTURE_SYSTEM_PROMPT
 
-    Enforced server-side, which is the point: asking for JSON in the prompt and
-    parsing it ourselves failed intermittently when the model emitted a literal
-    newline inside a string, making the whole object unparseable.
-    """
-
-    summary_md: str = Field(
-        description=(
-            "The study summary as GitHub-flavored markdown. Use ## headings for "
-            "major topics with prose paragraphs under them, explaining concepts "
-            "in full sentences. Use lists only for genuinely enumerable things "
-            "like the steps of a procedure."
-        )
-    )
-    topic_slug: str = Field(
-        description=(
-            "2 to 4 words naming what this lecture was actually about, in "
-            "Title-Case-With-Hyphens, e.g. Job-Order-Costing or "
-            "Statement-Of-Cash-Flows. Name the specific topic, never the course "
-            "and never the word Lecture."
-        )
-    )
-    key_terms: list[KeyTerm] = Field(
-        description="Terms a student would need defined to follow the lecture."
-    )
-    action_items: list[ActionItem] = Field(
-        description=(
-            "Any assignment, reading, quiz, exam, or deadline mentioned. "
-            "Empty list if none were mentioned. Never invent one."
-        )
-    )
-
-SYSTEM_PROMPT = """You summarize university lecture transcripts for a student \
-who attended the class and is studying from your notes later.
-
-The transcript comes from automatic speech recognition. It has no speaker \
-labels, no punctuation guarantees, and will contain misheard words, false \
-starts, roll call, and administrative chatter. Work past all of that and \
-focus on the academic content.
-
-Write for someone reviewing before an exam:
-
-- Explain the main concepts, don't just list them. If the instructor worked \
-through an example or a calculation, walk through the reasoning and keep the \
-numbers. If they explained *why* something works, capture that explanation.
-- Preserve the instructor's emphasis. Anything they repeated, said would be \
-on the exam, or flagged as commonly misunderstood deserves prominence.
-- Skip attendance, scheduling chatter, and technical difficulties unless they \
-carry a deadline or a requirement.
-- Do not invent action items. If the instructor never mentioned a deadline, \
-return an empty list.
-- For each action item, resolve any relative deadline against the lecture date \
-you are given: "next Thursday", "a week from today" and "before the exam" all \
-become a real YYYY-MM-DD. If the instructor genuinely set no deadline, leave \
-the date empty rather than inventing one."""
-
-USER_TEMPLATE = """Course: {course}
+USER_TEMPLATE = """{label}: {course}
 Date: {date}
 
-Lecture transcript:
+{kind} transcript:
 
 {transcript}"""
+
+
+def user_message(transcript: str, course: str, date: str) -> str:
+    """The transcript framed for the model, labeled the way the profile sees it."""
+    return USER_TEMPLATE.format(
+        label=config.PROFILE.subject_label, course=course, date=date,
+        kind=config.PROFILE.filename_prefix.capitalize(),
+        transcript=transcript.strip(),
+    )
 
 
 def log(msg: str) -> None:
@@ -141,7 +72,7 @@ def slugify_topic(raw: str) -> str:
     """Force a topic into Title-Case-With-Hyphens, at most MAX_SLUG_WORDS."""
     words = re.findall(r"[A-Za-z0-9]+", raw or "")
     if not words:
-        return FALLBACK_SLUG
+        return fallback_slug()
     return "-".join(w.capitalize() if not w.isupper() else w
                     for w in words[:MAX_SLUG_WORDS])
 
@@ -151,7 +82,8 @@ def build_filename(course: str, date: str, topic_slug: str) -> str:
     return f"{course}_{date}_{slugify_topic(topic_slug)}"
 
 
-ACTION_KINDS = {"assignment", "reading", "quiz", "exam", "project", "other"}
+# The lecture kinds; the pipeline asks the profile's schema for the live set.
+ACTION_KINDS = set(schemas.LectureSummary.ACTION_KINDS)
 
 
 def _clean_date(raw: str) -> str:
@@ -189,7 +121,7 @@ def normalize_actions(raw_items, course: str, date: str) -> list[dict]:
             continue
 
         kind = str(entry.get("kind", "other")).strip().lower()
-        if kind not in ACTION_KINDS:
+        if kind not in config.PROFILE.summary_schema.ACTION_KINDS:
             kind = "other"
 
         due = _clean_date(entry.get("due_date", ""))
@@ -225,7 +157,7 @@ def _parse(raw: str) -> dict:
         log(f"  WARNING: could not parse JSON ({exc}); keeping raw text as summary")
         return {
             "summary_md": raw.strip(),
-            "topic_slug": FALLBACK_SLUG,
+            "topic_slug": fallback_slug(),
             "key_terms": [],
             "action_items": [],
         }
@@ -261,14 +193,12 @@ def summarize(transcript: str, course: str, date: str) -> dict:
     response = client.messages.parse(
         model=config.CLAUDE_MODEL,
         max_tokens=16000,
-        system=SYSTEM_PROMPT,
+        system=config.PROFILE.summary_prompt,
         messages=[{
             "role": "user",
-            "content": USER_TEMPLATE.format(
-                course=course, date=date, transcript=transcript.strip()
-            ),
+            "content": user_message(transcript, course, date),
         }],
-        output_format=LectureSummary,
+        output_format=config.PROFILE.summary_schema,
     )
 
     parsed = getattr(response, "parsed_output", None)
@@ -340,7 +270,7 @@ def render_markdown(result: dict, course: str, date: str) -> str:
         for a in result["action_items"]:
             lines.append(f"- [ ] {render_action(a)}")
     else:
-        lines.append("_None mentioned in this lecture._")
+        lines.append(f"_None mentioned in this {config.PROFILE.filename_prefix}._")
     lines.append("")
 
     return "\n".join(lines)
@@ -348,7 +278,7 @@ def render_markdown(result: dict, course: str, date: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Summarize a lecture transcript. Markdown prints to stdout."
+        description="Summarize a transcript. Markdown prints to stdout."
     )
     parser.add_argument("transcript", help="path to a transcript .txt")
     parser.add_argument("course", help="course code, e.g. ACCT-4321")

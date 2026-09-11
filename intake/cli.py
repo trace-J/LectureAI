@@ -9,19 +9,26 @@
     intake login            authorize Google Drive
     intake notion --check   what the Notion integration sees
     intake notion --setup   add the Notion properties it needs
+    intake --profile sous   any of the above, against the sous profile
 
 Every subcommand hands its remaining arguments to the module it wraps, so
 `intake record --minutes 80` is the same as `python record.py --minutes 80`
 from a checkout.
+
+Which profile runs is decided here, before config loads: the --profile flag,
+then $INTAKE_PROFILE, then syllabus. The `syllabus` and `sous` commands are
+this same entry point with the profile chosen, so `sous record` is
+`intake --profile sous record`.
 """
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from pathlib import Path
 
-from intake import __version__, config
+from intake import __version__, profiles
 
 USAGE = __doc__.split("\n\n")[1]
 
@@ -39,11 +46,13 @@ def log(msg: str) -> None:
 def offer_migration(ask=input, say=log) -> bool:
     """Move an older install's data files into the home directory, if asked.
 
-    Runs when the home directory has no .env yet and either ~/.lectureai, the
-    home before the rename, or the checkout this code lives in still has data
-    in it. Both are what an install from before this version looks like.
-    Returns True if files moved.
+    Runs when the home directory has no .env yet and an older install still
+    has data somewhere this version does not look: ~/.lectureai, the home
+    before the rename; the flat ~/.intake from before profiles; or the
+    checkout this code lives in. Returns True if files moved.
     """
+    from intake import config
+
     found = config.legacy_files()
     if not found:
         return False
@@ -84,8 +93,24 @@ def offer_migration(ask=input, say=log) -> bool:
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
 
+    try:
+        flag, args = profiles.extract_flag(args)
+        profile = profiles.select(flag)
+    except profiles.ProfileError as exc:
+        log(f"intake: {exc}")
+        return 2
+    # Settled before config is imported, so its first load lands in the right
+    # home and never creates the other profile's. Left in the environment so
+    # anything this process starts (the watcher the panel spawns) inherits it.
+    os.environ[profiles.PROFILE_ENV_VAR] = profile.name
+    from intake import config
+    if config.PROFILE.name != profile.name:
+        config.activate(profile)
+
     if not args or args[0] in ("-h", "--help", "help"):
-        print(f"usage: intake <command> [options]\n\n{USAGE}\n\n"
+        print(f"usage: intake [--profile NAME] <command> [options]\n\n{USAGE}\n\n"
+              f"Profile: {profile.name} (choose with --profile or "
+              f"${profiles.PROFILE_ENV_VAR}; also the syllabus and sous commands).\n"
               f"Data lives in {config.HOME_DIR} (set ${config.HOME_ENV_VAR} to move it).")
         return 0
     if args[0] in ("-V", "--version", "version"):
@@ -98,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
             f"Commands: {', '.join(COMMANDS)}")
         return 2
 
-    # An older checkout with its data next to the code: offer the move once,
+    # An older install with its data somewhere else: offer the move once,
     # before any command goes looking for keys it will not find. Only when a
     # person is at the keyboard; a watcher started by the panel must not hang
     # on a prompt nobody sees.
@@ -137,6 +162,19 @@ def main(argv: list[str] | None = None) -> int:
         from intake import notion_tasks
         return notion_tasks.main(rest)
     return 2  # unreachable
+
+
+# The two named commands. Each is `intake` with the profile already chosen;
+# an explicit --profile on the command line still wins, as it does everywhere.
+
+def syllabus() -> int:
+    os.environ[profiles.PROFILE_ENV_VAR] = profiles.SYLLABUS.name
+    return main()
+
+
+def sous() -> int:
+    os.environ[profiles.PROFILE_ENV_VAR] = profiles.SOUS.name
+    return main()
 
 
 if __name__ == "__main__":

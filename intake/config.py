@@ -1,10 +1,16 @@
-"""Settings, class schedule, and paths for the lecture pipeline.
+"""Settings, schedule, and paths for the pipeline, for the active profile.
 
-Everything the pipeline reads or writes lives in one home directory, separate
-from the code: $INTAKE_HOME if set, otherwise ~/.intake ($LECTUREAI_HOME, the
+Everything the pipeline reads or writes lives under one root, separate from
+the code: $INTAKE_HOME if set, otherwise ~/.intake ($LECTUREAI_HOME, the
 variable's name before the rename, is still honored when the new one is
-unset). The code directory holds only code, so the same install serves any Mac
-and the repo never fills up with recordings, tokens, and logs.
+unset). Inside it each profile has a home of its own, ~/.intake/syllabus/ or
+~/.intake/sous/, holding that profile's .env, schedule, inbox, processed
+folder, Drive token, and log. The code directory holds only code, so the same
+install serves any Mac and the repo never fills up with recordings, tokens,
+and logs.
+
+Which profile this process is comes from $INTAKE_PROFILE, which the CLI sets
+from --profile before importing this module; see profiles.py.
 """
 
 from __future__ import annotations
@@ -18,7 +24,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
+
+from intake import profiles
+from intake.profiles import Profile
 
 # --- Where things live -----------------------------------------------------
 
@@ -49,8 +58,9 @@ def home_source(env: dict | None = None) -> str:
 
 
 def resolve_home(env: dict | None = None) -> Path:
-    """The data directory: $INTAKE_HOME if set, else $LECTUREAI_HOME, else ~/.intake.
+    """The data root: $INTAKE_HOME if set, else $LECTUREAI_HOME, else ~/.intake.
 
+    Each profile's home is a folder inside this root (see profile_home).
     Takes the environment as an argument so tests can resolve against a fake
     one without touching the process environment.
     """
@@ -60,44 +70,90 @@ def resolve_home(env: dict | None = None) -> Path:
     return chosen.expanduser().resolve()
 
 
-HOME_DIR = resolve_home()
+ROOT_DIR = resolve_home()
 HOME_SOURCE = home_source()
 
-# Kept for anything that still spells the old name. New code should say
-# HOME_DIR, which is what this has always meant: where the data goes.
-BASE_DIR = HOME_DIR
+# --- The active profile ----------------------------------------------------
+#
+# Each profile keeps its own home under the root, ~/.intake/syllabus/ and
+# ~/.intake/sous/, each with its own .env, inbox, processed folder, token,
+# and log, so the two can never share a recording or a credential. Which one
+# this process is comes from $INTAKE_PROFILE; anything else gets the default.
 
-ENV_FILE = HOME_DIR / ".env"
-load_dotenv(ENV_FILE)
+PROFILE_ENV_VAR = profiles.PROFILE_ENV_VAR
+PROFILE: Profile = profiles.select(env=os.environ)
+# Left in the environment so anything this process starts (the watcher the
+# panel spawns) lands in the same profile.
+os.environ[PROFILE_ENV_VAR] = PROFILE.name
 
-# --- API keys -------------------------------------------------------------
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+def profile_home(profile: Profile, root: Path | None = None) -> Path:
+    """Where `profile` keeps its data: the root plus the profile's own folder."""
+    return (ROOT_DIR if root is None else Path(root)) / profile.home_subdir
 
-# --- Paths ----------------------------------------------------------------
 
-INBOX_DIR = HOME_DIR / "inbox"
-PROCESSED_DIR = HOME_DIR / "processed"
-WORK_DIR = HOME_DIR / ".work"          # scratch space for compressed/split audio
-LOG_FILE = HOME_DIR / "pipeline.log"
-# What the watcher is doing right now, for the control panel to read. Written
-# during a run and removed at the end; pipeline.log only gets a line once a
-# lecture is finished, which leaves the whole transcription invisible.
-STATUS_FILE = WORK_DIR / "status.json"
-LOCK_FILE = HOME_DIR / ".watcher.lock"   # guards against two watchers at once
-# The recording in progress, if any: ffmpeg's pid, where it is writing, when it
-# began. ffmpeg is started in its own session so it survives whoever started
-# it; this file is how the next panel or CLI finds it again and stops it
-# properly instead of leaving a lecture recording with nobody at the controls.
-RECORDING_STATE_FILE = WORK_DIR / "recording.json"
+def paths_for(profile: Profile, root: Path | None = None) -> dict[str, Path]:
+    """Every data path of `profile`, keyed by the name this module binds it to.
 
-# A Google OAuth client placed here overrides the one bundled with the
-# package (see google_client.py). Almost nobody needs to.
-CREDENTIALS_FILE = HOME_DIR / "credentials.json"
-TOKEN_FILE = HOME_DIR / "token.json"
+    Pure, so two profiles' layouts can be compared without activating either.
+    """
+    home = profile_home(profile, root)
+    work = home / ".work"          # scratch space for compressed/split audio
+    return {
+        "HOME_DIR": home,
+        "ENV_FILE": home / ".env",
+        "INBOX_DIR": home / "inbox",
+        "PROCESSED_DIR": home / "processed",
+        "WORK_DIR": work,
+        "LOG_FILE": home / "pipeline.log",
+        # What the watcher is doing right now, for the control panel to read.
+        # Written during a run and removed at the end; pipeline.log only gets a
+        # line once a recording is finished, which leaves the whole
+        # transcription invisible.
+        "STATUS_FILE": work / "status.json",
+        "LOCK_FILE": home / ".watcher.lock",   # guards against two watchers at once
+        # The recording in progress, if any: ffmpeg's pid, where it is writing,
+        # when it began. ffmpeg is started in its own session so it survives
+        # whoever started it; this file is how the next panel or CLI finds it
+        # again and stops it properly instead of leaving a recording with
+        # nobody at the controls.
+        "RECORDING_STATE_FILE": work / "recording.json",
+        # A Google OAuth client placed here overrides the one bundled with the
+        # package (see google_client.py). Almost nobody needs to.
+        "CREDENTIALS_FILE": home / "credentials.json",
+        "TOKEN_FILE": home / "token.json",
+        "SCHEDULE_FILE": home / profile.schedule_filename,
+        # The id of the app's Drive root folder, cached so renaming or moving
+        # the folder in Drive doesn't matter.
+        "DRIVE_ROOT_CACHE": home / ".drive_root",
+    }
 
-SCHEDULE_FILE = HOME_DIR / "schedule.toml"
+
+def _install_paths(profile: Profile) -> None:
+    """Bind the profile's paths to this module's names (HOME_DIR, INBOX_DIR, ...)."""
+    globals().update(paths_for(profile))
+    # Kept for anything that still spells the old name. New code should say
+    # HOME_DIR, which is what this has always meant: where the data goes.
+    globals()["BASE_DIR"] = globals()["HOME_DIR"]
+
+
+# The names _install_paths defines, listed so a reader can find them here.
+# Their values are the active profile's; see paths_for above.
+HOME_DIR: Path
+BASE_DIR: Path
+ENV_FILE: Path
+INBOX_DIR: Path
+PROCESSED_DIR: Path
+WORK_DIR: Path
+LOG_FILE: Path
+STATUS_FILE: Path
+LOCK_FILE: Path
+RECORDING_STATE_FILE: Path
+CREDENTIALS_FILE: Path
+TOKEN_FILE: Path
+SCHEDULE_FILE: Path
+DRIVE_ROOT_CACHE: Path
+_install_paths(PROFILE)
 
 
 def ensure_home() -> Path:
@@ -109,13 +165,70 @@ def ensure_home() -> Path:
 
 ensure_home()
 
+# --- Settings from .env ---------------------------------------------------
+#
+# The profile's .env is read into a dict, never loaded into the process
+# environment, so switching profiles in one process cannot carry a key from
+# one .env into the other. A value in the file wins over one in the
+# environment, as reload() has always had it; the environment fills in for
+# anything the file leaves out, and the profile supplies the defaults.
+
+
+def env_defaults(profile: Profile) -> dict[str, str]:
+    """Every .env setting, with the default `profile` gives it."""
+    return {
+        "OPENAI_API_KEY": "",
+        "ANTHROPIC_API_KEY": "",
+        "DRIVE_ROOT_FOLDER_NAME": profile.drive_root_folder,
+        "DRIVE_PARENT_FOLDER_ID": "",
+        "NOTION_TOKEN": "",
+        "NOTION_DATABASE": "",
+        "NOTION_VERSION": "2026-03-11",
+        "NOTION_TARGET": profile.notion_target,
+        "NOTION_PROP_DUE": "",
+        "NOTION_PROP_COURSE": "",
+        "NOTION_PROP_KIND": "",
+        "NOTION_PROP_SOURCE": "",
+        "RECORD_DEVICE": "MacBook Pro Microphone",
+    }
+
+
+# Settings that come from .env, with their defaults. reload() re-reads these
+# so a long-running panel sees what setup just wrote without a restart.
+ENV_SETTINGS = env_defaults(PROFILE)
+
+
+def _read_env(path: Path) -> dict[str, str]:
+    """The .env file's values, or nothing when there is no file yet."""
+    if not path.exists():
+        return {}
+    return {k: v for k, v in dotenv_values(path).items() if v is not None}
+
+
+_ENV = _read_env(ENV_FILE)
+
+
+def _setting(name: str) -> str:
+    """One .env setting: the file, else the environment, else the default."""
+    value = _ENV.get(name)
+    if value is None:
+        value = os.environ.get(name, ENV_SETTINGS[name])
+    return value or ENV_SETTINGS[name]
+
+
+# --- API keys -------------------------------------------------------------
+
+OPENAI_API_KEY = _setting("OPENAI_API_KEY")
+ANTHROPIC_API_KEY = _setting("ANTHROPIC_API_KEY")
+
 # --- Migration from an older install ---------------------------------------
 #
-# Two kinds of older install leave data where this version does not look: one
-# from before the home directory existed kept everything next to the code, and
-# one from before the rename kept it in ~/.lectureai. Either is offered a move
-# into the home directory the first time the CLI runs against an empty one,
-# and the same code does the moving.
+# Three kinds of older install leave data where this version does not look:
+# one from before the home directory existed kept everything next to the code,
+# one from before the rename kept it in ~/.lectureai, and one from before
+# profiles kept it flat in ~/.intake itself. Any of them is offered a move into
+# the profile's home the first time the CLI runs against an empty one, and the
+# same code does the moving.
 
 # Data files an older install kept next to the code.
 LEGACY_FILES = (".env", "token.json", ".drive_root", "pipeline.log")
@@ -139,12 +252,30 @@ def old_default_home() -> Path | None:
     return old
 
 
+def flat_home() -> Path | None:
+    """The root itself, when this profile's data may still sit there flat.
+
+    Before profiles, everything lived directly in ~/.intake (or $INTAKE_HOME),
+    which is where the syllabus data of any install from then still is. Only
+    the default profile is offered it: that data is lecture data, and moving
+    it into another profile's home is the sharing the layout exists to prevent.
+    """
+    if PROFILE.name != profiles.DEFAULT_PROFILE.name:
+        return None
+    if ROOT_DIR == HOME_DIR or not ROOT_DIR.is_dir():
+        return None
+    return ROOT_DIR
+
+
 def legacy_roots() -> list[tuple[Path, tuple[str, ...]]]:
     """Where an older install may have left data, and the file names to look for."""
     roots: list[tuple[Path, tuple[str, ...]]] = []
     old_home = old_default_home()
     if old_home is not None:
         roots.append((old_home, LEGACY_HOME_FILES))
+    flat = flat_home()
+    if flat is not None:
+        roots.append((flat, LEGACY_HOME_FILES))
     if (CODE_ROOT / "pyproject.toml").exists() and CODE_ROOT != HOME_DIR:
         roots.append((CODE_ROOT, LEGACY_FILES))
     return roots
@@ -170,7 +301,7 @@ def legacy_root(path: Path) -> Path:
 
 
 def legacy_files() -> list[Path]:
-    """Data files an older install left behind: old home first, then checkout.
+    """Data files an older install left behind: old home, flat root, checkout.
 
     Only meaningful when the home directory has no .env yet: once it does, the
     move has happened (or was declined) and anything left elsewhere is the
@@ -195,14 +326,14 @@ def legacy_files() -> list[Path]:
 DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
 # The app creates this folder in My Drive on first upload and files courses
-# under it. Its id is cached in DRIVE_ROOT_CACHE so renaming or moving the
-# folder in Drive doesn't matter.
-DRIVE_ROOT_FOLDER_NAME = os.getenv("DRIVE_ROOT_FOLDER_NAME", "Lecture Notes")
-DRIVE_ROOT_CACHE = HOME_DIR / ".drive_root"
+# (or clients) under it. The name is the profile's, "Lecture Notes" for
+# syllabus, unless .env says otherwise. Its id is cached in DRIVE_ROOT_CACHE
+# so renaming or moving the folder in Drive doesn't matter.
+DRIVE_ROOT_FOLDER_NAME = _setting("DRIVE_ROOT_FOLDER_NAME")
 
 # Optional override: pin a specific folder id instead. Only works for a folder
 # this app created, given the drive.file scope above.
-DRIVE_PARENT_FOLDER_ID = os.getenv("DRIVE_PARENT_FOLDER_ID", "")
+DRIVE_PARENT_FOLDER_ID = _setting("DRIVE_PARENT_FOLDER_ID")
 
 # --- Models ---------------------------------------------------------------
 
@@ -247,29 +378,30 @@ DELETE_ORIGINAL_AFTER_UPLOAD = True
 
 # Internal integration secret from notion.so/my-integrations. Leave it unset
 # and the pipeline simply skips Notion; nothing else changes.
-NOTION_TOKEN = os.getenv("NOTION_TOKEN", "")
+NOTION_TOKEN = _setting("NOTION_TOKEN")
 
 # The to-do database action items are added to. Paste the whole Notion URL;
 # the id is pulled out of it.
-NOTION_DATABASE = os.getenv("NOTION_DATABASE", "")
+NOTION_DATABASE = _setting("NOTION_DATABASE")
 
 # Pinned deliberately. 2025-09-03 split databases from data sources, changing
 # the page parent and the query endpoint, so the version and the request
 # shapes in notion_tasks.py have to move together.
-NOTION_VERSION = os.getenv("NOTION_VERSION", "2026-03-11")
+NOTION_VERSION = _setting("NOTION_VERSION")
 
 # Where action items go: "weekly" writes a checkbox into the day column of
 # the weekly page, which is the list you actually tick; "database" creates a
 # row with Due/Course/Source fields instead. They are different surfaces, and
-# a row is invisible from the weekly page.
-NOTION_TARGET = os.getenv("NOTION_TARGET", "weekly")
+# a row is invisible from the weekly page. The default is the profile's:
+# weekly for syllabus, database for sous.
+NOTION_TARGET = _setting("NOTION_TARGET")
 
 # Optional overrides if the automatic property matching picks wrong. Each is
 # the exact property name in your database.
-NOTION_PROP_DUE = os.getenv("NOTION_PROP_DUE", "")
-NOTION_PROP_COURSE = os.getenv("NOTION_PROP_COURSE", "")
-NOTION_PROP_KIND = os.getenv("NOTION_PROP_KIND", "")
-NOTION_PROP_SOURCE = os.getenv("NOTION_PROP_SOURCE", "")
+NOTION_PROP_DUE = _setting("NOTION_PROP_DUE")
+NOTION_PROP_COURSE = _setting("NOTION_PROP_COURSE")
+NOTION_PROP_KIND = _setting("NOTION_PROP_KIND")
+NOTION_PROP_SOURCE = _setting("NOTION_PROP_SOURCE")
 
 # --- Recording (record.py) ------------------------------------------------
 
@@ -280,7 +412,7 @@ NOTION_PROP_SOURCE = os.getenv("NOTION_PROP_SOURCE", "")
 # headset or waking a nearby iPhone renumbers them: on this Mac index 0 is
 # often the iPhone's mic rather than the built-in one, and a lecture recorded
 # through a phone that then leaves the room is a lecture you don't have.
-RECORD_DEVICE = os.getenv("RECORD_DEVICE", "MacBook Pro Microphone")
+RECORD_DEVICE = _setting("RECORD_DEVICE")
 
 # Names to fall back through if RECORD_DEVICE matches nothing attached.
 RECORD_DEVICE_FALLBACKS = ("MacBook Pro Microphone", "Built-in", "Microphone")
@@ -311,8 +443,9 @@ STABILITY_TIMEOUT_SECONDS = 3600  # give up waiting on a file still growing
 
 # --- Class schedule -------------------------------------------------------
 #
-# The schedule is a file in the home directory, schedule.toml, written by
-# `intake setup` and editable by hand: one row per class meeting with the
+# The schedule is a file in the home directory (schedule.toml for syllabus;
+# the profile names it), written by `intake setup` and editable by hand: one
+# row per class meeting with the
 # day, the start hour, and the course code. It is read on first use and
 # cached, so a missing or broken file is reported by whichever command needs
 # it rather than by every import.
@@ -480,7 +613,7 @@ def load_schedule(path: Path | None = None) -> Schedule:
 
 
 SCHEDULE_TEMPLATE = """\
-# LectureAI class schedule. One row per class meeting.
+# {title} class schedule. One row per class meeting.
 #
 # day     Mon Tue Wed Thu Fri Sat Sun
 # start   the hour the class begins, 24-hour clock (14 means 2pm)
@@ -523,7 +656,8 @@ def render_schedule(meetings, tolerance_minutes: int = DEFAULT_TOLERANCE_MINUTES
         f'course = "{m.course}"{" " * (width - len(m.course))} }},'
         for m in normalized
     ]
-    return SCHEDULE_TEMPLATE.format(rows="\n".join(lines), tolerance=tolerance_minutes)
+    return SCHEDULE_TEMPLATE.format(title=PROFILE.title, rows="\n".join(lines),
+                                    tolerance=tolerance_minutes)
 
 
 def write_schedule(meetings, tolerance_minutes: int = DEFAULT_TOLERANCE_MINUTES,
@@ -725,25 +859,6 @@ def recording_time_suffix(
     return recording_start(file_mtime, duration_seconds).strftime("%H%M")
 
 
-# Settings that come from .env, with their defaults. reload() re-reads these
-# so a long-running panel sees what setup just wrote without a restart.
-ENV_SETTINGS = {
-    "OPENAI_API_KEY": "",
-    "ANTHROPIC_API_KEY": "",
-    "DRIVE_ROOT_FOLDER_NAME": "Lecture Notes",
-    "DRIVE_PARENT_FOLDER_ID": "",
-    "NOTION_TOKEN": "",
-    "NOTION_DATABASE": "",
-    "NOTION_VERSION": "2026-03-11",
-    "NOTION_TARGET": "weekly",
-    "NOTION_PROP_DUE": "",
-    "NOTION_PROP_COURSE": "",
-    "NOTION_PROP_KIND": "",
-    "NOTION_PROP_SOURCE": "",
-    "RECORD_DEVICE": "MacBook Pro Microphone",
-}
-
-
 def reload() -> None:
     """Re-read .env and the schedule file into this module.
 
@@ -751,14 +866,28 @@ def reload() -> None:
     user just removed in the file actually goes away rather than lingering
     from the first load.
     """
-    from dotenv import dotenv_values
-    file_values = dotenv_values(ENV_FILE) if ENV_FILE.exists() else {}
-    for name, default in ENV_SETTINGS.items():
-        value = file_values.get(name)
-        if value is None:
-            value = os.environ.get(name, default)
-        globals()[name] = value or default
+    global _ENV
+    _ENV = _read_env(ENV_FILE)
+    for name in ENV_SETTINGS:
+        globals()[name] = _setting(name)
     reload_schedule()
+
+
+def activate(profile: Profile | str) -> Profile:
+    """Switch this process to `profile`: its home, its .env, its schedule.
+
+    The CLI settles the profile before this module is first imported, so this
+    is for a process that already has it loaded, tests mostly. Nothing read
+    from the previous profile's .env survives the switch.
+    """
+    global PROFILE, ENV_SETTINGS
+    PROFILE = profiles.get(profile) if isinstance(profile, str) else profile
+    os.environ[PROFILE_ENV_VAR] = PROFILE.name
+    _install_paths(PROFILE)
+    ENV_SETTINGS = env_defaults(PROFILE)
+    ensure_home()
+    reload()
+    return PROFILE
 
 
 def append_log_line(*fields: str) -> None:
