@@ -161,6 +161,40 @@ start and stop the watcher, see what's waiting in the inbox, and open recent
 lectures in Drive. It drives the same modules the CLI does, so a recording
 started here is identical to one started with `intake record`.
 
+The page is a dashboard, drawn entirely from `pipeline.log` and the
+schedule, so nothing on it is stored anywhere else and a line removed from
+the log disappears from it on the next poll:
+
+- **This week** is the schedule as a grid, one column per day, one chip per
+  class. A chip is filled once a recording for that class is filed (click
+  it to open the Doc), ringed while the class is in session, dashed once
+  the class has ended with nothing filed. The lecture's date comes from the
+  filed name (`ACCT-4321_2026-09-10_...`), not from when it was processed,
+  so a recording synced from a phone days later still lands on the right
+  day.
+- **Four tiles**: recorded this week against the classes that have met so
+  far, lectures filed in all, the streak of consecutive classes recorded,
+  and hours of audio filed. That last one is counted from a seventh field
+  the watcher now writes to `pipeline.log` (seconds of audio, transcript
+  words, to-dos and key terms, as JSON), so it reads as a dash until the
+  next lecture is processed; the older lines have nothing to measure.
+- **Lectures per week**, stacked by course for the last eight weeks, with a
+  hairline per week at what the schedule expected; hover a week for the
+  breakdown. **By course** beside it: how many lectures each course has and
+  when its last one was. Clicking a course in either chart, or in the chips
+  over the recent list, filters the recent list to that course.
+- **Pipeline**: the watcher as a switch, the five stages as a stepper that
+  lights up while a lecture is being processed, and what is waiting in the
+  inbox.
+- **Study assistant** at the bottom is reserved space for v3: a chat that
+  answers questions and builds study guides from every transcript and
+  summary in Drive. Nothing in it is wired up yet, and it says so.
+
+Each course has a color, assigned in schedule order so it does not change
+from week to week. The six colors were run through a colorblind-safety
+check against both card surfaces, and identity never rests on color alone:
+the code is always printed beside the mark.
+
 While a lecture is being processed the panel shows the stage it is in:
 waiting for the file to finish copying, transcribing (with the part number, so
 a ten-part lecture visibly advances), summarizing, uploading, adding tasks to
@@ -648,6 +682,7 @@ credentials, or an API key, none costs anything to run, and none can touch
 .venv/bin/python test_record.py              # device selection and naming
 .venv/bin/python test_notion_tasks.py        # property mapping and de-duplication
 .venv/bin/python test_gui.py                 # log parsing and API guard rails
+.venv/bin/python test_insights.py            # the dashboard's numbers against a fake log and week
 .venv/bin/python test_setup.py               # home directory, schedule file, setup wizard, doctor
 .venv/bin/python test_profiles.py            # syllabus vs sous: homes, ports, folders, selection, migration
 ```
@@ -662,7 +697,10 @@ in rough order of how soon each one bites.
 - **Speaker diarization.** Separate the instructor from student questions.
 - **Cross-lecture study guides.** Synthesize a whole unit rather than one
   lecture. The highest-value item for actually studying, and the one that most
-  wants a database underneath it.
+  wants a database underneath it. The panel already holds the space for it:
+  the "Study assistant" card at the bottom (v3) is where a chat over every
+  transcript and summary will go, with study guides and quizzes as its
+  starter prompts.
 - **A database.** State currently lives in `pipeline.log` and the filesystem.
 
 Dropped: **slide OCR**, decided against on 2026-09-08 as not worth the

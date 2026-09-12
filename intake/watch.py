@@ -249,10 +249,20 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
             shutil.move(str(path), str(destination))
         original = str(destination)
 
-    # The sixth field only exists when there is something to warn about, so a
-    # clean run's line stays the five fields it has always been.
-    write_log_line(course, path.name, final_stem, md_url,
-                   *([notion_warning] if notion_warning else []))
+    # Fields six and seven: what did not reach Notion (blank when everything
+    # did), then a small JSON object of measurements the panel's dashboard
+    # reads: how much audio the lecture held, how many words the transcript
+    # ran to, how many to-dos and key terms came out of it. Lines written
+    # before either field existed have five (or six) fields and are read
+    # exactly as before; they simply have nothing measured.
+    measures = {
+        "seconds": round(length or 0),
+        "words": len(transcript.split()),
+        "actions": len(result.get("action_items") or []),
+        "terms": len(result.get("key_terms") or []),
+    }
+    write_log_line(course, path.name, final_stem, md_url, notion_warning,
+                   json.dumps(measures, separators=(",", ":")))
     log(f"  done: {final_stem}")
     log(f"  summary:    {md_url}")
     log(f"  transcript: {txt_url}")
