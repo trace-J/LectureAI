@@ -6,6 +6,12 @@
       "runtimeExecutable": ".venv/bin/python",
       "runtimeArgs": ["gui.py"],
       "port": 5173
+    },
+    {
+      "name": "panel-dev",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["-m", "intake.gui", "--port", "5199", "--no-browser"],
+      "port": 5199
     }
   ]
 }

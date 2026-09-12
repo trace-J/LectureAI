@@ -35,7 +35,7 @@ from pathlib import Path
 import jwt
 from flask import Flask, g, jsonify, render_template, request
 
-from intake import config, doctor, setup_wizard
+from intake import config, doctor, insights, setup_wizard
 from intake import notion_tasks
 from intake import record as recording
 from intake import transcribe
@@ -145,31 +145,25 @@ def _inbox() -> list[dict]:
     return items
 
 
-def _recent(limit: int = 12) -> list[dict]:
-    """Recent lectures, newest first, parsed out of pipeline.log.
-
-    Success lines carry five tab-separated fields and error lines four, so the
-    field count is what distinguishes them. A sixth field, when present, says
-    what did not reach Notion; lines written before that field existed have
-    five and are read exactly as before.
-    """
+def _log_rows() -> list[dict]:
+    """Every lecture in pipeline.log, oldest first. See insights.parse_log."""
     if not config.LOG_FILE.exists():
         return []
-    rows = []
-    for line in config.LOG_FILE.read_text().splitlines():
-        fields = line.split("\t")
-        if len(fields) in (5, 6):
-            when, course, source, name, url = fields[:5]
-            warning = fields[5] if len(fields) == 6 else ""
-            rows.append({"when": when, "course": course, "source": source,
-                         "name": name, "url": url, "error": None,
-                         "warning": warning})
-        elif len(fields) == 4 and fields[1] == "ERROR":
-            when, _, source, message = fields
-            rows.append({"when": when, "course": "ERROR", "source": source,
-                         "name": "", "url": "", "error": message,
-                         "warning": ""})
-    return list(reversed(rows))[:limit]
+    return insights.parse_log(config.LOG_FILE.read_text())
+
+
+def _recent(limit: int = 12) -> list[dict]:
+    """Recent lectures, newest first, parsed out of pipeline.log."""
+    return list(reversed(_log_rows()))[:limit]
+
+
+def _insights() -> dict:
+    """The dashboard's tiles and charts: the log counted against the schedule."""
+    try:
+        schedule = config.schedule()
+    except config.ScheduleError:
+        schedule = None
+    return insights.compute(_log_rows(), schedule)
 
 
 def _processing(watcher_pid: int | None) -> dict | None:
@@ -324,6 +318,8 @@ def status():
         "processing": _processing(pid),
         "inbox": _inbox(),
         "recent": _recent(),
+        # What the tiles, the week grid, and the charts are drawn from.
+        "insights": _insights(),
         "integrations": _integrations(),
         "courses": _courses(),
         "now_class": _current_class(),
