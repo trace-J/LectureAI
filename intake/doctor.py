@@ -205,8 +205,12 @@ def check_web_signin() -> Check | None:
         return None
     if signin.configured():
         who = sorted(signin.allowed_emails())
+        back = (f"Google returns to {config.PANEL_PUBLIC_URL.rstrip('/')}/oauth2/callback"
+                if config.PANEL_PUBLIC_URL else
+                "PANEL_PUBLIC_URL unset, so the redirect URI follows the request's "
+                "Host header; set it if the tunnel rewrites that")
         return Check("web sign-in", True,
-                     f"Google sign-in for {len(who)} address(es): {', '.join(who)}")
+                     f"Google sign-in for {len(who)} address(es): {', '.join(who)}; {back}")
     return Check("web sign-in", False,
                  f"{', '.join(signin.missing())} not set in {config.ENV_FILE}; "
                  f"every request through the tunnel is refused until they are",
