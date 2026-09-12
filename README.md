@@ -61,7 +61,8 @@ Everything the pipeline reads or writes lives in one place, the profile's
 home: `~/.intake/syllabus/` for Syllabus, `~/.intake/sous/` for Sous. Each
 holds that profile's keys in `.env`, its schedule file (`schedule.toml` for
 Syllabus, `calls.toml` for Sous), the `inbox/` and `processed/` folders, the
-Drive token, and `pipeline.log`. Set `INTAKE_HOME` to put the whole `~/.intake`
+Drive token, the Syllabus account this Mac belongs to (`account.json`, if it
+has been signed in), and `pipeline.log`. Set `INTAKE_HOME` to put the whole `~/.intake`
 root somewhere else (`LECTUREAI_HOME`, the variable's old name, still works
 when the new one is unset); the profile folders move with it. The code never
 keeps anything next to itself.
@@ -247,6 +248,36 @@ The first recording after installing asks for microphone permission on
 behalf of Python, the program the agent runs. Grant it once under System
 Settings > Privacy & Security > Microphone and it sticks. The red timer
 described above is what you see if it was refused.
+
+## A Syllabus account
+
+The Setup page ends with an optional step: **Sign in to a Syllabus account**.
+An account is a Google identity kept by a small web service at
+`syllabusaccounts.maincoursemedia.com` (its code is the
+[syllabus-accounts](https://github.com/trace-J/syllabus-accounts) repo, a
+Cloudflare Worker with a D1 database). Signing in ties this Mac's panel to
+that identity. Today that is all it does; the point is what comes next, when
+your class schedule and your Drive connection belong to the account and
+follow you to another Mac, and when the panel on the web lets in whoever
+owns the account rather than a list of addresses in `.env`.
+
+Signing in works the way a TV signs in to a streaming service. The panel
+shows an eight-letter code and opens the account page in a new tab. Sign in
+there with Google, enter the code, and the panel notices within a few
+seconds. What it receives is a token that says "this Mac, this profile,
+this account", saved as `account.json` in the profile's home with the same
+permissions as your keys. The token is never sent to the browser, and your
+Google session never reaches the panel. The account page lists every Mac on
+the account and can remove one; the next time that Mac's Setup page loads,
+it shows as signed out. **Sign out** on the Setup page does the same from
+this end.
+
+Nothing requires an account. A panel with no `account.json` is exactly what
+it was, and `intake doctor` reports the account as an optional line. To hide
+the step altogether, put `ACCOUNTS_URL=off` in `.env`; to test against a
+service of your own, point `ACCOUNTS_URL` at it. The dashboard's status poll
+reads only the file, never the network; the Setup page asks the service to
+confirm the token each time it loads.
 
 ## The panel on the web
 
@@ -717,6 +748,7 @@ credentials, or an API key, none costs anything to run, and none can touch
 .venv/bin/python test_insights.py            # the dashboard's numbers against a fake log and week
 .venv/bin/python test_setup.py               # home directory, schedule file, setup wizard, doctor
 .venv/bin/python test_profiles.py            # syllabus vs sous: homes, ports, folders, selection, migration
+.venv/bin/python test_account.py             # claiming this Mac into a Syllabus account, against a fake service
 ```
 
 ## V2 roadmap
@@ -751,15 +783,19 @@ piece of that, and the rest is planned in this order:
   with PyInstaller into `Syllabus.app`, signed and notarized, with ffmpeg
   bundled so Homebrew stops being a requirement. The pipx install stays as
   the path for people who prefer a terminal.
-- **Sign-ins.** Done for this Mac's panel: the panel's own Google sign-in
-  in front of the tunnel ("The panel on the web" above), and a new person
-  is one more email in `PANEL_ALLOWED_EMAILS`. What that cannot do is give
-  each person their own panel on their own Mac under one account; that
-  needs a small web backend (Cloudflare Workers plus D1, the same stack
-  `mcm-dashboard` is scaffolded on) that owns sign-in, holds the **Web**
-  OAuth client for Drive too, and hands the desktop app a session. That is also
-  what would let Syllabus pay for transcription centrally instead of asking
-  every student for two API keys.
+- **Sign-ins.** Two pieces exist. This Mac's panel has its own Google
+  sign-in in front of the tunnel ("The panel on the web" above), where a
+  new person is one more email in `PANEL_ALLOWED_EMAILS`. And there is now
+  an account service ("A Syllabus account" above): a Cloudflare Worker with
+  D1, the same stack `mcm-dashboard` is scaffolded on, that owns the Google
+  sign-in and lets a panel claim an identity with a device code. The next
+  slices, each its own PR: the panel on the web accepts a sign-in from the
+  account service and the allowlist becomes the fallback; the class schedule
+  syncs to the account; the Drive grant moves to the account, which holds
+  the **Web** OAuth client and hands the panel short-lived access tokens;
+  then `PANEL_ALLOWED_EMAILS` retires. That is also what would let Syllabus
+  pay for transcription centrally instead of asking every student for two
+  API keys.
 - **The panel on the web is this Mac's panel.** It records from this Mac's
   microphone and starts processes here, so the address always reaches the
   one running on the Mac that does the recording. A second person's Syllabus

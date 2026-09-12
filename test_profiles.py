@@ -188,7 +188,7 @@ def t10():
     names = [c.name for c in doctor.run_checks() if c.name not in ("older install", "older home")]
     assert names == ["Python", "ffmpeg", "home directory", "OpenAI key", "Anthropic key",
                      "class schedule", "Drive OAuth client", "Drive authorization",
-                     "Notion", "microphone"], names
+                     "Notion", "microphone", "Syllabus account"], names
     home = doctor.check_home()
     assert home.detail == f"{config.HOME_DIR} (default)".replace("(default)", "(from $INTAKE_HOME)"), home
     assert doctor.check_key("OpenAI key", "OPENAI_API_KEY").fix == "intake setup"

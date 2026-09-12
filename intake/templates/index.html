@@ -1157,14 +1157,20 @@ function renderToday(s) {
 }
 
 function render(s) {
-  // Who is signed in, when the page came through the tunnel.
+  // Who is signed in, when the page came through the tunnel, and which
+  // Syllabus account this Mac belongs to, when it has been claimed into one.
+  const viewer = $("viewer");
+  viewer.textContent = "";
+  if (s.account && s.account.signed_in) {
+    viewer.textContent = "Syllabus account: " + s.account.email + (s.signed_in_as ? " \u00b7 " : "");
+  }
   if (s.signed_in_as) {
-    $("viewer").textContent = "Signed in as " + s.signed_in_as + " \u00b7 ";
+    viewer.appendChild(document.createTextNode("Signed in as " + s.signed_in_as + " \u00b7 "));
     const out = document.createElement("a");
     out.href = "/logout"; out.textContent = "Sign out";
-    $("viewer").appendChild(out);
+    viewer.appendChild(out);
   }
-  $("viewer").hidden = !s.signed_in_as;
+  viewer.hidden = !viewer.textContent;
   state = s;
   renderCourses(s);
   renderRecord(s);

@@ -122,6 +122,9 @@ def paths_for(profile: Profile, root: Path | None = None) -> dict[str, Path]:
         # package (see google_client.py). Almost nobody needs to.
         "CREDENTIALS_FILE": home / "credentials.json",
         "TOKEN_FILE": home / "token.json",
+        # This panel's place in a Syllabus account: the device token and who
+        # it belongs to (see account.py). Absent for a panel with no account.
+        "ACCOUNT_FILE": home / "account.json",
         "SCHEDULE_FILE": home / profile.schedule_filename,
         # The id of the app's Drive root folder, cached so renaming or moving
         # the folder in Drive doesn't matter.
@@ -151,6 +154,7 @@ LOCK_FILE: Path
 RECORDING_STATE_FILE: Path
 CREDENTIALS_FILE: Path
 TOKEN_FILE: Path
+ACCOUNT_FILE: Path
 SCHEDULE_FILE: Path
 DRIVE_ROOT_CACHE: Path
 _install_paths(PROFILE)
@@ -195,6 +199,7 @@ def env_defaults(profile: Profile) -> dict[str, str]:
         "PANEL_ALLOWED_EMAILS": "",
         "PANEL_PUBLIC_URL": "",
         "PANEL_SECRET_KEY": "",
+        "ACCOUNTS_URL": "https://syllabusaccounts.maincoursemedia.com",
     }
 
 
@@ -443,6 +448,10 @@ PANEL_PUBLIC_URL = _setting("PANEL_PUBLIC_URL")
 # Signs the session cookie. Left empty, the panel generates one into .work
 # the first time it needs it and keeps using it.
 PANEL_SECRET_KEY = _setting("PANEL_SECRET_KEY")
+# The Syllabus account service this panel can be claimed into (account.py).
+# The default is the real one; set it to "off" to hide accounts entirely,
+# or to a dev server's address to test against that.
+ACCOUNTS_URL = _setting("ACCOUNTS_URL")
 
 # Names to fall back through if RECORD_DEVICE matches nothing attached.
 RECORD_DEVICE_FALLBACKS = ("MacBook Pro Microphone", "Built-in", "Microphone")

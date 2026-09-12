@@ -34,7 +34,7 @@ from pathlib import Path
 
 from flask import Flask, g, jsonify, render_template, request
 
-from intake import config, doctor, insights, setup_wizard, signin
+from intake import account, config, doctor, insights, setup_wizard, signin
 from intake import notion_tasks
 from intake import record as recording
 from intake import transcribe
@@ -258,6 +258,9 @@ def status():
         "configured": _configured(),
         # Who the Google sign-in let in, when the request came through the tunnel.
         "signed_in_as": g.get("viewer", ""),
+        # The Syllabus account this Mac is claimed into, if any. File only;
+        # the status poll never talks to the account service.
+        "account": account.summary(),
     })
 
 
@@ -503,6 +506,56 @@ def drive_disconnect():
         config.TOKEN_FILE.unlink(missing_ok=True)
     except OSError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True})
+
+
+# --- The Syllabus account this Mac belongs to --------------------------------
+
+@app.get("/api/account")
+def account_state():
+    """Everything the Setup page's account card shows.
+
+    Asks the service to confirm the token when there is one, so a Mac that
+    was removed from the account page shows as signed out here within one
+    load rather than looking signed in forever.
+    """
+    out = account.summary()
+    if not out["enabled"]:
+        return jsonify(out)
+    out["claim"] = account.claim_status()
+    if out["signed_in"]:
+        state, detail = account.whoami()
+        out["check"] = {"state": state, "detail": detail}
+        if state == "revoked":
+            out = {**account.summary(), "claim": out["claim"],
+                   "check": {"state": state, "detail": detail}}
+    return jsonify(out)
+
+
+@app.post("/api/account/claim")
+def account_claim():
+    payload = request.get_json(silent=True) or {}
+    try:
+        started = account.start_claim(str(payload.get("name") or ""))
+    except RuntimeError as exc:
+        code = 503 if "turned off" in str(exc) else 409
+        return jsonify({"ok": False, "error": str(exc)}), code
+    except Exception as exc:  # the service is unreachable
+        return jsonify({"ok": False, "error": f"could not reach the account "
+                        f"service: {exc}"}), 502
+    started.pop("device_code", None)  # the poller's secret, not the page's
+    return jsonify({"ok": True, **started})
+
+
+@app.post("/api/account/cancel")
+def account_cancel():
+    account.cancel_claim()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/account/signout")
+def account_signout():
+    account.sign_out()
     return jsonify({"ok": True})
 
 

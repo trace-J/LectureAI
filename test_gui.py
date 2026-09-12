@@ -869,6 +869,81 @@ def t34():
         service.port_answers = real_answers
 results.append(run("the service command writes a launchd agent for this interpreter and drives launchctl", t34))
 
+
+def t35():
+    """The Setup page's account card, against a scripted account service."""
+    from intake import account
+    calls = []
+
+    def service(method, url, headers, body, timeout):
+        calls.append((method, url.split("accounts.test", 1)[1], headers, body))
+        path = calls[-1][1]
+        if path == "/device/start":
+            return 200, {"device_code": "dc-1", "user_code": "ABCD-EFGH",
+                         "verification_uri": "https://accounts.test/device",
+                         "verification_uri_complete": "https://accounts.test/device?code=ABCD-EFGH",
+                         "expires_in": 900, "interval": 5}
+        if path == "/me":
+            return (200, {"account": {"email": "me@example.com"}}) if headers.get("Authorization") == "Bearer syd_t" \
+                else (401, {"error": "invalid_token"})
+        if path == "/device/revoke":
+            return 200, {"ok": True}
+        raise AssertionError(path)
+
+    account.transport = service
+    account.forget()
+    account.cancel_claim()
+    config.ACCOUNTS_URL = "off"
+    try:
+        with gui.app.test_client() as client:
+            assert client.get("/api/account").get_json() == {"enabled": False, "signed_in": False}
+            assert client.get("/api/status").get_json()["account"] == {"enabled": False, "signed_in": False}
+            assert client.post("/api/account/claim", json={}).status_code == 503
+
+            config.ACCOUNTS_URL = "https://accounts.test"
+            a = client.get("/api/account").get_json()
+            assert a["enabled"] and not a["signed_in"] and not a["claim"]["running"], a
+            assert calls == [], "loading the card with no account makes no request"
+
+            res = client.post("/api/account/claim", json={"name": "Test Mac"})
+            assert res.status_code == 200, res.get_data(as_text=True)
+            out = res.get_json()
+            assert out["user_code"] == "ABCD-EFGH" and "device_code" not in out, out
+            assert calls[-1][3] == {"name": "Test Mac", "profile": "syllabus"}, calls[-1]
+            a = client.get("/api/account").get_json()
+            assert a["claim"]["running"] and a["claim"]["user_code"] == "ABCD-EFGH", a
+            assert client.post("/api/account/claim", json={}).status_code == 409, "one claim at a time"
+            assert client.post("/api/account/cancel").status_code == 200
+            assert not client.get("/api/account").get_json()["claim"]["running"]
+
+            # Signed in: the status poll reads the file only, the card confirms with the service.
+            account.save(account.Account("syd_t", "a1", "me@example.com", "Me", "d1", "Test Mac",
+                                         "syllabus", "https://accounts.test", "x"))
+            before = len(calls)
+            st = client.get("/api/status").get_json()["account"]
+            assert st["signed_in"] and st["email"] == "me@example.com" and "token" not in st, st
+            assert len(calls) == before, "the dashboard poll never touches the network"
+            a = client.get("/api/account").get_json()
+            assert a["signed_in"] and a["check"] == {"state": "ok", "detail": "me@example.com"}, a
+            assert "token" not in json.dumps(a), "the token never reaches the page"
+
+            # Removed from the account page elsewhere: the next load signs this Mac out.
+            account.save(account.Account("syd_gone", "a1", "me@example.com", "Me", "d1", "Test Mac",
+                                         "syllabus", "https://accounts.test", "x"))
+            a = client.get("/api/account").get_json()
+            assert not a["signed_in"] and a["check"]["state"] == "revoked", a
+            assert account.load() is None
+
+            account.save(account.Account("syd_t", "a1", "me@example.com", "Me", "d1", "Test Mac",
+                                         "syllabus", "https://accounts.test", "x"))
+            assert client.post("/api/account/signout").status_code == 200
+            assert account.load() is None and calls[-1][1] == "/device/revoke"
+    finally:
+        account.cancel_claim()
+        account.forget()
+        config.ACCOUNTS_URL = "off"
+results.append(run("the Setup page claims this Mac into an account and signs it out", t35))
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
