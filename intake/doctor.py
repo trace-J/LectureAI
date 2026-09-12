@@ -217,6 +217,25 @@ def check_web_signin() -> Check | None:
                  "fill them in and run `intake service restart`")
 
 
+def check_account() -> Check | None:
+    """Which Syllabus account this Mac belongs to. Nothing when accounts are off.
+
+    Reads account.json only; the doctor never touches the network, so this
+    cannot say whether the service still honors the token. The Setup page
+    checks that when it loads.
+    """
+    from intake import account
+    if not account.enabled():
+        return None
+    acct = account.load()
+    if acct is None:
+        return Check("Syllabus account", True,
+                     "not signed in (optional); the Setup page has the sign-in",
+                     required=False)
+    return Check("Syllabus account", True,
+                 f"{acct.email}; this Mac is \"{acct.device_name}\"", required=False)
+
+
 def check_legacy() -> Check | None:
     """Only reported when an older install's data has not been moved yet."""
     found = config.legacy_files()
@@ -263,7 +282,7 @@ def run_checks() -> list[Check]:
         check_notion(),
         check_microphone(),
     ]
-    for extra in (check_web_signin(), check_legacy(), check_old_home()):
+    for extra in (check_web_signin(), check_account(), check_legacy(), check_old_home()):
         if extra:
             checks.append(extra)
     return checks

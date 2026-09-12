@@ -270,6 +270,29 @@
     <div class="hint" id="driveHint"></div>
   </div>
 
+  <!-- Syllabus account -->
+  <div class="card" id="accountCard" hidden>
+    <h2><span class="step">6</span> Syllabus account <span style="font-weight:400;letter-spacing:0;text-transform:none">(optional)</span></h2>
+    <p class="lead">
+      Signing in ties this Mac to your Google identity, so later your class schedule and
+      Drive connection can follow you to another Mac. Everything here works without it.
+    </p>
+    <div class="row">
+      <div class="status-line"><span class="dot off" id="accountDot"></span><span id="accountText">Not signed in</span></div>
+      <div style="display:flex;gap:8px">
+        <button type="button" class="btn" id="accountBtn">Sign in to a Syllabus account</button>
+        <button type="button" class="btn danger" id="accountOff" hidden>Sign out</button>
+        <button type="button" class="btn" id="accountCancel" hidden>Cancel</button>
+      </div>
+    </div>
+    <div id="accountCode" hidden style="margin-top:12px">
+      <p class="lead" style="margin-bottom:6px">Enter this code at <a id="accountLink" href="#" target="_blank" rel="noopener">the account page</a>, signed in with Google:</p>
+      <div style="font: 600 30px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em" id="accountUserCode"></div>
+      <div class="hint" id="accountExpires"></div>
+    </div>
+    <div class="hint" id="accountHint"></div>
+  </div>
+
   <!-- Checkup -->
   <div class="card">
     <h2>Checkup <button type="button" class="btn small" id="recheck" style="margin-left:auto">Run again</button></h2>
@@ -515,7 +538,72 @@ $("recheck").onclick = checkup;
 
 // Theme follows the control panel's saved choice; there are no buttons here
 // because the panel is where you pick it.
+// --- Syllabus account ---------------------------------------------------------
+let accountPoll = null;
+
+function renderAccount(a) {
+  $("accountCard").hidden = !a.enabled;
+  if (!a.enabled) return;
+  const claim = a.claim || {};
+  const waiting = !!claim.running;
+  $("accountDot").className = "dot " + (a.signed_in ? "on" : (claim.error ? "bad" : "off"));
+  if (a.signed_in) {
+    const check = a.check || {};
+    const note = check.state === "unreachable" ? " (the account service could not be reached just now)" : "";
+    $("accountText").textContent = `Signed in as ${a.email}. This Mac is "${a.device_name}".${note}`;
+  } else if (waiting) {
+    $("accountText").textContent = "Waiting for you to enter the code";
+  } else {
+    $("accountText").textContent = "Not signed in";
+  }
+  $("accountBtn").hidden = a.signed_in || waiting;
+  $("accountOff").hidden = !a.signed_in;
+  $("accountCancel").hidden = !waiting;
+  $("accountCode").hidden = !waiting;
+  if (waiting) {
+    $("accountUserCode").textContent = claim.user_code;
+    $("accountLink").href = claim.verification_uri_complete || claim.verification_uri;
+    $("accountLink").textContent = (claim.verification_uri || "").replace(/^https?:\/\//, "").replace(/\/device$/, "");
+    const m = Math.floor((claim.expires_in || 0) / 60);
+    $("accountExpires").textContent = claim.expires_in > 0 ? `The code is good for ${m} more minute${m === 1 ? "" : "s"}.` : "";
+  }
+  let hint = "";
+  if (claim.error) hint = claim.error;
+  else if (a.check && a.check.state === "revoked") hint = "This Mac was removed from the account, so it is signed out here too.";
+  $("accountHint").textContent = hint;
+  if (waiting && !accountPoll) {
+    accountPoll = setInterval(loadAccount, 3000);
+  } else if (!waiting && accountPoll) {
+    clearInterval(accountPoll); accountPoll = null;
+    if (a.signed_in) { flash(`Signed in as ${a.email}.`); checkup(); }
+  }
+}
+
+async function loadAccount() {
+  try { renderAccount(await api("/api/account")); }
+  catch (e) { $("accountHint").textContent = e.message; }
+}
+
+$("accountBtn").onclick = async () => {
+  $("accountBtn").disabled = true;
+  try {
+    const out = await api("/api/account/claim", {});
+    if (out.verification_uri_complete) window.open(out.verification_uri_complete, "_blank", "noopener");
+    await loadAccount();
+  } catch (e) { flash(e.message, true); }
+  finally { $("accountBtn").disabled = false; }
+};
+$("accountCancel").onclick = async () => {
+  try { await api("/api/account/cancel", {}); await loadAccount(); } catch (e) { flash(e.message, true); }
+};
+$("accountOff").onclick = async () => {
+  if (!confirm("Sign this Mac out of the Syllabus account?")) return;
+  try { await api("/api/account/signout", {}); await loadAccount(); await checkup(); }
+  catch (e) { flash(e.message, true); }
+};
+
 load().then(checkup);
+loadAccount();
 </script>
 </body>
 </html>
