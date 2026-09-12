@@ -1157,8 +1157,13 @@ function renderToday(s) {
 }
 
 function render(s) {
-  // Who Cloudflare Access signed in, when the page came through it.
-  $("viewer").textContent = s.signed_in_as ? "Signed in as " + s.signed_in_as : "";
+  // Who is signed in, when the page came through the tunnel.
+  if (s.signed_in_as) {
+    $("viewer").textContent = "Signed in as " + s.signed_in_as + " \u00b7 ";
+    const out = document.createElement("a");
+    out.href = "/logout"; out.textContent = "Sign out";
+    $("viewer").appendChild(out);
+  }
   $("viewer").hidden = !s.signed_in_as;
   state = s;
   renderCourses(s);
