@@ -192,6 +192,27 @@ def check_microphone() -> Check:
                      "intake setup and pick a microphone that is attached")
 
 
+def check_web_signin() -> Check | None:
+    """Only reported once any of the web sign-in's settings is filled in.
+
+    A panel that is never published needs none of them, so an empty set is
+    not a finding. A partial set is: the tunnel would refuse everyone.
+    """
+    from intake import signin
+    names = ("PANEL_GOOGLE_CLIENT_ID", "PANEL_GOOGLE_CLIENT_SECRET",
+             "PANEL_ALLOWED_EMAILS")
+    if not any(getattr(config, n, "") for n in names):
+        return None
+    if signin.configured():
+        who = sorted(signin.allowed_emails())
+        return Check("web sign-in", True,
+                     f"Google sign-in for {len(who)} address(es): {', '.join(who)}")
+    return Check("web sign-in", False,
+                 f"{', '.join(signin.missing())} not set in {config.ENV_FILE}; "
+                 f"every request through the tunnel is refused until they are",
+                 "fill them in and run `intake service restart`")
+
+
 def check_legacy() -> Check | None:
     """Only reported when an older install's data has not been moved yet."""
     found = config.legacy_files()
@@ -238,7 +259,7 @@ def run_checks() -> list[Check]:
         check_notion(),
         check_microphone(),
     ]
-    for extra in (check_legacy(), check_old_home()):
+    for extra in (check_web_signin(), check_legacy(), check_old_home()):
         if extra:
             checks.append(extra)
     return checks

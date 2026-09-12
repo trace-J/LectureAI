@@ -21,7 +21,7 @@ once both uploads land.
 
 The control panel is reachable from anywhere at
 <https://maincoursemedia.com/syllabus> (it lands on
-`syllabus.maincoursemedia.com`), behind a Cloudflare Access sign-in. The
+`syllabus.maincoursemedia.com`), behind a Google sign-in. The
 panel still runs on the Mac that does the recording; the address is a
 Cloudflare Tunnel to it, and `intake service install` is what keeps the
 panel running there without a terminal. See "The panel on the web" below.
@@ -223,8 +223,8 @@ and without that flag the panel refuses and says why: it has no login of its
 own, so anyone who can reach the port can start processes and rewrite the
 keys in `.env`. Reaching it from elsewhere is done differently, and without
 that flag: the panel keeps listening on localhost, a Cloudflare Tunnel on the
-same Mac carries requests to it, and Cloudflare Access is the login in front.
-That is the next section.
+same Mac carries requests to it, and the panel's own Google sign-in is the
+login in front. That is the next section.
 
 ## Keeping the panel running
 
@@ -263,36 +263,58 @@ and only the last needs anything from you when setting up a new Mac.
    panel's port is still not reachable from the network. The tunnel is
    named `syllabus-panel` in the Cloudflare account; the hostname is a CNAME
    to `<tunnel-id>.cfargotunnel.com`.
-3. **Cloudflare Access** is the sign-in. An Access application covers the
-   hostname with a policy naming who may enter; Cloudflare shows the login
-   page and, once through, stamps every request with a signed token. The
-   panel checks that token itself, against Cloudflare's published keys,
-   using two values from the profile's `.env`:
+3. **The sign-in** is the panel's own, and it is Google's. Anyone who
+   arrives through the tunnel is sent to Google to pick an account, and
+   only the addresses named in the profile's `.env` may enter:
 
    ```
-   PANEL_ACCESS_TEAM=yourteam          # the part before .cloudflareaccess.com
-   PANEL_ACCESS_AUD=0123abcd...        # the application's Audience tag
+   PANEL_GOOGLE_CLIENT_ID=0123456789-abc.apps.googleusercontent.com
+   PANEL_GOOGLE_CLIENT_SECRET=GOCSPX-...
+   PANEL_ALLOWED_EMAILS=you@example.com, them@example.com
    ```
 
-   With both set, a request that came through Cloudflare must carry a valid
-   token for this application or it is refused. With either unset, every
-   request that came through Cloudflare is refused, so a tunnel that is up
-   before the login is configured exposes nothing. Requests from the Mac
-   itself carry no Cloudflare headers and are never gated, so
-   `http://127.0.0.1:5173` keeps working whatever the tunnel is doing. The
-   header shows who is signed in when the page came through Access.
+   The client is a **Web application** OAuth client in the same Google
+   Cloud project as the bundled Desktop client `intake login` uses for
+   Drive (APIs & Services > Credentials > Create credentials > OAuth client
+   ID). Its authorized redirect URIs are
+   `https://syllabus.maincoursemedia.com/oauth2/callback` and, for the
+   `panel-dev` preview, `http://127.0.0.1:5199/oauth2/callback`. The
+   sign-in asks Google for nothing but the account's email; Drive access
+   is a separate authorization and stays with `intake login`.
 
-Adding a person later is done in Access, not here: add their email to the
-policy. That is also the only sign-in Syllabus has; it has no accounts of
-its own.
+   With all three set, a request that came through Cloudflare must carry a
+   session from that sign-in or it is refused: the page is sent to
+   `/login`, the API gets a 401. With any of them unset, every request that
+   came through Cloudflare is refused with a 503 naming what is missing, so
+   a tunnel that is up before the login is configured exposes nothing.
+   Requests from the Mac itself carry no Cloudflare headers and are never
+   gated, so `http://127.0.0.1:5173` keeps working whatever the tunnel is
+   doing. The header shows who is signed in, with a sign-out link, when the
+   page came through the tunnel.
+
+   The session is a signed cookie, good for 30 days, keyed by a secret the
+   panel generates once into `.work/panel-secret` (or `PANEL_SECRET_KEY` in
+   `.env`, if you would rather manage it). Signing in is done in
+   `intake/signin.py`: the state and nonce of each attempt ride in a
+   short-lived cookie, Google's ID token is checked with `google-auth`
+   against Google's published keys, and the email has to be verified and
+   on the list.
+
+Adding a person later is one more address in `PANEL_ALLOWED_EMAILS`,
+followed by `intake service restart`. Removing one works the same way, and
+their existing session stops counting the moment the list no longer has
+them. That is the only sign-in Syllabus has; it has no accounts of its own.
 
 If the address stops working, check the pieces in order: `intake service
 status` (is the panel up), `launchctl print gui/$(id -u)/com.cloudflare.cloudflared`
 and `~/Library/Logs/com.cloudflare.cloudflared.err.log` (is the tunnel
-connected), then the Access application in the Zero Trust dashboard. A 503
-page saying the panel has not been told which Access application protects
-it means `.env` is missing the two values above; a 401 means the sign-in
-did not check out, usually because the AUD does not match the application.
+connected), then `intake doctor`, whose "web sign-in" line says whether the
+three settings are complete. A 503 page saying the sign-in is not set up
+means `.env` is missing one of them; "not on the list" means the Google
+account chosen is not in `PANEL_ALLOWED_EMAILS`; "could not be checked with
+Google" usually means the redirect URI on the Web client does not match the
+hostname, or the client secret is wrong. `panel.log` in the profile's home
+has the reason each time.
 
 Both the recorder and the watcher are started detached, on purpose, so
 closing the panel abandons neither. A recording keeps going if the panel
@@ -719,13 +741,13 @@ piece of that, and the rest is planned in this order:
   with PyInstaller into `Syllabus.app`, signed and notarized, with ffmpeg
   bundled so Homebrew stops being a requirement. The pipx install stays as
   the path for people who prefer a terminal.
-- **Sign-ins.** Done for this Mac's panel: Cloudflare Access in front of the
-  tunnel, checked by the panel itself ("The panel on the web" above), and a
-  new person is one more email in the Access policy. What Access cannot do
-  is give each person their own panel on their own Mac under one account;
-  that needs a small web backend (Cloudflare Workers plus D1, the same
-  stack `mcm-dashboard` is scaffolded on) that owns sign-in, holds a **Web**
-  OAuth client for Drive, and hands the desktop app a session. That is also
+- **Sign-ins.** Done for this Mac's panel: the panel's own Google sign-in
+  in front of the tunnel ("The panel on the web" above), and a new person
+  is one more email in `PANEL_ALLOWED_EMAILS`. What that cannot do is give
+  each person their own panel on their own Mac under one account; that
+  needs a small web backend (Cloudflare Workers plus D1, the same stack
+  `mcm-dashboard` is scaffolded on) that owns sign-in, holds the **Web**
+  OAuth client for Drive too, and hands the desktop app a session. That is also
   what would let Syllabus pay for transcription centrally instead of asking
   every student for two API keys.
 - **The panel on the web is this Mac's panel.** It records from this Mac's

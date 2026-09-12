@@ -687,57 +687,119 @@ results.append(run("a non-localhost --host is refused unless --expose says so", 
 
 def t33():
     # The panel behind a Cloudflare Tunnel. A request that came through
-    # Cloudflare carries Cf-Ray; it must also carry a valid Access token for
-    # this application, or it gets nothing. Requests from this Mac are never
-    # gated. The signing key is stubbed: no network, no real team.
-    import datetime as dt
-    import jwt
-    from cryptography.hazmat.primitives.asymmetric import rsa
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    real_key_fn = gui._signing_key
-    gui._signing_key = lambda team, token: key.public_key()
-    now = dt.datetime.now(dt.timezone.utc)
-
-    def token(signer=key, aud="aud-1", team="myteam", email="me@example.com", exp=3600):
-        return jwt.encode({"aud": [aud], "email": email, "iss": f"https://{team}.cloudflareaccess.com",
-                           "exp": now + dt.timedelta(seconds=exp), "iat": now},
-                          signer, algorithm="RS256")
+    # Cloudflare carries Cf-Ray; it must also carry a session from the
+    # panel's own Google sign-in, or it gets nothing. Requests from this Mac
+    # are never gated. Google is stubbed: no network.
+    from urllib.parse import parse_qs, urlparse
+    from intake import signin
     via = {"Cf-Ray": "8a1b2c3d4e5f-DFW"}
+    real_exchange, real_verify = signin.exchange_code, signin.verify_id_token
+    google = {}  # what the stubbed Google will say about the next sign-in
+
+    def fake_exchange(code, redirect_uri):
+        google["redirect_uri"] = redirect_uri
+        assert code == "code-1", code
+        return "idtoken"
+
+    def fake_verify(token):
+        assert token == "idtoken"
+        return dict(google["claims"])
+
+    signin.exchange_code, signin.verify_id_token = fake_exchange, fake_verify
+    config.WORK_DIR.mkdir(parents=True, exist_ok=True)
+    keys = ("PANEL_GOOGLE_CLIENT_ID", "PANEL_GOOGLE_CLIENT_SECRET", "PANEL_ALLOWED_EMAILS")
+
+    def unset():
+        for k in keys:
+            setattr(config, k, "")
+
+    def start_flow(next_path="/"):
+        res = client.get("/login", query_string={"next": next_path}, headers=via)
+        assert res.status_code == 302, res.status_code
+        q = parse_qs(urlparse(res.headers["Location"]).query)
+        return q
+
+    def finish(state, nonce, email="me@example.com", verified=True):
+        google["claims"] = {"email": email, "email_verified": verified, "nonce": nonce}
+        return client.get("/oauth2/callback", headers=via,
+                          query_string={"code": "code-1", "state": state})
+
     try:
-        config.PANEL_ACCESS_TEAM = config.PANEL_ACCESS_AUD = ""
+        unset()
         assert client.get("/api/status").status_code == 200, "local requests must never be gated"
         res = client.get("/api/status", headers=via)
-        assert res.status_code == 503, "a tunnel with no Access configured must expose nothing"
-        assert "PANEL_ACCESS_AUD" in res.get_json()["error"]
+        assert res.status_code == 503, "a tunnel with no sign-in configured must expose nothing"
+        assert "PANEL_ALLOWED_EMAILS" in res.get_json()["error"]
         assert client.get("/", headers=via).status_code == 503
+        assert client.get("/login", headers=via).status_code == 503
 
-        config.PANEL_ACCESS_TEAM, config.PANEL_ACCESS_AUD = "myteam.cloudflareaccess.com", "aud-1"
-        assert client.get("/api/status", headers=via).status_code == 401, "no token must be refused"
-        assert client.get("/", headers=via).status_code == 401
-        good = {**via, "Cf-Access-Jwt-Assertion": token()}
-        res = client.get("/api/status", headers=good)
+        config.PANEL_GOOGLE_CLIENT_ID = "client-1"
+        config.PANEL_GOOGLE_CLIENT_SECRET = "secret-1"
+        config.PANEL_ALLOWED_EMAILS = "Me@example.com, other@example.com"
+        assert client.get("/api/status", headers=via).status_code == 401, "no session must be refused"
+        res = client.get("/setup?x=1", headers=via)
+        assert res.status_code == 302 and res.headers["Location"] == "/login?next=%2Fsetup%3Fx%3D1", \
+            (res.status_code, res.headers.get("Location"))
+
+        q = start_flow("/setup")
+        assert q["client_id"] == ["client-1"] and q["scope"] == ["openid email"], q
+        assert q["redirect_uri"] == ["https://localhost/oauth2/callback"], q
+        assert q["response_type"] == ["code"] and q["state"] and q["nonce"]
+
+        # Callback without the flow cookie's state: refused.
+        res = finish("wrong-state", q["nonce"][0])
+        assert res.status_code == 400, res.status_code
+        # Nonce that does not match the one we sent: refused.
+        res = finish(q["state"][0], "wrong-nonce")
+        assert res.status_code == 400, res.status_code
+        # An account that is not on the list: refused, nothing set.
+        res = finish(q["state"][0], q["nonce"][0], email="stranger@example.com")
+        assert res.status_code == 403, res.status_code
+        assert client.get("/api/status", headers=via).status_code == 401
+        # An unverified email: refused.
+        res = finish(q["state"][0], q["nonce"][0], verified=False)
+        assert res.status_code == 403, res.status_code
+
+        # The right account, matched without regard to case, and sent on to
+        # where it was going.
+        res = finish(q["state"][0], q["nonce"][0], email="ME@example.com")
+        assert res.status_code == 302 and res.headers["Location"] == "/setup", \
+            (res.status_code, res.headers.get("Location"), res.get_data(as_text=True))
+        assert google["redirect_uri"] == "https://localhost/oauth2/callback"
+        res = client.get("/api/status", headers=via)
         assert res.status_code == 200, res.get_data(as_text=True)
         assert res.get_json()["signed_in_as"] == "me@example.com", res.get_json()
-        assert client.get("/", headers=good).status_code == 200
-        client.set_cookie("CF_Authorization", token(email="cookie@example.com"))
-        assert client.get("/api/status", headers=via).get_json()["signed_in_as"] == "cookie@example.com"
-        client.delete_cookie("CF_Authorization")
-        for label, bad in (("another application's token", token(aud="aud-2")),
-                           ("another team's token", token(team="otherteam")),
-                           ("an expired token", token(exp=-60)),
-                           ("a token signed by someone else", token(signer=other)),
-                           ("garbage", "not.a.token")):
-            res = client.get("/api/status", headers={**via, "Cf-Access-Jwt-Assertion": bad})
-            assert res.status_code == 401, f"{label} got {res.status_code}"
+        assert client.get("/", headers=via).status_code == 200
         assert client.get("/api/status").get_json()["signed_in_as"] == "", "local requests have no viewer"
-        assert gui._team_slug("https://myteam.cloudflareaccess.com/") == "myteam"
-        assert gui._team_slug("myteam") == "myteam"
-    finally:
-        gui._signing_key = real_key_fn
-        config.PANEL_ACCESS_TEAM = config.PANEL_ACCESS_AUD = ""
-results.append(run("through Cloudflare, only a valid Access sign-in for this app gets in; locally nothing is gated", t33))
 
+        # Removed from the list later: the existing session stops counting.
+        config.PANEL_ALLOWED_EMAILS = "other@example.com"
+        assert client.get("/api/status", headers=via).status_code == 401
+        config.PANEL_ALLOWED_EMAILS = "me@example.com"
+        assert client.get("/api/status", headers=via).status_code == 200
+
+        # A tampered cookie is nobody.
+        raw = client.get_cookie(signin.SESSION_COOKIE).value
+        client.set_cookie(signin.SESSION_COOKIE, raw[:-3] + "xyz")
+        assert client.get("/api/status", headers=via).status_code == 401
+        client.set_cookie(signin.SESSION_COOKIE, raw)
+        assert client.get("/api/status", headers=via).status_code == 200
+
+        # Sign out clears it.
+        res = client.get("/logout", headers=via)
+        assert res.status_code == 200
+        assert client.get("/api/status", headers=via).status_code == 401
+
+        # A ?next= pointing off this panel is not followed.
+        assert signin._safe_next("https://evil.example") == "/"
+        assert signin._safe_next("//evil.example") == "/"
+        assert signin._safe_next("/setup") == "/setup"
+    finally:
+        signin.exchange_code, signin.verify_id_token = real_exchange, real_verify
+        client.delete_cookie(signin.SESSION_COOKIE)
+        client.delete_cookie(signin.FLOW_COOKIE)
+        unset()
+results.append(run("through Cloudflare, only a Google sign-in from a listed address gets in; locally nothing is gated", t33))
 
 def t34():
     # The launchd agent that keeps the panel running. launchctl is stubbed and
