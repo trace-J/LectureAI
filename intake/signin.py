@@ -141,7 +141,8 @@ def _redirect_uri() -> str:
     dev preview it is 127.0.0.1 and its port. Both are registered on the
     Web client."""
     scheme = "https" if _external() else "http"
-    return f"{scheme}://{request.host}{CALLBACK_PATH}"
+    host = request.headers.get("X-Forwarded-Host") or request.host
+    return f"{scheme}://{host}{CALLBACK_PATH}"
 
 
 def _safe_next(value: str | None) -> str:
@@ -230,6 +231,9 @@ def login():
                      + " are empty in its .env.", 503)
     state = secrets.token_urlsafe(24)
     nonce = secrets.token_urlsafe(24)
+    # Logged on purpose: when Google says the request is invalid, this is
+    # the value that has to appear, exactly, in the Web client's redirect URIs.
+    _say(f"sign-in started; Google will be sent back to {_redirect_uri()}")
     flow = _signer().dumps({"state": state, "nonce": nonce,
                             "next": _safe_next(request.args.get("next"))})
     params = {
