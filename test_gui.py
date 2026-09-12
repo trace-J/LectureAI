@@ -707,7 +707,8 @@ def t33():
 
     signin.exchange_code, signin.verify_id_token = fake_exchange, fake_verify
     config.WORK_DIR.mkdir(parents=True, exist_ok=True)
-    keys = ("PANEL_GOOGLE_CLIENT_ID", "PANEL_GOOGLE_CLIENT_SECRET", "PANEL_ALLOWED_EMAILS")
+    keys = ("PANEL_GOOGLE_CLIENT_ID", "PANEL_GOOGLE_CLIENT_SECRET", "PANEL_ALLOWED_EMAILS",
+            "PANEL_PUBLIC_URL")
 
     def unset():
         for k in keys:
@@ -741,10 +742,21 @@ def t33():
         assert res.status_code == 302 and res.headers["Location"] == "/login?next=%2Fsetup%3Fx%3D1", \
             (res.status_code, res.headers.get("Location"))
 
+        # With no public URL, the redirect URI follows the request's host.
         q = start_flow("/setup")
         assert q["client_id"] == ["client-1"] and q["scope"] == ["openid email"], q
         assert q["redirect_uri"] == ["https://localhost/oauth2/callback"], q
         assert q["response_type"] == ["code"] and q["state"] and q["nonce"]
+        # This tunnel rewrites Host to the origin, so the published address
+        # has to come from .env; a trailing slash is tolerated. Locally (no
+        # Cf-Ray) the dev preview keeps its own address regardless.
+        config.PANEL_PUBLIC_URL = "https://panel.example.com/"
+        res = client.get("/login")
+        local = parse_qs(urlparse(res.headers["Location"]).query)
+        assert local["redirect_uri"] == ["http://localhost/oauth2/callback"], local
+        # Last, so the flow cookie the callback below checks is this one's.
+        q = start_flow("/setup")
+        assert q["redirect_uri"] == ["https://panel.example.com/oauth2/callback"], q
 
         # Callback without the flow cookie's state: refused.
         res = finish("wrong-state", q["nonce"][0])
@@ -765,7 +777,8 @@ def t33():
         res = finish(q["state"][0], q["nonce"][0], email="ME@example.com")
         assert res.status_code == 302 and res.headers["Location"] == "/setup", \
             (res.status_code, res.headers.get("Location"), res.get_data(as_text=True))
-        assert google["redirect_uri"] == "https://localhost/oauth2/callback"
+        assert google["redirect_uri"] == "https://panel.example.com/oauth2/callback", \
+            "the code must be exchanged with the same redirect URI Google was given"
         res = client.get("/api/status", headers=via)
         assert res.status_code == 200, res.get_data(as_text=True)
         assert res.get_json()["signed_in_as"] == "me@example.com", res.get_json()

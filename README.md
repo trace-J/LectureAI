@@ -271,6 +271,7 @@ and only the last needs anything from you when setting up a new Mac.
    PANEL_GOOGLE_CLIENT_ID=0123456789-abc.apps.googleusercontent.com
    PANEL_GOOGLE_CLIENT_SECRET=GOCSPX-...
    PANEL_ALLOWED_EMAILS=you@example.com, them@example.com
+   PANEL_PUBLIC_URL=https://syllabus.maincoursemedia.com
    ```
 
    The client is a **Web application** OAuth client in the same Google
@@ -281,6 +282,15 @@ and only the last needs anything from you when setting up a new Mac.
    `panel-dev` preview, `http://127.0.0.1:5199/oauth2/callback`. The
    sign-in asks Google for nothing but the account's email; Drive access
    is a separate authorization and stays with `intake login`.
+
+   `PANEL_PUBLIC_URL` is the address Google is told to come back to. It
+   is needed because this tunnel's ingress rewrites the Host header to
+   `127.0.0.1:5173` on the way in, so the panel cannot learn its public
+   hostname from the request; without it Google is asked to return to an
+   address it has never heard of and answers "This app's request is
+   invalid". Left empty, the request's own hostname is used, which is what
+   the dev preview wants. Each `/login` writes the redirect URI it used to
+   `panel.log`, so a mismatch can be read straight off the log.
 
    With all three set, a request that came through Cloudflare must carry a
    session from that sign-in or it is refused: the page is sent to

@@ -136,10 +136,17 @@ def _external() -> bool:
 
 
 def _redirect_uri() -> str:
-    """Where Google sends the browser back: this same host, https if it came
-    that way. Through the tunnel that is the published hostname; in the
-    dev preview it is 127.0.0.1 and its port. Both are registered on the
-    Web client."""
+    """Where Google sends the browser back.
+
+    Through the tunnel that is PANEL_PUBLIC_URL, the address the panel is
+    published at, because the tunnel rewrites the Host header to the origin
+    (127.0.0.1:5173) on the way in and Google has never heard of that. Left
+    unset, or in the dev preview, it is the request's own host, https if it
+    came that way. Whatever it comes out as has to be registered, exactly,
+    on the Web client.
+    """
+    if via_cloudflare() and config.PANEL_PUBLIC_URL:
+        return config.PANEL_PUBLIC_URL.strip().rstrip("/") + CALLBACK_PATH
     scheme = "https" if _external() else "http"
     host = request.headers.get("X-Forwarded-Host") or request.host
     return f"{scheme}://{host}{CALLBACK_PATH}"

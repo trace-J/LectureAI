@@ -193,6 +193,7 @@ def env_defaults(profile: Profile) -> dict[str, str]:
         "PANEL_GOOGLE_CLIENT_ID": "",
         "PANEL_GOOGLE_CLIENT_SECRET": "",
         "PANEL_ALLOWED_EMAILS": "",
+        "PANEL_PUBLIC_URL": "",
         "PANEL_SECRET_KEY": "",
     }
 
@@ -432,6 +433,13 @@ RECORD_DEVICE = _setting("RECORD_DEVICE")
 PANEL_GOOGLE_CLIENT_ID = _setting("PANEL_GOOGLE_CLIENT_ID")
 PANEL_GOOGLE_CLIENT_SECRET = _setting("PANEL_GOOGLE_CLIENT_SECRET")
 PANEL_ALLOWED_EMAILS = _setting("PANEL_ALLOWED_EMAILS")
+# The address the panel is published at (https://syllabus.maincoursemedia.com).
+# Google is told to send the browser back here after signing in, so it has
+# to be the address Google knows, whatever hostname the tunnel hands the
+# panel: this tunnel rewrites Host to 127.0.0.1:5173 on the way in. Left
+# empty, the request's own Host header is used, which is right when the
+# tunnel passes it through and in the dev preview.
+PANEL_PUBLIC_URL = _setting("PANEL_PUBLIC_URL")
 # Signs the session cookie. Left empty, the panel generates one into .work
 # the first time it needs it and keeps using it.
 PANEL_SECRET_KEY = _setting("PANEL_SECRET_KEY")
