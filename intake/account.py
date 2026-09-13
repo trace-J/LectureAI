@@ -103,7 +103,9 @@ def forget() -> None:
 def device_name() -> str:
     """What this Mac calls itself, for the account page: 'Trace's MacBook Pro'."""
     try:
-        out = subprocess.run(["scutil", "--get", "ComputerName"], capture_output=True,
+        # By absolute path: the launchd agent's PATH has no /usr/sbin, and
+        # the fallback below is the hostname, which is a worse name.
+        out = subprocess.run(["/usr/sbin/scutil", "--get", "ComputerName"], capture_output=True,
                              text=True, timeout=3)
         if out.returncode == 0 and out.stdout.strip():
             return out.stdout.strip()
@@ -189,6 +191,38 @@ def sign_out() -> None:
         except Exception as exc:
             _say(f"could not tell the account service to drop the token: {exc}")
     forget()
+
+
+def register_public_url(public_url: str) -> bool:
+    """Tell the service where this panel is published, so a web sign-in can
+    be sent back here. False when there is no account or it refused."""
+    acct = load()
+    if acct is None or not public_url:
+        return False
+    try:
+        status, _data = call("POST", "/device/public-url", {"public_url": public_url},
+                             token=acct.token)
+    except Exception as exc:
+        _say(f"could not register {public_url} with the account service: {exc}")
+        return False
+    if status != 200:
+        _say(f"the account service refused {public_url} as this panel's address ({status})")
+    return status == 200
+
+
+def exchange_code(code: str) -> dict | None:
+    """Trade a one-time code from /panel/authorize for the account it names.
+
+    Returns the service's account dict ({id, email, name}) or None when the
+    code is refused. Raises on network trouble, which the caller reports.
+    """
+    acct = load()
+    if acct is None:
+        return None
+    status, data = call("POST", "/panel/exchange", {"code": code}, token=acct.token)
+    if status != 200 or not isinstance(data.get("account"), dict):
+        return None
+    return data["account"]
 
 
 # --- Claiming this Mac ------------------------------------------------------

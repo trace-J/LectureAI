@@ -198,12 +198,22 @@ def check_web_signin() -> Check | None:
     A panel that is never published needs none of them, so an empty set is
     not a finding. A partial set is: the tunnel would refuse everyone.
     """
-    from intake import signin
+    from intake import account, signin
     names = ("PANEL_GOOGLE_CLIENT_ID", "PANEL_GOOGLE_CLIENT_SECRET",
              "PANEL_ALLOWED_EMAILS")
+    if signin.mode() == "account":
+        acct = account.load()
+        back = (f"the service returns to {config.PANEL_PUBLIC_URL.rstrip('/')}"
+                f"{signin.ACCOUNT_CALLBACK_PATH}" if config.PANEL_PUBLIC_URL else
+                "PANEL_PUBLIC_URL unset, so the return address follows the "
+                "request's Host header; set it if the tunnel rewrites that")
+        extra = ("; PANEL_ALLOWED_EMAILS is not consulted while this Mac is signed in"
+                 if config.PANEL_ALLOWED_EMAILS else "")
+        return Check("web sign-in", True,
+                     f"through the Syllabus account of {acct.email}; {back}{extra}")
     if not any(getattr(config, n, "") for n in names):
         return None
-    if signin.configured():
+    if signin.google_configured():
         who = sorted(signin.allowed_emails())
         back = (f"Google returns to {config.PANEL_PUBLIC_URL.rstrip('/')}/oauth2/callback"
                 if config.PANEL_PUBLIC_URL else

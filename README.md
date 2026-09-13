@@ -256,10 +256,11 @@ An account is a Google identity kept by a small web service at
 `syllabusaccounts.maincoursemedia.com` (its code is the
 [syllabus-accounts](https://github.com/trace-J/syllabus-accounts) repo, a
 Cloudflare Worker with a D1 database). Signing in ties this Mac's panel to
-that identity. Today that is all it does; the point is what comes next, when
-your class schedule and your Drive connection belong to the account and
-follow you to another Mac, and when the panel on the web lets in whoever
-owns the account rather than a list of addresses in `.env`.
+that identity. Today it does two things: the panel on the web lets in the
+account's owner rather than a list of addresses in `.env` ("The panel on the
+web" below), and it is the home for what comes next, when your class
+schedule and your Drive connection belong to the account and follow you to
+another Mac.
 
 Signing in works the way a TV signs in to a streaming service. The panel
 shows an eight-letter code and opens the account page in a new tab. Sign in
@@ -294,9 +295,26 @@ and only the last needs anything from you when setting up a new Mac.
    panel's port is still not reachable from the network. The tunnel is
    named `syllabus-panel` in the Cloudflare account; the hostname is a CNAME
    to `<tunnel-id>.cfargotunnel.com`.
-3. **The sign-in** is the panel's own, and it is Google's. Anyone who
-   arrives through the tunnel is sent to Google to pick an account, and
-   only the addresses named in the profile's `.env` may enter:
+3. **The sign-in.** Anyone who arrives through the tunnel has to sign in
+   before they see anything, and who may enter depends on whether this
+   Mac has been signed in to a Syllabus account ("A Syllabus account"
+   above).
+
+   **With an account**, the account's owner is the one person allowed.
+   The browser is sent to the account service, signs in with Google there
+   if it has not already, and comes back to the panel with a one-time code
+   that the panel trades for the account using its own device token. A
+   different account is told "That Syllabus belongs to someone else." The
+   Web client and `PANEL_ALLOWED_EMAILS` are not consulted at all; the only
+   setting the panel needs is where it is published:
+
+   ```
+   PANEL_PUBLIC_URL=https://syllabus.maincoursemedia.com
+   ```
+
+   **Without an account**, the older path still works: the panel runs
+   Google's sign-in itself, and only the addresses named in `.env` may
+   enter:
 
    ```
    PANEL_GOOGLE_CLIENT_ID=0123456789-abc.apps.googleusercontent.com
@@ -305,7 +323,7 @@ and only the last needs anything from you when setting up a new Mac.
    PANEL_PUBLIC_URL=https://syllabus.maincoursemedia.com
    ```
 
-   The client is a **Web application** OAuth client in the Google Cloud
+   That client is a **Web application** OAuth client in the Google Cloud
    project named **LectureAI** (APIs & Services > Credentials > Create
    credentials > OAuth client ID). That is a different project from the one
    holding the bundled Desktop client `intake login` uses for Drive
@@ -317,48 +335,58 @@ and only the last needs anything from you when setting up a new Mac.
    sign-in asks Google for nothing but the account's email; Drive access
    is a separate authorization and stays with `intake login`.
 
-   `PANEL_PUBLIC_URL` is the address Google is told to come back to. It
-   is needed because this tunnel's ingress rewrites the Host header to
-   `127.0.0.1:5173` on the way in, so the panel cannot learn its public
-   hostname from the request; without it Google is asked to return to an
-   address it has never heard of and answers "This app's request is
-   invalid". Left empty, the request's own hostname is used, which is what
-   the dev preview wants. Each `/login` writes the redirect URI it used to
-   `panel.log`, so a mismatch can be read straight off the log.
+   `PANEL_PUBLIC_URL` is the address Google, or the account service, is
+   told to come back to. It is needed because this tunnel's ingress
+   rewrites the Host header to `127.0.0.1:5173` on the way in, so the panel
+   cannot learn its public hostname from the request; without it the
+   sign-in is asked to return to an address nobody has heard of, and Google
+   answers "This app's request is invalid". Left empty, the request's own
+   hostname is used, which is what the dev preview wants. Each `/login`
+   writes the return address it used to `panel.log`, so a mismatch can be
+   read straight off the log. On each account sign-in the panel also
+   registers that address with the account service, which will only ever
+   send a browser back there.
 
-   With all three set, a request that came through Cloudflare must carry a
-   session from that sign-in or it is refused: the page is sent to
-   `/login`, the API gets a 401. With any of them unset, every request that
-   came through Cloudflare is refused with a 503 naming what is missing, so
-   a tunnel that is up before the login is configured exposes nothing.
-   Requests from the Mac itself carry no Cloudflare headers and are never
-   gated, so `http://127.0.0.1:5173` keeps working whatever the tunnel is
-   doing. The header shows who is signed in, with a sign-out link, when the
-   page came through the tunnel.
+   Either way, a request that came through Cloudflare must carry a session
+   from the sign-in or it is refused: the page is sent to `/login`, the API
+   gets a 401. With neither an account nor the three settings, every request
+   that came through Cloudflare is refused with a 503 saying so, so a tunnel
+   that is up before the login is configured exposes nothing. Requests from
+   the Mac itself carry no Cloudflare headers and are never gated, so
+   `http://127.0.0.1:5173` keeps working whatever the tunnel is doing. The
+   header shows who is signed in, with a sign-out link, when the page came
+   through the tunnel.
 
    The session is a signed cookie, good for 30 days, keyed by a secret the
    panel generates once into `.work/panel-secret` (or `PANEL_SECRET_KEY` in
-   `.env`, if you would rather manage it). Signing in is done in
-   `intake/signin.py`: the state and nonce of each attempt ride in a
-   short-lived cookie, Google's ID token is checked with `google-auth`
-   against Google's published keys, and the email has to be verified and
-   on the list.
+   `.env`, if you would rather manage it). A session issued through the
+   account names the account, and stops counting the moment this Mac is
+   signed out of it; one issued through the allowlist stops counting the
+   moment the Mac is signed in to an account, or the address leaves the
+   list. Signing in is done in `intake/signin.py`: the state of each
+   attempt rides in a short-lived cookie, and on the Google path the ID
+   token is checked with `google-auth` against Google's published keys and
+   the email has to be verified and on the list.
 
-Adding a person later is one more address in `PANEL_ALLOWED_EMAILS`,
-followed by `intake service restart`. Removing one works the same way, and
-their existing session stops counting the moment the list no longer has
-them. That is the only sign-in Syllabus has; it has no accounts of its own.
+Signing this Mac in to an account, from the Setup page, switches the web
+sign-in over on the next request; signing it out switches back. Without an
+account, adding a person is one more address in `PANEL_ALLOWED_EMAILS`,
+followed by `intake service restart`, and removing one works the same way.
 
 If the address stops working, check the pieces in order: `intake service
 status` (is the panel up), `launchctl print gui/$(id -u)/com.cloudflare.cloudflared`
 and `~/Library/Logs/com.cloudflare.cloudflared.err.log` (is the tunnel
-connected), then `intake doctor`, whose "web sign-in" line says whether the
-three settings are complete. A 503 page saying the sign-in is not set up
-means `.env` is missing one of them; "not on the list" means the Google
-account chosen is not in `PANEL_ALLOWED_EMAILS`; "could not be checked with
-Google" usually means the redirect URI on the Web client does not match the
-hostname, or the client secret is wrong. `panel.log` in the profile's home
-has the reason each time.
+connected), then `intake doctor`, whose "web sign-in" line says which way
+the sign-in works and whether it is complete. A 503 page saying the sign-in
+is not set up means this Mac has no account and `.env` is missing one of the
+three settings; "belongs to someone else" means the Google account chosen is
+not the one this Mac is signed in to; "has not told the account service where
+it is published" means `PANEL_PUBLIC_URL` is empty or not https, so restart
+the panel after fixing it; "not on the list" means the Google account chosen
+is not in `PANEL_ALLOWED_EMAILS`; "could not be checked with Google" usually
+means the redirect URI on the Web client does not match the hostname, or the
+client secret is wrong. `panel.log` in the profile's home has the reason
+each time.
 
 Both the recorder and the watcher are started detached, on purpose, so
 closing the panel abandons neither. A recording keeps going if the panel
@@ -791,12 +819,13 @@ piece of that, and the rest is planned in this order:
   new person is one more email in `PANEL_ALLOWED_EMAILS`. And there is now
   an account service ("A Syllabus account" above): a Cloudflare Worker with
   D1, the same stack `mcm-dashboard` is scaffolded on, that owns the Google
-  sign-in and lets a panel claim an identity with a device code. The next
-  slices, each its own PR: the panel on the web accepts a sign-in from the
-  account service and the allowlist becomes the fallback; the class schedule
-  syncs to the account; the Drive grant moves to the account, which holds
-  the **Web** OAuth client and hands the panel short-lived access tokens;
-  then `PANEL_ALLOWED_EMAILS` retires. That is also what would let Syllabus
+  sign-in and lets a panel claim an identity with a device code, and the
+  panel on the web now signs in through it, with the allowlist as the
+  fallback for a Mac with no account. The next slices, each its own PR: the
+  class schedule syncs to the account; the Drive grant moves to the account,
+  which holds the **Web** OAuth client and hands the panel short-lived
+  access tokens; then `PANEL_ALLOWED_EMAILS` and the panel's own Google
+  client retire. That is also what would let Syllabus
   pay for transcription centrally instead of asking every student for two
   API keys.
 - **The panel on the web is this Mac's panel.** It records from this Mac's

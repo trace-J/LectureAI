@@ -1,18 +1,30 @@
 """The panel's sign-in, when it is reached over the web.
 
-The panel has no accounts of its own. It listens on this Mac only, and a
-Cloudflare Tunnel carries `syllabus.maincoursemedia.com` to it. Anyone who
-arrives that way has to sign in with Google first, and their Google account
-has to be one of the addresses named in PANEL_ALLOWED_EMAILS. Requests from
-this Mac carry no Cloudflare headers and are never gated, so
-http://127.0.0.1:5173 keeps working whatever the tunnel is doing.
+The panel listens on this Mac only, and a Cloudflare Tunnel carries
+`syllabus.maincoursemedia.com` to it. Anyone who arrives that way has to
+sign in first. Requests from this Mac carry no Cloudflare headers and are
+never gated, so http://127.0.0.1:5173 keeps working whatever the tunnel is
+doing.
 
-The flow is plain OpenID Connect against Google, with nothing but `requests`:
+Who may enter depends on whether this Mac has been signed in to a Syllabus
+account (account.py). When it has, the account's owner is the one person
+allowed, and the sign-in goes through the account service:
 
-    /login            remembers where you were going, sends you to Google
+    /login             remembers where you were going, sends you to the
+                       account service's /panel/authorize
+    /account/callback  trades the one-time code the service sent back for
+                       the account, using this panel's device token, and
+                       sets the session cookie
+
+When it has not, the older path still works: Google's sign-in directly,
+with the Web client in .env, and only the addresses in PANEL_ALLOWED_EMAILS
+may enter:
+
+    /login            sends you to Google
     /oauth2/callback  trades Google's code for an ID token, checks it, and
                       sets the session cookie
-    /logout           clears the cookie
+
+    /logout           clears the cookie, either way
 
 The session is a signed cookie holding the email and when it was issued. It
 is signed with a key the panel generates once and keeps in the profile's
@@ -38,13 +50,14 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
-from intake import config
+from intake import account, config
 
 bp = Blueprint("signin", __name__)
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 CALLBACK_PATH = "/oauth2/callback"
+ACCOUNT_CALLBACK_PATH = "/account/callback"
 
 SESSION_COOKIE = "syllabus_session"
 SESSION_DAYS = 30
@@ -54,7 +67,7 @@ FLOW_COOKIE = "syllabus_signin"
 FLOW_SECONDS = 600
 
 # Routes that have to be reachable before there is a session.
-OPEN_PATHS = {"/login", CALLBACK_PATH, "/logout"}
+OPEN_PATHS = {"/login", CALLBACK_PATH, ACCOUNT_CALLBACK_PATH, "/logout"}
 
 _serializer: URLSafeTimedSerializer | None = None
 
@@ -101,14 +114,29 @@ def allowed_emails() -> set[str]:
             if e.strip()}
 
 
-def configured() -> bool:
-    """Whether the web sign-in has everything it needs."""
+def google_configured() -> bool:
+    """Whether the direct Google sign-in has its three settings."""
     return bool(config.PANEL_GOOGLE_CLIENT_ID and config.PANEL_GOOGLE_CLIENT_SECRET
                 and allowed_emails())
 
 
+def mode() -> str:
+    """How the web sign-in works right now: "account", "google", or ""."""
+    if account.enabled() and account.load() is not None:
+        return "account"
+    return "google" if google_configured() else ""
+
+
+def configured() -> bool:
+    """Whether the web sign-in has everything it needs, one way or the other."""
+    return bool(mode())
+
+
 def missing() -> list[str]:
-    """The .env names still empty, for the 503 page and `intake doctor`."""
+    """The .env names still empty, for the 503 page and `intake doctor`.
+
+    Only meaningful when mode() is "": with an account, none of these matter.
+    """
     out = []
     if not config.PANEL_GOOGLE_CLIENT_ID:
         out.append("PANEL_GOOGLE_CLIENT_ID")
@@ -146,11 +174,7 @@ def _redirect_uri() -> str:
     came that way. Whatever it comes out as has to be registered, exactly,
     on the Web client.
     """
-    if via_cloudflare() and config.PANEL_PUBLIC_URL:
-        return config.PANEL_PUBLIC_URL.strip().rstrip("/") + CALLBACK_PATH
-    scheme = "https" if _external() else "http"
-    host = request.headers.get("X-Forwarded-Host") or request.host
-    return f"{scheme}://{host}{CALLBACK_PATH}"
+    return _public_base() + CALLBACK_PATH
 
 
 def _safe_next(value: str | None) -> str:
@@ -160,11 +184,25 @@ def _safe_next(value: str | None) -> str:
     return "/"
 
 
+def _public_base() -> str:
+    """The address this panel is published at, as Google or the account
+    service should see it: PANEL_PUBLIC_URL through the tunnel, else the
+    request's own origin."""
+    if via_cloudflare() and config.PANEL_PUBLIC_URL:
+        return config.PANEL_PUBLIC_URL.strip().rstrip("/")
+    scheme = "https" if _external() else "http"
+    host = request.headers.get("X-Forwarded-Host") or request.host
+    return f"{scheme}://{host}"
+
+
 def viewer() -> str:
     """Who the session cookie says is signed in, or '' when nobody is.
 
-    A cookie that is forged, expired, or names someone since removed from
-    PANEL_ALLOWED_EMAILS counts as nobody.
+    With an account, the session has to name that account: a cookie issued
+    to an address on the old allowlist stops counting the moment this Mac is
+    signed in, and one issued for a previous account does too. Without an
+    account, the email has to be on PANEL_ALLOWED_EMAILS. Either way a
+    forged or expired cookie is nobody.
     """
     raw = request.cookies.get(SESSION_COOKIE)
     if not raw:
@@ -174,6 +212,11 @@ def viewer() -> str:
     except (BadSignature, SignatureExpired):
         return ""
     email = str(data.get("email", "")).lower()
+    if not email:
+        return ""
+    acct = account.load() if account.enabled() else None
+    if acct is not None:
+        return email if data.get("account_id") == acct.account_id else ""
     return email if email in allowed_emails() else ""
 
 
@@ -217,10 +260,7 @@ def gate():
     if not via_cloudflare():
         return None
     if not configured():
-        names = ", ".join(missing())
-        return refuse(503, "This panel is reachable through Cloudflare, but its "
-                           "sign-in is not set up. Set " + names + " in its .env "
-                           "and restart it.")
+        return refuse(503, _not_set_up())
     if request.path in OPEN_PATHS:
         return None
     who = viewer()
@@ -230,13 +270,22 @@ def gate():
     return None
 
 
+def _not_set_up() -> str:
+    names = ", ".join(missing())
+    return ("This panel is reachable through Cloudflare, but its sign-in is not "
+            "set up. On the Mac that runs it, open the Setup page and sign in to "
+            "a Syllabus account, or set " + names + " in its .env and restart it.")
+
+
 # --- The routes --------------------------------------------------------------
 
 @bp.get("/login")
 def login():
-    if not configured():
-        return _page("This panel's sign-in is not set up: " + ", ".join(missing())
-                     + " are empty in its .env.", 503)
+    how = mode()
+    if how == "account":
+        return _login_via_account()
+    if how != "google":
+        return _page(_not_set_up(), 503)
     state = secrets.token_urlsafe(24)
     nonce = secrets.token_urlsafe(24)
     # Logged on purpose: when Google says the request is invalid, this is
@@ -257,6 +306,66 @@ def login():
     }
     resp = make_response(redirect(AUTH_URL + "?" + urlencode(params)))
     return _set_cookie(resp, FLOW_COOKIE, flow, FLOW_SECONDS)
+
+
+def _login_via_account():
+    """Send the browser to the account service, which knows who owns this Mac."""
+    acct = account.load()
+    state = secrets.token_urlsafe(24)
+    base = _public_base()
+    # Registered on every sign-in rather than once, so a panel whose address
+    # changed (a new hostname, a new PANEL_PUBLIC_URL) heals itself. A
+    # failure is logged and the sign-in goes ahead: the service will refuse
+    # the redirect and say why, which is a better message than none.
+    account.register_public_url(base)
+    _say(f"sign-in started through the account service; it will send the "
+         f"browser back to {base}{ACCOUNT_CALLBACK_PATH}")
+    flow = _signer().dumps({"state": state, "via": "account",
+                            "next": _safe_next(request.args.get("next"))})
+    params = {"device": acct.device_id, "redirect_uri": base + ACCOUNT_CALLBACK_PATH,
+              "state": state}
+    resp = make_response(redirect(account.url() + "/panel/authorize?" + urlencode(params)))
+    return _set_cookie(resp, FLOW_COOKIE, flow, FLOW_SECONDS)
+
+
+@bp.get(ACCOUNT_CALLBACK_PATH)
+def account_callback():
+    acct = account.load() if account.enabled() else None
+    if acct is None:
+        return _page("This panel is not signed in to a Syllabus account.", 503)
+    raw = request.cookies.get(FLOW_COOKIE, "")
+    try:
+        flow = _signer().loads(raw, max_age=FLOW_SECONDS) if raw else None
+    except (BadSignature, SignatureExpired):
+        flow = None
+    if not flow or flow.get("via") != "account" \
+            or request.args.get("state") != flow.get("state"):
+        return _page("That sign-in took too long or did not start here. "
+                     "Try again.", 400, ("/login", "Sign in"))
+    code = request.args.get("code", "")
+    if not code:
+        return _page("The account service sent no code back.", 400, ("/login", "Try again"))
+    try:
+        who = account.exchange_code(code)
+    except Exception as exc:
+        _say(f"sign-in failed: could not reach the account service: {exc}")
+        return _page("The account service could not be reached to finish the "
+                     "sign-in.", 502, ("/login", "Try again"))
+    if who is None:
+        _say("sign-in failed: the account service refused the code")
+        return _page("That sign-in could not be confirmed. Try again.", 400,
+                     ("/login", "Sign in"))
+    email = str(who.get("email", "")).lower()
+    if str(who.get("id", "")) != acct.account_id or not email:
+        _say(f"refused a sign-in for {email or 'an unknown account'}: not this "
+             f"Mac's account")
+        return _page("That account does not own this Syllabus.", 403,
+                     ("/login", "Try again"))
+    _say(f"signed in through the account: {email}")
+    session = _signer().dumps({"email": email, "account_id": acct.account_id})
+    resp = make_response(redirect(_safe_next(flow.get("next"))))
+    _clear_cookie(resp, FLOW_COOKIE)
+    return _set_cookie(resp, SESSION_COOKIE, session, SESSION_DAYS * 86400)
 
 
 def exchange_code(code: str, redirect_uri: str) -> str:
@@ -284,7 +393,7 @@ def verify_id_token(token: str) -> dict:
 
 @bp.get(CALLBACK_PATH)
 def callback():
-    if not configured():
+    if not google_configured():
         return _page("This panel's sign-in is not set up.", 503)
     raw = request.cookies.get(FLOW_COOKIE, "")
     try:
