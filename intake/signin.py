@@ -22,7 +22,8 @@ is signed with a key the panel generates once and keeps in the profile's
 The Web OAuth client this uses is a different one from the Desktop client
 `intake login` authorizes Drive with: Google only lets a Web client redirect
 to a hostname, and only a Desktop client's secret is safe to ship inside the
-package. Both belong to the same Cloud project.
+package. They live in different Cloud projects: the Web client in the one
+named LectureAI, the Desktop client in friendly-bazaar-507320-b7.
 """
 
 from __future__ import annotations
