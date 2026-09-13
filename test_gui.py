@@ -17,7 +17,7 @@ from _test_home import fresh_home  # noqa: E402
 fresh_home()  # before config is imported, so nothing touches ~/.intake
 
 from intake import config  # noqa: E402
-from intake import gui  # noqa: E402
+from intake import doctor, gui  # noqa: E402
 
 
 def run(label, fn):
@@ -943,6 +943,108 @@ def t35():
         account.forget()
         config.ACCOUNTS_URL = "off"
 results.append(run("the Setup page claims this Mac into an account and signs it out", t35))
+
+
+def t36():
+    """Through Cloudflare, a Mac signed in to an account lets in its owner via the
+    account service, and the old allowlist stops counting until it is signed out."""
+    from urllib.parse import parse_qs, urlparse
+    from intake import account, signin
+    via = {"Cf-Ray": "8a1b2c3d4e5f-DFW"}
+    calls = []
+    exchange = {"account": {"id": "a1", "email": "Owner@Example.com", "name": "Owner"}}
+
+    def service(method, url, headers, body, timeout):
+        path = url.split("accounts.test", 1)[1]
+        calls.append((method, path, headers.get("Authorization"), body))
+        if path == "/device/public-url":
+            return 200, {"ok": True}
+        if path == "/panel/exchange":
+            return (200, exchange) if body["code"] == "good" else (400, {"error": "invalid_grant"})
+        raise AssertionError(path)
+
+    account.transport = service
+    account.cancel_claim()
+    config.ACCOUNTS_URL = "https://accounts.test"
+    config.PANEL_GOOGLE_CLIENT_ID = "client-1"
+    config.PANEL_GOOGLE_CLIENT_SECRET = "secret-1"
+    config.PANEL_ALLOWED_EMAILS = "listed@example.com"
+    config.PANEL_PUBLIC_URL = "https://panel.example.com"
+    signin.reset()
+    try:
+        account.save(account.Account("syd_t", "a1", "owner@example.com", "Owner", "d1", "Test Mac",
+                                     "syllabus", "https://accounts.test", "x"))
+        with gui.app.test_client() as client:
+            assert signin.mode() == "account"
+            # Nobody yet: the page goes to /login, the API gets 401.
+            assert client.get("/api/status", headers=via).status_code == 401
+            assert client.get("/", headers=via).status_code == 302
+            # The allowlist no longer opens the door while this Mac is signed in.
+            client.set_cookie(signin.SESSION_COOKIE, signin._signer().dumps({"email": "listed@example.com"}))
+            assert client.get("/api/status", headers=via).status_code == 401, \
+                "an allowlisted address must not get in while the Mac belongs to an account"
+            client.delete_cookie(signin.SESSION_COOKIE)
+
+            # /login goes to the account service, naming this device and where to come back.
+            res = client.get("/login?next=/setup", headers=via)
+            assert res.status_code == 302, res.status_code
+            to = urlparse(res.headers["Location"])
+            assert to.scheme + "://" + to.netloc + to.path == "https://accounts.test/panel/authorize", to
+            q = parse_qs(to.query)
+            assert q["device"] == ["d1"] and q["state"], q
+            assert q["redirect_uri"] == ["https://panel.example.com/account/callback"], q
+            assert calls[-1][:3] == ("POST", "/device/public-url", "Bearer syd_t"), calls[-1]
+            assert calls[-1][3] == {"public_url": "https://panel.example.com"}, calls[-1]
+            state = q["state"][0]
+
+            # Wrong state, no code, a refused code: no session.
+            assert client.get("/account/callback?state=nope&code=good", headers=via).status_code == 400
+            assert client.get(f"/account/callback?state={state}", headers=via).status_code == 400
+            assert client.get(f"/account/callback?state={state}&code=bad", headers=via).status_code == 400
+            assert client.get("/api/status", headers=via).status_code == 401
+            # A code that names some other account: refused.
+            exchange["account"] = {"id": "a2", "email": "other@example.com"}
+            assert client.get(f"/account/callback?state={state}&code=good", headers=via).status_code == 403
+            exchange["account"] = {"id": "a1", "email": "Owner@Example.com", "name": "Owner"}
+
+            # The owner: in, and sent on to where they were going.
+            res = client.get(f"/account/callback?state={state}&code=good", headers=via)
+            assert res.status_code == 302 and res.headers["Location"] == "/setup", \
+                (res.status_code, res.headers.get("Location"), res.get_data(as_text=True))
+            assert calls[-1][:3] == ("POST", "/panel/exchange", "Bearer syd_t") and calls[-1][3] == {"code": "good"}
+            res = client.get("/api/status", headers=via)
+            assert res.status_code == 200 and res.get_json()["signed_in_as"] == "owner@example.com", res.get_json()
+            assert client.get("/api/status").get_json()["signed_in_as"] == "", "local requests are never gated"
+
+            # Doctor says how the web sign-in works now.
+            check = doctor.check_web_signin()
+            assert check.ok and "owner@example.com" in check.detail and "account" in check.detail, check
+            assert "not consulted" in check.detail, check
+
+            # Signed out of the account: the session stops counting, and the
+            # direct Google path (still configured) is back.
+            account.forget()
+            assert signin.mode() == "google"
+            assert client.get("/api/status", headers=via).status_code == 401
+            res = client.get("/login", headers=via)
+            assert urlparse(res.headers["Location"]).netloc == "accounts.google.com", res.headers["Location"]
+            # An account session cookie from before is not an allowlist session either.
+            assert client.get("/api/status", headers=via).status_code == 401
+
+            # Neither an account nor the three settings: a 503 that names the Setup page.
+            config.PANEL_GOOGLE_CLIENT_SECRET = ""
+            assert signin.mode() == ""
+            res = client.get("/", headers=via)
+            assert res.status_code == 503 and "Setup page" in res.get_data(as_text=True), res.status_code
+            assert client.get("/login", headers=via).status_code == 503
+            assert client.get("/account/callback?state=x&code=y", headers=via).status_code == 503
+    finally:
+        account.forget()
+        config.PANEL_GOOGLE_CLIENT_ID = config.PANEL_GOOGLE_CLIENT_SECRET = ""
+        config.PANEL_ALLOWED_EMAILS = config.PANEL_PUBLIC_URL = ""
+        config.ACCOUNTS_URL = "off"
+        signin.reset()
+results.append(run("with an account, the web sign-in goes through the service and the allowlist is the fallback", t36))
 
 print()
 print(f"{sum(results)}/{len(results)} passed")
