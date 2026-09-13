@@ -34,7 +34,7 @@ from pathlib import Path
 
 from flask import Flask, g, jsonify, render_template, request
 
-from intake import account, config, doctor, insights, setup_wizard, signin
+from intake import account, config, doctor, insights, setup_wizard, signin, sync
 from intake import notion_tasks
 from intake import record as recording
 from intake import transcribe
@@ -461,6 +461,8 @@ def setup_save():
     setup_wizard.write_env(config.ENV_FILE, values, notion_skipped=skipped)
     config.write_schedule(meetings, tolerance)
     config.reload()
+    # The account's copy follows the file, when this Mac is signed in.
+    sync.sync_later("save")
     return jsonify({"ok": True, "configured": _configured(),
                     "classes": len(meetings)})
 
@@ -529,6 +531,11 @@ def account_state():
         if state == "revoked":
             out = {**account.summary(), "claim": out["claim"],
                    "check": {"state": state, "detail": detail}}
+        else:
+            # Opening the Setup page is a good moment to pick up a schedule
+            # another Mac saved; throttled so a page left open is quiet.
+            sync.sync_later("setup", throttle=True)
+            out["sync"] = sync.status()
     return jsonify(out)
 
 
@@ -612,6 +619,9 @@ def main(argv: list[str] | None = None) -> int:
     # Say so now, in the terminal, if a lecture is already being recorded;
     # the page will show it too once it loads.
     _current_recorder()
+    # A schedule saved on another Mac arrives now; the network never holds
+    # the panel up, and a Mac with no account does nothing here.
+    sync.sync_later("start")
     if not args.no_browser:
         _open_browser_later(url)
     # load_dotenv=False: Flask would otherwise read a .env from the current
