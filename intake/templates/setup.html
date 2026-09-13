@@ -570,6 +570,7 @@ function renderAccount(a) {
   let hint = "";
   if (claim.error) hint = claim.error;
   else if (a.check && a.check.state === "revoked") hint = "This Mac was removed from the account, so it is signed out here too.";
+  else if (a.signed_in && a.sync) hint = syncLine(a.sync);
   $("accountHint").textContent = hint;
   if (waiting && !accountPoll) {
     accountPoll = setInterval(loadAccount, 3000);
@@ -577,6 +578,16 @@ function renderAccount(a) {
     clearInterval(accountPoll); accountPoll = null;
     if (a.signed_in) { flash(`Signed in as ${a.email}.`); checkup(); }
   }
+}
+
+function syncLine(sy) {
+  const when = (iso) => iso ? new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+  if (sy.error && (!sy.synced_at || sy.tried_at > sy.synced_at)) return `Class schedule: could not sync (${sy.error}).`;
+  if (!sy.synced_at) return "Class schedule: not synced yet.";
+  const what = { pushed: "saved to the account", pulled: "pulled from the account", same: "matches the account",
+                 "conflict-pushed": "saved to the account; this Mac's copy was newer",
+                 "conflict-pulled": "pulled from the account, which was newer; this Mac's copy was kept as a .bak file" }[sy.outcome] || sy.outcome;
+  return `Class schedule: ${what}, ${when(sy.synced_at)}.`;
 }
 
 async function loadAccount() {

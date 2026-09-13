@@ -273,6 +273,18 @@ the account and can remove one; the next time that Mac's Setup page loads,
 it shows as signed out. **Sign out** on the Setup page does the same from
 this end.
 
+Once a Mac is signed in, **its class schedule belongs to the account too**.
+Saving the Setup page pushes `schedule.toml` to the account, and starting
+the panel pulls the account's copy when it is newer, so a second Mac signed
+in to the same account gets the schedule without retyping it. The file on
+this Mac stays what the pipeline reads; the account holds the text as
+written, comments and all, with a version. When both sides changed since
+they last agreed, the newer copy wins and the other is kept next to the
+schedule as `schedule.toml.<stamp>.bak`. A copy from the account is parsed
+before it replaces the file, so a broken schedule there cannot break this
+Mac. The Setup page's account step says what the last sync did and when;
+`.work/sync.json` remembers the version this Mac last agreed with.
+
 Nothing requires an account. A panel with no `account.json` is exactly what
 it was, and `intake doctor` reports the account as an optional line. To hide
 the step altogether, put `ACCOUNTS_URL=off` in `.env`; to test against a
@@ -780,6 +792,7 @@ credentials, or an API key, none costs anything to run, and none can touch
 .venv/bin/python test_setup.py               # home directory, schedule file, setup wizard, doctor
 .venv/bin/python test_profiles.py            # syllabus vs sous: homes, ports, folders, selection, migration
 .venv/bin/python test_account.py             # claiming this Mac into a Syllabus account, against a fake service
+.venv/bin/python test_sync.py                # the schedule file against the account's copy: push, pull, conflicts
 ```
 
 ## V2 roadmap
@@ -821,8 +834,8 @@ piece of that, and the rest is planned in this order:
   D1, the same stack `mcm-dashboard` is scaffolded on, that owns the Google
   sign-in and lets a panel claim an identity with a device code, and the
   panel on the web now signs in through it, with the allowlist as the
-  fallback for a Mac with no account. The next slices, each its own PR: the
-  class schedule syncs to the account; the Drive grant moves to the account,
+  fallback for a Mac with no account, and the class schedule syncs to it.
+  The next slices, each its own PR: the Drive grant moves to the account,
   which holds the **Web** OAuth client and hands the panel short-lived
   access tokens; then `PANEL_ALLOWED_EMAILS` and the panel's own Google
   client retire. That is also what would let Syllabus
