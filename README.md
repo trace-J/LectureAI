@@ -305,10 +305,13 @@ and only the last needs anything from you when setting up a new Mac.
    PANEL_PUBLIC_URL=https://syllabus.maincoursemedia.com
    ```
 
-   The client is a **Web application** OAuth client in the same Google
-   Cloud project as the bundled Desktop client `intake login` uses for
-   Drive (APIs & Services > Credentials > Create credentials > OAuth client
-   ID). Its authorized redirect URIs are
+   The client is a **Web application** OAuth client in the Google Cloud
+   project named **LectureAI** (APIs & Services > Credentials > Create
+   credentials > OAuth client ID). That is a different project from the one
+   holding the bundled Desktop client `intake login` uses for Drive
+   (friendly-bazaar-507320-b7); the two clients' ids start with their
+   projects' numbers, which is how to tell them apart in the console. Its
+   authorized redirect URIs are
    `https://syllabus.maincoursemedia.com/oauth2/callback` and, for the
    `panel-dev` preview, `http://127.0.0.1:5199/oauth2/callback`. The
    sign-in asks Google for nothing but the account's email; Drive access

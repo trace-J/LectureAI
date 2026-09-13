@@ -429,8 +429,9 @@ RECORD_DEVICE = _setting("RECORD_DEVICE")
 # The panel itself only ever listens on this Mac. To reach it from elsewhere
 # it is published through a Cloudflare Tunnel, and the panel's own Google
 # sign-in (signin.py) is the login in front of it. The client ID and secret
-# are a Web OAuth client in the same Cloud project as the bundled Desktop
-# client; the emails are who may enter, comma-separated. With all three set,
+# are a Web OAuth client in the Cloud project named LectureAI (not the one
+# the bundled Desktop client is in); the emails are who may enter,
+# comma-separated. With all three set,
 # any request that arrived through Cloudflare has to carry a session from
 # that sign-in or it is refused. With any of them unset, every request that
 # arrived through Cloudflare is refused, so a tunnel that is up before the
