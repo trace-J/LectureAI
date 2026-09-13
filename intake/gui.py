@@ -195,12 +195,19 @@ def _processing(watcher_pid: int | None) -> dict | None:
     }
 
 
+def _drive_via_account_cached() -> bool:
+    """Whether the account's Drive grant was connected the last time anyone
+    asked. File only: the status poll never talks to the service."""
+    return bool(account.enabled() and account.load() is not None
+                and account.drive_cached().get("connected"))
+
+
 def _integrations() -> dict:
     """Which pieces are configured. Presence only; no secrets leave here."""
     return {
         "openai": bool(config.OPENAI_API_KEY),
         "anthropic": bool(config.ANTHROPIC_API_KEY),
-        "drive": config.TOKEN_FILE.exists(),
+        "drive": config.TOKEN_FILE.exists() or _drive_via_account_cached(),
         "notion": notion_tasks.enabled(),
     }
 
@@ -396,9 +403,29 @@ def setup_state():
             "connected": config.TOKEN_FILE.exists(),
             "running": _drive_login["running"],
             "error": _drive_login["error"],
+            "account": _drive_account_state(),
         },
         "configured": _configured(),
     })
+
+
+def _drive_account_state() -> dict:
+    """The account's Drive grant, for the Setup page. Asks the service."""
+    if not (account.enabled() and account.load() is not None):
+        return {"available": False}
+    out = {"available": True, "connect_url": account.url() + "/drive/connect",
+           "connected": False, "google_email": "", "error": ""}
+    try:
+        status = account.drive_status()
+        out["connected"] = bool(status.get("connected"))
+        out["google_email"] = str(status.get("google_email") or "")
+        out["revoked_reason"] = str(status.get("revoked_reason") or "")
+    except Exception as exc:
+        cached = account.drive_cached()
+        out["connected"] = bool(cached.get("connected"))
+        out["google_email"] = str(cached.get("google_email") or "")
+        out["error"] = f"could not reach the account service: {exc}"
+    return out
 
 
 @app.post("/api/setup")
@@ -492,7 +519,14 @@ def _run_drive_login() -> None:
 
 @app.post("/api/drive/login")
 def drive_login():
-    """Start the Google OAuth flow. It opens the user's browser on its own."""
+    """Connect Drive: through the account when this Mac is signed in to one
+    (the page opens the account's connect page), else the Desktop OAuth flow
+    on this Mac, which opens the user's browser on its own. {"local": true}
+    asks for the latter regardless."""
+    payload = request.get_json(silent=True) or {}
+    if account.enabled() and account.load() is not None and not payload.get("local"):
+        account.forget_drive_token()
+        return jsonify({"ok": True, "open": account.url() + "/drive/connect"})
     if config.TOKEN_FILE.exists():
         return jsonify({"ok": False, "error": "Drive is already connected"}), 409
     if _drive_login["running"]:

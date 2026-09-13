@@ -100,8 +100,22 @@ def check_drive_client() -> Check:
 
 
 def check_drive_token(now: datetime | None = None) -> Check:
+    from intake import account
     token = config.TOKEN_FILE
+    via_account = account.enabled() and account.load() is not None
+    cached = account.drive_cached() if via_account else {}
+    if via_account and cached.get("connected"):
+        who = cached.get("google_email") or "the account's Google account"
+        extra = f"; this Mac also has its own {token.name}" if token.exists() else ""
+        return Check("Drive authorization", True,
+                     f"through the Syllabus account, as {who} (last confirmed "
+                     f"{cached.get('checked_at', 'unknown')}){extra}")
     if not token.exists():
+        if via_account:
+            return Check("Drive authorization", False,
+                         f"the account has no Drive connection and there is no "
+                         f"{token.name} on this Mac",
+                         "connect Google Drive from the Setup page, or intake login")
         return Check("Drive authorization", False, f"no {token.name} yet",
                      "intake login")
     try:

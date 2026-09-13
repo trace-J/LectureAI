@@ -9,6 +9,7 @@ project root:
 import json
 import os
 import stat
+import time
 import sys
 from pathlib import Path
 
@@ -290,6 +291,128 @@ def t10():
     except ConnectionError:
         pass
 results.append(run("the panel registers its address and redeems a sign-in code with its token", t10))
+
+
+def t11():
+    service = reset()
+    account.forget_drive_token()
+    account.save(account.Account("syd_abc", "a1", "me@example.com", "Me", "d1", "Mac",
+                                 "syllabus", SERVICE, "x"))
+    grant = {"state": "ok"}
+
+    def answers(method, url, headers, body, timeout):
+        service.calls.append((method, url, headers, body))
+        path = url[len(SERVICE):]
+        assert headers.get("Authorization") == "Bearer syd_abc", headers
+        if path == "/drive/token":
+            if grant["state"] == "ok":
+                return 200, {"access_token": "ya29.one", "expires_in": 3600, "google_email": "me@gmail.com"}
+            if grant["state"] == "none":
+                return 404, {"error": "no_grant"}
+            if grant["state"] == "revoked":
+                return 409, {"error": "grant_revoked", "reason": "Google no longer honors the grant"}
+            return 503, {"error": "backend"}
+        if path == "/drive/status":
+            return 200, {"connected": grant["state"] == "ok", "google_email": "me@gmail.com"}
+        raise AssertionError(path)
+    account.transport = answers
+
+    token, expires_at, email = account.drive_token()
+    assert token == "ya29.one" and email == "me@gmail.com" and expires_at > time.time() + 3000
+    assert account.drive_token()[0] == "ya29.one"
+    assert len([c for c in service.calls if c[1].endswith("/drive/token")]) == 1, "cached until near expiry"
+    assert account.drive_cached()["connected"] and account.drive_cached()["google_email"] == "me@gmail.com"
+
+    creds = account.AccountCredentials()
+    assert not creds.valid
+    creds.refresh(None)
+    assert creds.valid and creds.token == "ya29.one" and creds.expiry.tzinfo is None, creds.expiry
+    assert creds.google_email == "me@gmail.com"
+
+    account.forget_drive_token()
+    grant["state"] = "none"
+    try:
+        account.drive_token()
+        raise AssertionError("no grant must raise DriveGrantMissing")
+    except account.DriveGrantMissing:
+        pass
+    assert account.drive_cached()["connected"] is False
+    grant["state"] = "revoked"
+    try:
+        account.drive_token()
+        raise AssertionError("a revoked grant must raise DriveGrantMissing")
+    except account.DriveGrantMissing as exc:
+        assert "no longer honors" in str(exc), exc
+    grant["state"] = "down"
+    try:
+        account.drive_token()
+        raise AssertionError("a 5xx is not a missing grant")
+    except RuntimeError:
+        pass
+    assert account.drive_status() == {"connected": False, "google_email": "me@gmail.com"}
+results.append(run("Drive tokens come from the account, are cached, and a missing grant is its own error", t11))
+
+
+def t12():
+    from intake import upload
+    import json as _json
+    service = reset()
+    account.forget_drive_token()
+    upload._said_no_grant = False
+    grant = {"state": "ok", "down": False}
+
+    def answers(method, url, headers, body, timeout):
+        if grant["down"]:
+            raise ConnectionError("offline")
+        path = url[len(SERVICE):]
+        if path == "/drive/token":
+            if grant["state"] == "ok":
+                return 200, {"access_token": "ya29.acct", "expires_in": 3600, "google_email": "me@gmail.com"}
+            return 404, {"error": "no_grant"}
+        raise AssertionError(path)
+    account.transport = answers
+    config.TOKEN_FILE.unlink(missing_ok=True)
+
+    # Not signed in: the account is not consulted, and with no token.json and
+    # no browser allowed there is nothing to do but say so.
+    account.forget()
+    try:
+        upload.get_credentials(interactive=False)
+        raise AssertionError("no token and no browser must raise")
+    except RuntimeError as exc:
+        assert "intake login" in str(exc), exc
+
+    account.save(account.Account("syd_abc", "a1", "me@example.com", "Me", "d1", "Mac",
+                                 "syllabus", SERVICE, "x"))
+    creds = upload.get_credentials(interactive=False)
+    assert isinstance(creds, account.AccountCredentials) and creds.token == "ya29.acct"
+
+    # The account has no grant: this Mac's own token is used when it has one.
+    account.forget_drive_token()
+    grant["state"] = "none"
+    config.TOKEN_FILE.write_text(_json.dumps({
+        "token": "ya29.local", "refresh_token": "1//local", "client_id": "c", "client_secret": "s",
+        "token_uri": "https://oauth2.googleapis.com/token", "scopes": config.DRIVE_SCOPES,
+        "expiry": "2099-01-01T00:00:00Z",
+    }))
+    creds = upload.get_credentials(interactive=False)
+    assert not isinstance(creds, account.AccountCredentials) and creds.token == "ya29.local"
+
+    # The service is unreachable: the local token still works.
+    grant["state"] = "ok"
+    grant["down"] = True
+    creds = upload.get_credentials(interactive=False)
+    assert creds.token == "ya29.local", "offline falls back to this Mac's token"
+    # Unreachable and no local token: an error that says why.
+    config.TOKEN_FILE.unlink()
+    try:
+        upload.get_credentials(interactive=False)
+        raise AssertionError("offline with nothing to fall back to must raise")
+    except RuntimeError as exc:
+        assert "account service" in str(exc) and "token.json" in str(exc), exc
+    grant["down"] = False
+    account.forget_drive_token()
+results.append(run("the uploader prefers the account's grant and falls back to this Mac's token", t12))
 
 
 print()

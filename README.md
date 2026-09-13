@@ -285,6 +285,20 @@ before it replaces the file, so a broken schedule there cannot break this
 Mac. The Setup page's account step says what the last sync did and when;
 `.work/sync.json` remembers the version this Mac last agreed with.
 
+**Google Drive can belong to the account as well.** On the Setup page,
+with this Mac signed in, **Connect Google Drive through your account** opens
+the account page, where Google's consent runs once for the `drive.file`
+scope. The refresh token stays on the account service, encrypted; each Mac
+asks it for an hour-long access token when a lecture is ready to upload.
+Every Mac signed in to the account then files to the same Drive, and none of
+them needs `intake login`. The uploader prefers the account's grant whenever
+there is one and falls back to this Mac's own `token.json` otherwise, so a
+Mac that already had Drive connected keeps working the day it signs in. If
+the account service cannot be reached, the local token is used when there
+is one; without one the upload fails with a message saying so and the
+recording waits in the inbox for the retry. Disconnecting on the account
+page revokes the grant at Google for every Mac at once.
+
 Nothing requires an account. A panel with no `account.json` is exactly what
 it was, and `intake doctor` reports the account as an optional line. To hide
 the step altogether, put `ACCOUNTS_URL=off` in `.env`; to test against a
@@ -820,8 +834,9 @@ Syllabus is meant to become a real Mac app that other people can use, with an
 account behind it. The web page at maincoursemedia.com/syllabus is the first
 piece of that, and the rest is planned in this order:
 
-- **Publish the Google Cloud project** (below), so Drive sign-in works for
-  anyone and tokens stop expiring weekly. Everything else waits on this.
+- **Publish the Google Cloud project** (below). Done for the LectureAI
+  project the account service uses; the Desktop client's project is still
+  in Testing, which only matters for a Mac with no account.
 - **A Mac app bundle.** The panel already is the app; what is missing is the
   wrapper. Plan: a `pywebview` window around the same Flask panel, packaged
   with PyInstaller into `Syllabus.app`, signed and notarized, with ffmpeg
@@ -834,11 +849,10 @@ piece of that, and the rest is planned in this order:
   D1, the same stack `mcm-dashboard` is scaffolded on, that owns the Google
   sign-in and lets a panel claim an identity with a device code, and the
   panel on the web now signs in through it, with the allowlist as the
-  fallback for a Mac with no account, and the class schedule syncs to it.
-  The next slices, each its own PR: the Drive grant moves to the account,
-  which holds the **Web** OAuth client and hands the panel short-lived
-  access tokens; then `PANEL_ALLOWED_EMAILS` and the panel's own Google
-  client retire. That is also what would let Syllabus
+  fallback for a Mac with no account; the class schedule syncs to it; and
+  it can hold the Drive grant, handing each Mac short-lived access tokens.
+  What is left, its own PR: `PANEL_ALLOWED_EMAILS` and the panel's own
+  Google client retire once every published panel is on an account. That is also what would let Syllabus
   pay for transcription centrally instead of asking every student for two
   API keys.
 - **The panel on the web is this Mac's panel.** It records from this Mac's
@@ -848,9 +862,11 @@ piece of that, and the rest is planned in this order:
 
 ### Loose ends
 
-- **Publish the Google Cloud project.** The bundled OAuth client's project is
-  still in Testing, so `intake login` only works for accounts listed as
-  test users and their tokens expire weekly. Switching it to Production is
-  what makes the friend path above work for anyone.
+- **Publish the friendly-bazaar Cloud project.** The bundled Desktop
+  client's project is still in Testing, so `intake login`, the path a Mac
+  with no account takes, only works for accounts listed as test users and
+  their tokens expire weekly. The LectureAI project, which the account
+  service uses for sign-in and Drive, was published on 2026-09-13, so Drive
+  through the account has neither limit.
 - **Recover the September 3, 13:56 ACCT lecture.** Audio and transcript are
   gone, but the summary text survives in the raw JSON of the trashed Doc.
