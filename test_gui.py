@@ -1046,6 +1046,58 @@ def t36():
         signin.reset()
 results.append(run("with an account, the web sign-in goes through the service and the allowlist is the fallback", t36))
 
+
+def t37():
+    """The Setup page's Drive card and button, when this Mac is signed in to an account."""
+    from intake import account
+    grant = {"connected": False}
+
+    def service(method, url, headers, body, timeout):
+        path = url.split("accounts.test", 1)[1]
+        if path == "/me":
+            return 200, {"account": {"email": "me@example.com"}}
+        if path == "/drive/status":
+            return 200, {"connected": grant["connected"], "google_email": "me@gmail.com" if grant["connected"] else ""}
+        if path == "/settings/schedule":
+            return 404, {"error": "not_found"}
+        raise AssertionError(path)
+
+    account.transport = service
+    account.forget_drive_token()
+    config.ACCOUNTS_URL = "https://accounts.test"
+    config.TOKEN_FILE = tmp / "no-token.json"
+    try:
+        with gui.app.test_client() as client:
+            # Not signed in: the Drive card is as it always was.
+            account.forget()
+            d = client.get("/api/setup").get_json()["drive"]
+            assert d["account"] == {"available": False} and not d["connected"], d
+
+            account.save(account.Account("syd_t", "a1", "me@example.com", "Me", "d1", "Test Mac",
+                                         "syllabus", "https://accounts.test", "x"))
+            d = client.get("/api/setup").get_json()["drive"]
+            assert d["account"]["available"] and not d["account"]["connected"], d
+            assert d["account"]["connect_url"] == "https://accounts.test/drive/connect", d
+            assert client.get("/api/status").get_json()["integrations"]["drive"] is False
+
+            # The button sends the browser to the account page instead of running the local flow.
+            res = client.post("/api/drive/login", json={})
+            assert res.status_code == 200 and res.get_json()["open"] == "https://accounts.test/drive/connect", res.get_json()
+            assert not gui._drive_login["running"], "no local OAuth flow was started"
+
+            grant["connected"] = True
+            d = client.get("/api/setup").get_json()["drive"]
+            assert d["account"]["connected"] and d["account"]["google_email"] == "me@gmail.com", d
+            # The status poll reads the cached answer, never the network.
+            assert client.get("/api/status").get_json()["integrations"]["drive"] is True
+            check = doctor.check_drive_token()
+            assert check.ok and "through the Syllabus account" in check.detail and "me@gmail.com" in check.detail, check
+    finally:
+        account.forget()
+        account.forget_drive_token()
+        config.ACCOUNTS_URL = "off"
+results.append(run("with an account, the Drive card connects through the account page", t37))
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

@@ -27,8 +27,10 @@ import sys
 import threading
 import time
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 
 import requests
+from google.auth import credentials as google_credentials
 
 from intake import config
 
@@ -329,3 +331,119 @@ def run_claim(device_code: str, name: str, interval: int, expires_at: float,
 def cancel_claim() -> None:
     """Stop showing a code. The poll thread notices on its next pass."""
     _set_claim(running=False, expires_at=0.0, error="")
+
+
+# --- Google Drive through the account ------------------------------------------
+#
+# The account can hold the Drive grant, so every Mac signed in to it files to
+# the same Drive without each running `intake login`. The refresh token
+# stays on the service; this Mac asks for a one-hour access token when it
+# needs one and caches it until shortly before it expires. upload.py prefers
+# these credentials whenever the account has a grant, and falls back to this
+# Mac's own token.json otherwise.
+
+DRIVE_TOKEN_MARGIN = 120   # ask for a new token this many seconds early
+
+
+class DriveGrantMissing(Exception):
+    """The account has no Drive grant, or Google stopped honoring it."""
+
+
+_drive: dict = {"token": "", "expires_at": 0.0, "email": ""}
+_drive_lock = threading.Lock()
+
+
+def _drive_cache_file():
+    return config.WORK_DIR / "drive-grant.json"
+
+
+def _note_drive(connected: bool, email: str = "", detail: str = "") -> None:
+    """What the doctor reads: the last thing the service said about the grant."""
+    try:
+        path = _drive_cache_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "connected": connected, "google_email": email, "detail": detail,
+            "checked_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }, indent=2) + "\n")
+    except OSError:
+        pass
+
+
+def drive_cached() -> dict:
+    """The last known state of the account's Drive grant, without the network."""
+    try:
+        data = json.loads(_drive_cache_file().read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def drive_token() -> tuple[str, float, str]:
+    """An access token for Drive from the account: (token, expires_at, google email).
+
+    Raises DriveGrantMissing when the account has no usable grant, and
+    RuntimeError or a requests error when the service or Google cannot be
+    reached. Cached until DRIVE_TOKEN_MARGIN seconds before expiry.
+    """
+    acct = load()
+    if acct is None:
+        raise DriveGrantMissing("this Mac is not signed in to an account")
+    with _drive_lock:
+        if _drive["token"] and time.time() < _drive["expires_at"] - DRIVE_TOKEN_MARGIN:
+            return _drive["token"], _drive["expires_at"], _drive["email"]
+        status, data = call("POST", "/drive/token", {}, token=acct.token)
+        if status in (404, 409):
+            _drive.update(token="", expires_at=0.0)
+            _note_drive(False, detail=str(data.get("reason") or data.get("error") or ""))
+            raise DriveGrantMissing(
+                "the account has no Google Drive connection"
+                + (f" ({data['reason']})" if data.get("reason") else ""))
+        if status != 200 or not data.get("access_token"):
+            raise RuntimeError(f"the account service answered {status} for a Drive token")
+        expires_at = time.time() + float(data.get("expires_in") or 3600)
+        _drive.update(token=str(data["access_token"]), expires_at=expires_at,
+                      email=str(data.get("google_email") or ""))
+        _note_drive(True, _drive["email"])
+        return _drive["token"], expires_at, _drive["email"]
+
+
+def forget_drive_token() -> None:
+    with _drive_lock:
+        _drive.update(token="", expires_at=0.0, email="")
+
+
+def drive_status() -> dict:
+    """Whether the account has a Drive grant, from the service. Raises on trouble."""
+    acct = load()
+    if acct is None:
+        return {"connected": False}
+    status, data = call("GET", "/drive/status", token=acct.token)
+    if status != 200:
+        raise RuntimeError(f"the account service answered {status}")
+    _note_drive(bool(data.get("connected")), str(data.get("google_email") or ""),
+                str(data.get("revoked_reason") or ""))
+    return data
+
+
+class AccountCredentials(google_credentials.Credentials):
+    """Google credentials whose access token comes from the account service.
+
+    google-auth calls refresh() before a request whenever the token is
+    missing or about to expire, which is exactly when to ask the service
+    for a new one. There is no refresh token here to leak: the Mac only
+    ever holds the hour-long access token.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.token = None
+        self.expiry = None
+        self.google_email = ""
+
+    def refresh(self, request=None) -> None:
+        token, expires_at, email = drive_token()
+        self.token = token
+        # google-auth expects a naive UTC datetime here.
+        self.expiry = datetime.fromtimestamp(expires_at, timezone.utc).replace(tzinfo=None)
+        self.google_email = email

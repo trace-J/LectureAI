@@ -420,17 +420,36 @@ function render(s) {
   $("notionDb").value = s.notion.database || "";
 
   renderDrive(s.drive);
-  $("done").style.display = (s.configured && s.drive.connected) ? "block" : "none";
+  $("done").style.display = (s.configured && (s.drive.connected || (s.drive.account && s.drive.account.connected))) ? "block" : "none";
 }
 
 function renderDrive(d) {
-  $("driveDot").className = "dot " + (d.connected ? "on" : (d.error ? "bad" : "off"));
-  $("driveText").textContent = d.connected ? "Connected" : (d.running ? "Waiting for you to finish in the browser" : "Not connected");
-  $("driveBtn").hidden = d.connected;
+  const a = d.account || { available: false };
+  const viaAccount = a.available && a.connected;
+  $("driveDot").className = "dot " + ((d.connected || viaAccount) ? "on" : ((d.error || a.error) ? "bad" : "off"));
+  let text;
+  if (viaAccount) {
+    text = `Connected through your Syllabus account as ${a.google_email || "your Google account"}`
+         + (d.connected ? "; this Mac also has a token of its own" : "");
+  } else if (d.running) {
+    text = "Waiting for you to finish in the browser";
+  } else if (d.connected) {
+    text = a.available ? "Connected with a token on this Mac only" : "Connected";
+  } else {
+    text = "Not connected";
+  }
+  $("driveText").textContent = text;
+  $("driveBtn").hidden = viaAccount || (d.connected && !a.available);
   $("driveBtn").disabled = d.running;
-  $("driveBtn").textContent = d.running ? "Connecting..." : "Connect Google Drive";
+  $("driveBtn").textContent = d.running ? "Connecting..." : (a.available ? "Connect Google Drive through your account" : "Connect Google Drive");
   $("driveOff").hidden = !d.connected;
-  $("driveHint").textContent = d.error ? `Last attempt failed: ${d.error}` : "";
+  $("driveOff").textContent = a.available ? "Remove this Mac's own token" : "Disconnect";
+  let hint = "";
+  if (d.error) hint = `Last attempt failed: ${d.error}`;
+  else if (a.error) hint = a.error;
+  else if (a.available && a.revoked_reason && !a.connected) hint = `The account's Drive connection stopped working: ${a.revoked_reason}. Connect it again.`;
+  else if (a.available && !a.connected) hint = "Connecting through your account lets every Mac signed in to it file to the same Drive. Nothing else changes.";
+  $("driveHint").textContent = hint;
 }
 
 async function load() {
@@ -507,10 +526,28 @@ $("form").onsubmit = async (ev) => {
 
 let drivePoll = null;
 $("driveBtn").onclick = async () => {
+  $("driveBtn").disabled = true;
   try {
-    await api("/api/drive/login", {});
-    renderDrive({ connected: false, running: true, error: "" });
-    flash("A Google sign-in page should have opened. Finish there, then come back here.");
+    const out = await api("/api/drive/login", {});
+    if (out.open) {
+      // Through the account: Google's consent runs on the account page, and
+      // this page watches for the grant to appear.
+      window.open(out.open, "_blank", "noopener");
+      $("driveText").textContent = "Waiting for you to finish on the account page";
+      clearInterval(drivePoll);
+      let tries = 0;
+      drivePoll = setInterval(async () => {
+        try {
+          const s = await api("/api/setup");
+          if (s.drive.account && s.drive.account.connected) {
+            clearInterval(drivePoll); render(s); flash("Google Drive connected through your account."); checkup();
+          } else if (++tries > 100) {
+            clearInterval(drivePoll); render(s);
+          }
+        } catch (e) { clearInterval(drivePoll); flash(e.message, true); }
+      }, 3000);
+      return;
+    }
     clearInterval(drivePoll);
     drivePoll = setInterval(async () => {
       try {
@@ -521,10 +558,11 @@ $("driveBtn").onclick = async () => {
           if (s.drive.connected) { flash("Google Drive connected."); render(s); }
           checkup();
         }
-      } catch (e) { /* retry next tick */ }
+      } catch (e) { clearInterval(drivePoll); flash(e.message, true); }
     }, 1500);
   } catch (e) {
     flash(e.message, true);
+    $("driveBtn").disabled = false;
   }
 };
 

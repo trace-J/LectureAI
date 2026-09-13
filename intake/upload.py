@@ -19,7 +19,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
-from intake import config, google_client
+from intake import account, config, google_client
 
 FOLDER_MIME = "application/vnd.google-apps.folder"
 
@@ -56,12 +56,50 @@ def _escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
-def get_credentials(interactive: bool = True) -> Credentials:
-    """Load cached credentials, refreshing or running the OAuth flow as needed.
+_said_no_grant = False
 
-    With interactive=False, never opens a browser — a background watcher that
+
+def _account_credentials():
+    """Credentials from the Syllabus account's Drive grant, or None to use
+    this Mac's own token.
+
+    None when this Mac is not signed in, or the account has no grant yet.
+    When the service cannot be reached, the Mac's token.json is used if it
+    exists; without one there is nothing to fall back to, so that raises.
+    """
+    global _said_no_grant
+    if not (account.enabled() and account.load() is not None):
+        return None
+    creds = account.AccountCredentials()
+    try:
+        creds.refresh(Request())
+    except account.DriveGrantMissing as exc:
+        if not _said_no_grant:
+            log(f"  {exc}; using this Mac's own Drive token")
+            _said_no_grant = True
+        return None
+    except Exception as exc:
+        if config.TOKEN_FILE.exists():
+            log(f"  could not get a Drive token from the account ({exc}); "
+                f"using this Mac's own token")
+            return None
+        raise RuntimeError(
+            f"could not get a Drive token from the account service ({exc}), and "
+            f"this Mac has no token.json of its own to fall back to") from exc
+    _said_no_grant = False
+    return creds
+
+
+def get_credentials(interactive: bool = True):
+    """Credentials for Drive: the account's grant when there is one, else
+    this Mac's cached token, refreshing or running the OAuth flow as needed.
+
+    With interactive=False, never opens a browser: a background watcher that
     pops a consent window nobody sees just hangs. Raises instead.
     """
+    via_account = _account_credentials()
+    if via_account is not None:
+        return via_account
     creds = None
     if config.TOKEN_FILE.exists():
         creds = Credentials.from_authorized_user_file(
