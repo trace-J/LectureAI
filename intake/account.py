@@ -362,10 +362,24 @@ def _note_drive(connected: bool, email: str = "", detail: str = "") -> None:
     try:
         path = _drive_cache_file()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({
+        data = drive_cached()
+        data.update({
             "connected": connected, "google_email": email, "detail": detail,
             "checked_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        }, indent=2) + "\n")
+        })
+        path.write_text(json.dumps(data, indent=2) + "\n")
+    except OSError:
+        pass
+
+
+def note_drive_in_use(in_use: bool, detail: str = "") -> None:
+    """Record whether the uploader is actually using the account's grant."""
+    data = drive_cached()
+    if data.get("in_use") == in_use and data.get("in_use_detail", "") == detail:
+        return
+    data.update({"in_use": in_use, "in_use_detail": detail})
+    try:
+        _drive_cache_file().write_text(json.dumps(data, indent=2) + "\n")
     except OSError:
         pass
 

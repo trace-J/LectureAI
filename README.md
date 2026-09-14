@@ -293,7 +293,16 @@ asks it for an hour-long access token when a lecture is ready to upload.
 Every Mac signed in to the account then files to the same Drive, and none of
 them needs `intake login`. The uploader prefers the account's grant whenever
 there is one and falls back to this Mac's own `token.json` otherwise, so a
-Mac that already had Drive connected keeps working the day it signs in. If
+Mac that already had Drive connected keeps working the day it signs in.
+One catch for a Mac that already has lectures filed: `drive.file` only
+reaches files made by the same Google Cloud project, and the account's
+grant comes from a different project than the bundled Desktop client, so
+the grant cannot see a "Lecture Notes" folder that `intake login` created.
+Rather than start a second folder, the uploader keeps using this Mac's own
+token when the account's grant cannot see the existing folder, and
+`intake doctor` says so. `DRIVE_SOURCE=account` in `.env` files into a new
+folder under the account instead; `DRIVE_SOURCE=local` never uses the
+grant. If
 the account service cannot be reached, the local token is used when there
 is one; without one the upload fails with a message saying so and the
 recording waits in the inbox for the retry. Disconnecting on the account
