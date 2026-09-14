@@ -19,6 +19,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "requests>=2.31",
     "watchdog>=5.0",
+    "websocket-client>=1.8",
 ]
 
 [project.scripts]

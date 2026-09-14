@@ -34,7 +34,7 @@ from pathlib import Path
 
 from flask import Flask, g, jsonify, render_template, request
 
-from intake import account, config, doctor, insights, setup_wizard, signin, sync
+from intake import account, config, doctor, insights, relay, setup_wizard, signin, sync
 from intake import notion_tasks
 from intake import record as recording
 from intake import transcribe
@@ -212,25 +212,32 @@ def _integrations() -> dict:
     }
 
 
-# --- The login, when the panel is reached through Cloudflare -----------------
+# --- The gate, when the panel is reached from elsewhere ------------------------
 #
-# The panel has no accounts of its own. When it is published through a
-# Cloudflare Tunnel, signin.py is the login page: Google's sign-in, with an
-# allowlist of emails in .env. Its gate runs before every request and sets
-# g.viewer to who is signed in. Requests straight from this Mac carry no
-# Cloudflare headers and are not gated, so the panel keeps working locally
-# regardless.
+# The panel has no accounts of its own. Through the account service's relay
+# (relay.py) the service is the sign-in and names the viewer; through a
+# Cloudflare Tunnel, signin.py sends the browser to the service to sign in.
+# Its gate runs before every request and sets g.viewer to who is looking.
+# Requests straight from this Mac carry neither mark and are not gated, so
+# the panel keeps working locally regardless.
 signin.install(app)
+
+
+def _base() -> str:
+    """The path this panel is published under: "" here, "/p/<device>" through
+    the relay, where the pages write every link and request. request.script_root
+    is the WSGI name for it, set by relay.serve."""
+    return request.script_root or ""
 
 
 @app.get("/")
 def index():
-    return render_template("index.html", profile=config.PROFILE)
+    return render_template("index.html", profile=config.PROFILE, base=_base())
 
 
 @app.get("/setup")
 def setup_page():
-    return render_template("setup.html", profile=config.PROFILE)
+    return render_template("setup.html", profile=config.PROFILE, base=_base())
 
 
 @app.get("/api/status")
@@ -263,8 +270,13 @@ def status():
         "courses": _courses(),
         "now_class": _current_class(),
         "configured": _configured(),
-        # Who the Google sign-in let in, when the request came through the tunnel.
+        # Who is looking, when the request came through the relay or the tunnel.
         "signed_in_as": g.get("viewer", ""),
+        # Through the relay the sign-in is the account service's, so its
+        # sign-out is there; through the tunnel it is this panel's own.
+        "signout_url": (account.url() + "/logout") if g.get("relayed") else "/logout",
+        # The panel's place on the web, and whether the socket to it is up.
+        "relay": relay.status(),
         # The Syllabus account this Mac is claimed into, if any. File only;
         # the status poll never talks to the account service.
         "account": account.summary(),
@@ -626,6 +638,8 @@ def account_cancel():
 @app.post("/api/account/signout")
 def account_signout():
     account.sign_out()
+    # The socket belonged to the device that just signed out.
+    relay.reconnect()
     return jsonify({"ok": True})
 
 
@@ -685,6 +699,10 @@ def main(argv: list[str] | None = None) -> int:
     # A schedule saved on another Mac arrives now; the network never holds
     # the panel up, and a Mac with no account does nothing here.
     sync.sync_later("start")
+    # The panel's place on the web: a socket to the account service, held
+    # open from a thread, over which browsers at this Mac's address reach
+    # it. Nothing without an account; it waits for one.
+    relay.start(app)
     if not args.no_browser:
         _open_browser_later(url)
     # load_dotenv=False: Flask would otherwise read a .env from the current

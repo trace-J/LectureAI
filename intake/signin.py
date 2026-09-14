@@ -1,8 +1,10 @@
 """The panel's sign-in, when it is reached over the web.
 
-The panel listens on this Mac only, and a Cloudflare Tunnel carries
-`syllabus.maincoursemedia.com` to it. Anyone who arrives that way has to
-sign in first. Requests from this Mac carry no Cloudflare headers and are
+The panel listens on this Mac only. Two roads lead to it from elsewhere:
+the account service's relay (relay.py), where the service itself is the
+sign-in and names the viewer in every request, and a Cloudflare Tunnel,
+where anyone who arrives has to sign in here first. This module is the
+gate for both and the sign-in for the second. Requests from this Mac carry no Cloudflare headers and are
 never gated, so http://127.0.0.1:5173 keeps working whatever the tunnel is
 doing.
 
@@ -41,7 +43,7 @@ from urllib.parse import urlencode
 from flask import Blueprint, Flask, g, jsonify, make_response, redirect, request
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
-from intake import account, config
+from intake import account, config, relay
 
 bp = Blueprint("signin", __name__)
 
@@ -113,6 +115,16 @@ def mode() -> str:
 
 # --- The request at hand -----------------------------------------------------
 
+def via_relay() -> bool:
+    """Whether this request arrived over the account service's relay.
+
+    relay.py runs a relayed request against the app in process and marks
+    the WSGI environ. A request from the network can set HTTP_* keys and
+    nothing else, so the mark cannot be forged from outside.
+    """
+    return bool(request.environ.get(relay.RELAY_KEY))
+
+
 def via_cloudflare() -> bool:
     """Whether this request came in through Cloudflare's edge.
 
@@ -124,8 +136,8 @@ def via_cloudflare() -> bool:
 
 def _external() -> bool:
     """Whether the browser is talking to us over https (through the tunnel)."""
-    return via_cloudflare() or request.headers.get("X-Forwarded-Proto") == "https" \
-        or request.is_secure
+    return via_cloudflare() or via_relay() \
+        or request.headers.get("X-Forwarded-Proto") == "https" or request.is_secure
 
 
 def _public_base() -> str:
@@ -212,9 +224,33 @@ NOT_SET_UP = ("This panel is reachable through Cloudflare, but the Mac that runs
 
 # --- The gate ----------------------------------------------------------------
 
+def relay_viewer() -> str:
+    """Who the relay says is looking, if that is this Mac's account's owner.
+
+    The service only relays the owner, so a mismatch means account.json
+    changed under a socket that belonged to the previous account. Nobody
+    then.
+    """
+    acct = account.load() if account.enabled() else None
+    email = str(request.environ.get(relay.VIEWER_KEY, "")).lower()
+    if acct is None or not email:
+        return ""
+    return email if request.environ.get(relay.VIEWER_ACCOUNT_KEY) == acct.account_id else ""
+
+
 def gate():
     """Run before every request. None lets it through."""
     g.viewer = ""
+    g.relayed = False
+    if via_relay():
+        # The account service already decided who may reach this panel's
+        # address and named them in the frame; that is the sign-in.
+        who = relay_viewer()
+        if not who:
+            return refuse(403, "That account does not own this Syllabus.")
+        g.viewer = who
+        g.relayed = True
+        return None
     if not via_cloudflare():
         return None
     if not configured():
