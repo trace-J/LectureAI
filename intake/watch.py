@@ -39,7 +39,13 @@ def acquire_single_instance_lock():
     other's files mid-upload. The flock is released automatically when the
     process exits, including on a crash or SIGKILL.
     """
-    handle = config.LOCK_FILE.open("w")
+    # Open without truncating. Mode "w" empties the file before the flock is
+    # even attempted, so a watcher that then lost the race had already wiped
+    # the winner's pid: the panel read a held lock with no pid, reported the
+    # watcher stopped, and every press of its button started another loser
+    # that wiped it again. Only the holder may write here.
+    fd = os.open(config.LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o644)
+    handle = os.fdopen(fd, "r+")
     try:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -48,6 +54,8 @@ def acquire_single_instance_lock():
             f"another watcher already holds {config.LOCK_FILE.name}. "
             f"Stop it first:  pkill -f 'intake.*watch'"
         )
+    handle.seek(0)
+    handle.truncate()
     handle.write(str(os.getpid()))
     handle.flush()
     return handle  # keep a reference alive; closing it drops the lock

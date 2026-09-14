@@ -18,6 +18,7 @@ from __future__ import annotations
 import fcntl
 import os
 import re
+import subprocess
 import time
 import tomllib
 from dataclasses import dataclass
@@ -981,7 +982,25 @@ def watcher_pid() -> int | None:
             if text.isdigit():
                 return int(text)
             time.sleep(0.05)
-    return None
+    # Held, but nobody's pid is in it (a watcher from before the lock file
+    # stopped being truncated by losers, or a write that never landed). The
+    # lock is the truth: a held lock is a running watcher, and saying
+    # "stopped" here is what made the panel start a second one. Ask the
+    # kernel who has the file open instead.
+    return _lock_holder_pid()
+
+
+def _lock_holder_pid() -> int | None:
+    """PID of a process holding LOCK_FILE open, via lsof, or None."""
+    try:
+        out = subprocess.run(
+            ["lsof", "-t", str(LOCK_FILE)], capture_output=True, text=True,
+            timeout=5, check=False,
+        ).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    pids = [int(line) for line in out.split() if line.isdigit()]
+    return pids[0] if pids else None
 
 
 def require(name: str) -> str:
