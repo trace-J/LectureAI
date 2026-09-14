@@ -798,12 +798,30 @@ in rough order of how soon each one bites.
 
 - **Speaker diarization.** Separate the instructor from student questions.
 - **Cross-lecture study guides.** Synthesize a whole unit rather than one
-  lecture. The highest-value item for actually studying, and the one that most
-  wants a database underneath it. The panel already holds the space for it:
-  the "Study assistant" card at the bottom (v3) is where a chat over every
-  transcript and summary will go, with study guides and quizzes as its
-  starter prompts.
+  lecture. The highest-value item for actually studying. The panel already
+  holds the space for it: the "Study assistant" card at the bottom (v3) is
+  where a chat over every transcript and summary will go, with study guides
+  and quizzes as its starter prompts.
+
+  Decided 2026-09-14: the assistant runs on **Claude Opus 5** (`claude-opus-5`)
+  through the same `anthropic` SDK and `ANTHROPIC_API_KEY` the summarizer
+  uses. No new provider, and no vector database. A 52-minute lecture is about
+  8k tokens of transcript, so a semester of one course (roughly 30 lectures,
+  about 240k tokens) fits in the 1M context window whole. The course's
+  transcripts and summaries go into the system prompt as `document` blocks
+  with citations enabled, cached with a one-hour TTL, so every answer quotes
+  the lecture and date it came from rather than a retrieval guess. Whole
+  semester questions start from the summaries and pull full transcripts only
+  for the courses the question names. Opus rather than Sonnet because the job
+  is synthesis across lectures and quiz writing, where the quality gap shows;
+  run at low or medium effort for ordinary chat and raise it for study guides.
+  Stream responses, since study guides run long. Rough cost with caching: the
+  cache write is about $1.50 per study session for a full course, and each
+  follow-up question about $0.15 to $0.20. The OpenAI key stays where it is,
+  for transcription only.
 - **A database.** State currently lives in `pipeline.log` and the filesystem.
+  Not needed for the study assistant's retrieval (see above); it earns its
+  place later for quiz history and progress.
 
 Dropped: **slide OCR**, decided against on 2026-09-08 as not worth the
 complexity.
