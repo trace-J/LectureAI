@@ -173,20 +173,21 @@ the log disappears from it on the next poll:
   filed name (`ACCT-4321_2026-09-10_...`), not from when it was processed,
   so a recording synced from a phone days later still lands on the right
   day.
-- **Four tiles**: recorded this week against the classes that have met so
-  far, lectures filed in all, the streak of consecutive classes recorded,
-  and hours of audio filed. That last one is counted from a seventh field
-  the watcher now writes to `pipeline.log` (seconds of audio, transcript
-  words, to-dos and key terms, as JSON), so it reads as a dash until the
-  next lecture is processed; the older lines have nothing to measure.
+- **Pipeline**, right under the record button so it is never below the
+  fold: the watcher as a switch, the five stages as a stepper that lights
+  up while a lecture is being processed, and what is waiting in the inbox.
+- **Four tiles** beside it, two by two: recorded this week against the
+  classes that have met so far, lectures filed in all, the streak of
+  consecutive classes recorded, and hours of audio filed. That last one is
+  counted from a seventh field the watcher now writes to `pipeline.log`
+  (seconds of audio, transcript words, to-dos and key terms, as JSON), so
+  it reads as a dash until the next lecture is processed; the older lines
+  have nothing to measure.
 - **Lectures per week**, stacked by course for the last eight weeks, with a
   hairline per week at what the schedule expected; hover a week for the
-  breakdown. **By course** beside it: how many lectures each course has and
-  when its last one was. Clicking a course in either chart, or in the chips
-  over the recent list, filters the recent list to that course.
-- **Pipeline**: the watcher as a switch, the five stages as a stepper that
-  lights up while a lecture is being processed, and what is waiting in the
-  inbox.
+  breakdown. **Recent lectures** beside it, matched to the chart's height
+  and scrolling inside the card. Clicking a course in the chart's legend,
+  or in the chips over the recent list, filters the list to that course.
 - **Study assistant** at the bottom is reserved space for v3: a chat that
   answers questions and builds study guides from every transcript and
   summary in Drive. Nothing in it is wired up yet, and it says so.
