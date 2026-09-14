@@ -229,7 +229,7 @@ def t11():
     assert body["recent"][0]["name"].endswith("Untitled"), body["recent"][0]
     assert body["recent"][1]["seconds"] == 4200, "recent rows must carry the measurements"
     html = client.get("/").get_data(as_text=True)
-    for piece in ("Lectures per week", "By course", "This week", "Study assistant",
+    for piece in ("Lectures per week", "Recent lectures", "This week", "Study assistant", "Pipeline",
                   "Coming in v3", 'id="tiles"', 'id="weeksChart"'):
         assert piece in html, f"the page is missing {piece!r}"
     assert 'disabled aria-label="Ask the study assistant' in html, "the assistant box must be inert"

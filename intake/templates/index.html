@@ -70,10 +70,14 @@
     -webkit-font-smoothing: antialiased;
   }
   .wrap { max-width: 1120px; margin: 0 auto; padding: 28px 24px 64px; }
+  /* Phones rarely have a hover, and a long email in the header used to be
+     the one thing that could push the page wider than the screen. */
+  .viewer, .row-sub, .rec-meta { overflow-wrap: anywhere; }
   a { color: var(--brand); }
 
   /* Header ------------------------------------------------------------- */
   header { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
+  header > div:first-of-type { flex: 1 1 auto; min-width: 0; }
   header img { width: 44px; height: 44px; border-radius: 11px; display: block; }
   .brandname { font-size: 25px; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; }
   .brandname .ai { color: var(--brand); }
@@ -106,19 +110,17 @@
   .gear svg { width: 16px; height: 16px; display: block; }
 
   /* Layout ------------------------------------------------------------- */
+  /* Three rows of two cards. The pipeline sits in the second row, right
+     under the record button, with the four tiles two-by-two beside it, so
+     the watcher is never below the fold. */
   .grid { display: grid; gap: 18px; margin-bottom: 18px; }
-  .grid.top    { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
-  .grid.charts { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
-  .grid.lower  { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); align-items: start; }
-  .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; margin-bottom: 18px; }
+  .grid.top     { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
+  .grid.status  { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
+  .grid.charts  { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
+  .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; min-width: 0; }
   @media (max-width: 900px) {
-    .grid.top, .grid.charts, .grid.lower { grid-template-columns: 1fr; }
-    .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.top, .grid.status, .grid.charts { grid-template-columns: 1fr; }
     .today { display: none; }
-  }
-  @media (max-width: 520px) {
-    .wrap { padding: 20px 14px 48px; }
-    .tiles { grid-template-columns: 1fr; }
   }
 
   /* Cards -------------------------------------------------------------- */
@@ -127,7 +129,7 @@
     border-radius: 18px; box-shadow: var(--shadow); padding: 22px;
     min-width: 0;
   }
-  .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+  .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
   .card-head h2 { margin: 0; }
   h2 {
     font-size: 12px; font-weight: 600; letter-spacing: .09em;
@@ -299,19 +301,6 @@
   .legend .sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
   .legend .tg { width: 12px; height: 0; border-top: 2px solid var(--faint); display: inline-block; }
 
-  .bars { display: grid; gap: 12px; }
-  .barrow { display: grid; grid-template-columns: 96px 1fr; gap: 12px; align-items: center; }
-  .barrow .who { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; min-width: 0; }
-  .barrow .who .sw { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 auto; }
-  .barrow .who span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  /* The bar scales inside its own cell, so the value and date beside it
-     always have room and the longest bar never pushes them off the card. */
-  .barrow .track { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; min-width: 0; }
-  .barrow .bar { height: 12px; border-radius: 0 4px 4px 0; transition: width .5s ease; }
-  .barrow .val { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .barrow .last { font-size: 11px; color: var(--muted); font-weight: 300; white-space: nowrap; margin-left: 6px; }
-  .barrow.dim { opacity: .35; }
-
   .empty { font-size: 13px; color: var(--muted); font-weight: 300; padding: 4px 0; }
   .empty-chart {
     display: grid; place-items: center; min-height: 160px; text-align: center;
@@ -331,7 +320,7 @@
     overflow: hidden; text-overflow: ellipsis;
   }
   .row-sub { font-size: 12px; color: var(--muted); font-weight: 300; margin-top: 2px; }
-  a.row-title { color: var(--ink); text-decoration: none; }
+  a.row-title { display: block; color: var(--ink); text-decoration: none; }
   a.row-title:hover { color: var(--brand); }
   .row-warn { font-size: 12px; color: var(--warn); font-weight: 400; margin-top: 4px; line-height: 1.4; }
 
@@ -415,7 +404,17 @@
   .chip:hover { color: var(--ink); }
   .chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
   .chip .sw { width: 7px; height: 7px; border-radius: 50%; }
-  .recent-list { max-height: 420px; overflow-y: auto; margin-right: -8px; padding-right: 8px; }
+  /* The recent card takes its height from the chart beside it: the list
+     is absolutely positioned inside a flexible box that contributes no
+     height of its own, so a long list scrolls instead of stretching the
+     row. In one column there is nothing beside it, so it flows normally. */
+  .recent-card { display: flex; flex-direction: column; }
+  .recent-fill { flex: 1; min-height: 200px; position: relative; }
+  .recent-list { position: absolute; inset: 0; overflow-y: auto; margin-right: -8px; padding-right: 8px; }
+  @media (max-width: 900px) {
+    .recent-fill { min-height: 0; }
+    .recent-list { position: static; max-height: 420px; }
+  }
   .row .sw-l { width: 4px; align-self: stretch; border-radius: 2px; flex: 0 0 auto; background: var(--course, var(--line)); }
   .row .measures { font-size: 11px; color: var(--muted); font-weight: 300; margin-top: 2px; }
 
@@ -465,6 +464,33 @@
   }
   .flash.err { background: rgba(194,47,61,.1); color: var(--err); }
   .flash a { color: inherit; font-weight: 500; }
+
+  /* Phones. Last on purpose: these override the rules above. ------------- */
+  @media (max-width: 560px) {
+    .wrap { padding: 18px 16px 40px; }
+    .grid, .tiles { gap: 12px; }
+    .grid { margin-bottom: 12px; }
+    header { gap: 10px; margin-bottom: 16px; }
+    header img { width: 38px; height: 38px; border-radius: 10px; }
+    .brandname { font-size: 21px; }
+    .gear { width: 32px; height: 32px; }
+    .theme button { width: 26px; height: 26px; }
+    .card { padding: 16px; border-radius: 14px; }
+    .card-head { flex-wrap: wrap; row-gap: 4px; }
+    .tile { padding: 14px 16px 12px; }
+    .tile-value { font-size: 28px; }
+    .tile-sub { min-height: 0; }
+    .record { gap: 14px; }
+    .rec-btn, .rec-btn.is-recording::after { width: 72px; height: 72px; }
+    .rec-btn .glyph { width: 22px; height: 22px; }
+    .timer { font-size: 30px; }
+    .step-label { font-size: 7.5px; letter-spacing: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* SVG text scales with the viewBox; at phone width 11 units is
+       unreadable, so the labels grow to stay about 9px on screen. */
+    .chart text { font-size: 15px; }
+    .bubble { max-width: 92%; }
+    .recent-list { max-height: 360px; }
+  }
 </style>
 </head>
 <body>
@@ -548,30 +574,8 @@
     </div>
   </section>
 
-  <!-- Tiles -->
-  <section class="tiles" id="tiles"></section>
-
-  <!-- Charts -->
-  <section class="grid charts">
-    <div class="card">
-      <div class="card-head">
-        <h2>Lectures per week</h2>
-        <span class="card-sub">Last 8 weeks, against what the schedule expects</span>
-      </div>
-      <div class="chart" id="weeksChart"></div>
-      <div class="legend" id="weeksLegend"></div>
-    </div>
-    <div class="card">
-      <div class="card-head">
-        <h2>By course</h2>
-        <span class="card-sub" id="coursesSub"></span>
-      </div>
-      <div class="bars" id="courseBars"></div>
-    </div>
-  </section>
-
-  <!-- Pipeline + recent -->
-  <section class="grid lower">
+  <!-- Pipeline + tiles -->
+  <section class="grid status">
     <div class="card">
       <h2>Pipeline</h2>
       <div class="row">
@@ -595,12 +599,27 @@
       </div>
     </div>
 
+    <div class="tiles" id="tiles"></div>
+  </section>
+
+  <!-- Chart + recent -->
+  <section class="grid charts">
     <div class="card">
+      <div class="card-head">
+        <h2>Lectures per week</h2>
+        <span class="card-sub">Last 8 weeks, against what the schedule expects</span>
+      </div>
+      <div class="chart" id="weeksChart"></div>
+      <div class="legend" id="weeksLegend"></div>
+    </div>
+    <div class="card recent-card">
       <div class="card-head">
         <h2>Recent lectures</h2>
         <div class="chips" id="chips"></div>
       </div>
-      <div class="recent-list" id="recent"><div class="empty">Nothing processed yet.</div></div>
+      <div class="recent-fill">
+        <div class="recent-list" id="recent"><div class="empty">Nothing processed yet.</div></div>
+      </div>
     </div>
   </section>
 
@@ -651,8 +670,8 @@ let busy = false;
 // Flashed once per recording when no audio is arriving; the red line under
 // the timer stays for as long as it is true.
 let warnedStalled = false;
-// A course code, or "" for all. Set from the legend, the course bars, or
-// the chips over the recent list; all three show the same choice.
+// A course code, or "" for all. Set from the chart legend or the chips
+// over the recent list; both show the same choice.
 let courseFilter = "";
 // The dashboard redraws only when its data changes, so a tooltip is not
 // torn down by the one-second poll while someone is reading it.
@@ -1007,36 +1026,6 @@ function renderWeeksChart(ins) {
   }
 }
 
-// By course -------------------------------------------------------------------
-function renderCourseBars(ins) {
-  const box = $("courseBars");
-  const courses = ins.courses.filter(c => c.count || c.meetings);
-  if (!courses.length) {
-    box.innerHTML = '<div class="empty-chart">Each course gets a bar here once a lecture is filed under it.</div>';
-    $("coursesSub").textContent = "";
-    return;
-  }
-  const max = Math.max(1, ...courses.map(c => c.count));
-  $("coursesSub").textContent = `${plural(ins.totals.lectures, "lecture")} in all`;
-  box.innerHTML = courses.map(c => {
-    const pct = Math.max(c.count ? 3 : 0, Math.round(100 * c.count / max));
-    const last = c.last ? `last ${shortDate(c.last)}` : "nothing yet";
-    const per = c.meetings ? ` · ${c.meetings}/wk` : "";
-    const dim = courseFilter && courseFilter !== c.code ? " dim" : "";
-    return `<div class="barrow${dim}" data-course="${escapeHtml(c.code)}" role="button" tabindex="0" title="Show only ${escapeHtml(c.code)}">
-      <div class="who"><span class="sw" style="background:${courseColor(c.code)}"></span><span>${escapeHtml(c.code)}</span></div>
-      <div class="track">
-        <div><div class="bar" style="width:${pct}%;background:${courseColor(c.code)}"></div></div>
-        <div><span class="val">${c.count}</span><span class="last">${last}${per}</span></div>
-      </div>
-    </div>`;
-  }).join("");
-  for (const row of box.querySelectorAll(".barrow")) {
-    row.onclick = () => setFilter(row.dataset.course);
-    row.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setFilter(row.dataset.course); } };
-  }
-}
-
 function setFilter(code) {
   courseFilter = courseFilter === code ? "" : code;
   lastInsights = "";
@@ -1184,7 +1173,6 @@ function render(s) {
     renderWeek(s.insights);
     renderTiles(s.insights);
     renderWeeksChart(s.insights);
-    renderCourseBars(s.insights);
   }
   const recentKey = JSON.stringify(s.recent) + courseFilter;
   if (recentKey !== lastRecent) {
