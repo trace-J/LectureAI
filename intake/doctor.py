@@ -211,39 +211,44 @@ def check_microphone() -> Check:
                      "intake setup and pick a microphone that is attached")
 
 
-def check_web_signin() -> Check | None:
-    """Only reported once any of the web sign-in's settings is filled in.
+RETIRED_SIGNIN_KEYS = ("PANEL_GOOGLE_CLIENT_ID", "PANEL_GOOGLE_CLIENT_SECRET",
+                       "PANEL_ALLOWED_EMAILS")
 
-    A panel that is never published needs none of them, so an empty set is
-    not a finding. A partial set is: the tunnel would refuse everyone.
+
+def _retired_signin_keys() -> list[str]:
+    """Settings from the panel's old Google sign-in still sitting in .env."""
+    from intake import setup_wizard
+    values = setup_wizard.read_env(config.ENV_FILE)
+    return [k for k in RETIRED_SIGNIN_KEYS if values.get(k)]
+
+
+def check_web_signin() -> Check | None:
+    """How the panel on the web lets people in. Nothing when it is not published.
+
+    Reported once PANEL_PUBLIC_URL is set or the Mac is signed in to an
+    account, since either says the panel is meant to be reached over the
+    web. A panel that is neither needs no web sign-in, so that is not a
+    finding.
     """
     from intake import account, signin
-    names = ("PANEL_GOOGLE_CLIENT_ID", "PANEL_GOOGLE_CLIENT_SECRET",
-             "PANEL_ALLOWED_EMAILS")
+    leftover = _retired_signin_keys()
+    note = ("; " + ", ".join(leftover) + " in .env belong to the panel's old sign-in, "
+            "which is gone, and can be deleted" if leftover else "")
     if signin.mode() == "account":
         acct = account.load()
         back = (f"the service returns to {config.PANEL_PUBLIC_URL.rstrip('/')}"
                 f"{signin.ACCOUNT_CALLBACK_PATH}" if config.PANEL_PUBLIC_URL else
                 "PANEL_PUBLIC_URL unset, so the return address follows the "
                 "request's Host header; set it if the tunnel rewrites that")
-        extra = ("; PANEL_ALLOWED_EMAILS is not consulted while this Mac is signed in"
-                 if config.PANEL_ALLOWED_EMAILS else "")
         return Check("web sign-in", True,
-                     f"through the Syllabus account of {acct.email}; {back}{extra}")
-    if not any(getattr(config, n, "") for n in names):
+                     f"through the Syllabus account of {acct.email}; {back}{note}")
+    if not config.PANEL_PUBLIC_URL and not leftover:
         return None
-    if signin.google_configured():
-        who = sorted(signin.allowed_emails())
-        back = (f"Google returns to {config.PANEL_PUBLIC_URL.rstrip('/')}/oauth2/callback"
-                if config.PANEL_PUBLIC_URL else
-                "PANEL_PUBLIC_URL unset, so the redirect URI follows the request's "
-                "Host header; set it if the tunnel rewrites that")
-        return Check("web sign-in", True,
-                     f"Google sign-in for {len(who)} address(es): {', '.join(who)}; {back}")
     return Check("web sign-in", False,
-                 f"{', '.join(signin.missing())} not set in {config.ENV_FILE}; "
-                 f"every request through the tunnel is refused until they are",
-                 "fill them in and run `intake service restart`")
+                 f"this Mac is not signed in to a Syllabus account, so every request "
+                 f"through the tunnel is refused{note}",
+                 "open the Setup page and choose Sign in to a Syllabus account",
+                 required=False)
 
 
 def check_account() -> Check | None:

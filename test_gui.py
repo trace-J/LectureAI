@@ -685,135 +685,6 @@ def t32():
         gui.app.run, gui._open_browser_later = real_run, real_open
 results.append(run("a non-localhost --host is refused unless --expose says so", t32))
 
-def t33():
-    # The panel behind a Cloudflare Tunnel. A request that came through
-    # Cloudflare carries Cf-Ray; it must also carry a session from the
-    # panel's own Google sign-in, or it gets nothing. Requests from this Mac
-    # are never gated. Google is stubbed: no network.
-    from urllib.parse import parse_qs, urlparse
-    from intake import signin
-    via = {"Cf-Ray": "8a1b2c3d4e5f-DFW"}
-    real_exchange, real_verify = signin.exchange_code, signin.verify_id_token
-    google = {}  # what the stubbed Google will say about the next sign-in
-
-    def fake_exchange(code, redirect_uri):
-        google["redirect_uri"] = redirect_uri
-        assert code == "code-1", code
-        return "idtoken"
-
-    def fake_verify(token):
-        assert token == "idtoken"
-        return dict(google["claims"])
-
-    signin.exchange_code, signin.verify_id_token = fake_exchange, fake_verify
-    config.WORK_DIR.mkdir(parents=True, exist_ok=True)
-    keys = ("PANEL_GOOGLE_CLIENT_ID", "PANEL_GOOGLE_CLIENT_SECRET", "PANEL_ALLOWED_EMAILS",
-            "PANEL_PUBLIC_URL")
-
-    def unset():
-        for k in keys:
-            setattr(config, k, "")
-
-    def start_flow(next_path="/"):
-        res = client.get("/login", query_string={"next": next_path}, headers=via)
-        assert res.status_code == 302, res.status_code
-        q = parse_qs(urlparse(res.headers["Location"]).query)
-        return q
-
-    def finish(state, nonce, email="me@example.com", verified=True):
-        google["claims"] = {"email": email, "email_verified": verified, "nonce": nonce}
-        return client.get("/oauth2/callback", headers=via,
-                          query_string={"code": "code-1", "state": state})
-
-    try:
-        unset()
-        assert client.get("/api/status").status_code == 200, "local requests must never be gated"
-        res = client.get("/api/status", headers=via)
-        assert res.status_code == 503, "a tunnel with no sign-in configured must expose nothing"
-        assert "PANEL_ALLOWED_EMAILS" in res.get_json()["error"]
-        assert client.get("/", headers=via).status_code == 503
-        assert client.get("/login", headers=via).status_code == 503
-
-        config.PANEL_GOOGLE_CLIENT_ID = "client-1"
-        config.PANEL_GOOGLE_CLIENT_SECRET = "secret-1"
-        config.PANEL_ALLOWED_EMAILS = "Me@example.com, other@example.com"
-        assert client.get("/api/status", headers=via).status_code == 401, "no session must be refused"
-        res = client.get("/setup?x=1", headers=via)
-        assert res.status_code == 302 and res.headers["Location"] == "/login?next=%2Fsetup%3Fx%3D1", \
-            (res.status_code, res.headers.get("Location"))
-
-        # With no public URL, the redirect URI follows the request's host.
-        q = start_flow("/setup")
-        assert q["client_id"] == ["client-1"] and q["scope"] == ["openid email"], q
-        assert q["redirect_uri"] == ["https://localhost/oauth2/callback"], q
-        assert q["response_type"] == ["code"] and q["state"] and q["nonce"]
-        # This tunnel rewrites Host to the origin, so the published address
-        # has to come from .env; a trailing slash is tolerated. Locally (no
-        # Cf-Ray) the dev preview keeps its own address regardless.
-        config.PANEL_PUBLIC_URL = "https://panel.example.com/"
-        res = client.get("/login")
-        local = parse_qs(urlparse(res.headers["Location"]).query)
-        assert local["redirect_uri"] == ["http://localhost/oauth2/callback"], local
-        # Last, so the flow cookie the callback below checks is this one's.
-        q = start_flow("/setup")
-        assert q["redirect_uri"] == ["https://panel.example.com/oauth2/callback"], q
-
-        # Callback without the flow cookie's state: refused.
-        res = finish("wrong-state", q["nonce"][0])
-        assert res.status_code == 400, res.status_code
-        # Nonce that does not match the one we sent: refused.
-        res = finish(q["state"][0], "wrong-nonce")
-        assert res.status_code == 400, res.status_code
-        # An account that is not on the list: refused, nothing set.
-        res = finish(q["state"][0], q["nonce"][0], email="stranger@example.com")
-        assert res.status_code == 403, res.status_code
-        assert client.get("/api/status", headers=via).status_code == 401
-        # An unverified email: refused.
-        res = finish(q["state"][0], q["nonce"][0], verified=False)
-        assert res.status_code == 403, res.status_code
-
-        # The right account, matched without regard to case, and sent on to
-        # where it was going.
-        res = finish(q["state"][0], q["nonce"][0], email="ME@example.com")
-        assert res.status_code == 302 and res.headers["Location"] == "/setup", \
-            (res.status_code, res.headers.get("Location"), res.get_data(as_text=True))
-        assert google["redirect_uri"] == "https://panel.example.com/oauth2/callback", \
-            "the code must be exchanged with the same redirect URI Google was given"
-        res = client.get("/api/status", headers=via)
-        assert res.status_code == 200, res.get_data(as_text=True)
-        assert res.get_json()["signed_in_as"] == "me@example.com", res.get_json()
-        assert client.get("/", headers=via).status_code == 200
-        assert client.get("/api/status").get_json()["signed_in_as"] == "", "local requests have no viewer"
-
-        # Removed from the list later: the existing session stops counting.
-        config.PANEL_ALLOWED_EMAILS = "other@example.com"
-        assert client.get("/api/status", headers=via).status_code == 401
-        config.PANEL_ALLOWED_EMAILS = "me@example.com"
-        assert client.get("/api/status", headers=via).status_code == 200
-
-        # A tampered cookie is nobody.
-        raw = client.get_cookie(signin.SESSION_COOKIE).value
-        client.set_cookie(signin.SESSION_COOKIE, raw[:-3] + "xyz")
-        assert client.get("/api/status", headers=via).status_code == 401
-        client.set_cookie(signin.SESSION_COOKIE, raw)
-        assert client.get("/api/status", headers=via).status_code == 200
-
-        # Sign out clears it.
-        res = client.get("/logout", headers=via)
-        assert res.status_code == 200
-        assert client.get("/api/status", headers=via).status_code == 401
-
-        # A ?next= pointing off this panel is not followed.
-        assert signin._safe_next("https://evil.example") == "/"
-        assert signin._safe_next("//evil.example") == "/"
-        assert signin._safe_next("/setup") == "/setup"
-    finally:
-        signin.exchange_code, signin.verify_id_token = real_exchange, real_verify
-        client.delete_cookie(signin.SESSION_COOKIE)
-        client.delete_cookie(signin.FLOW_COOKIE)
-        unset()
-results.append(run("through Cloudflare, only a Google sign-in from a listed address gets in; locally nothing is gated", t33))
-
 def t34():
     # The launchd agent that keeps the panel running. launchctl is stubbed and
     # the plist goes to a temp folder, so nothing here touches this Mac.
@@ -966,12 +837,24 @@ def t36():
     account.transport = service
     account.cancel_claim()
     config.ACCOUNTS_URL = "https://accounts.test"
-    config.PANEL_GOOGLE_CLIENT_ID = "client-1"
-    config.PANEL_GOOGLE_CLIENT_SECRET = "secret-1"
-    config.PANEL_ALLOWED_EMAILS = "listed@example.com"
     config.PANEL_PUBLIC_URL = "https://panel.example.com"
     signin.reset()
     try:
+        # Not signed in to an account: everything through the tunnel is a 503
+        # that says what to do; the Mac itself is never gated.
+        account.forget()
+        assert signin.mode() == ""
+        with gui.app.test_client() as client:
+            res = client.get("/", headers=via)
+            assert res.status_code == 503 and "Setup page" in res.get_data(as_text=True), res.status_code
+            assert client.get("/login", headers=via).status_code == 503
+            assert client.get("/account/callback?state=x&code=y", headers=via).status_code == 503
+            res = client.get("/api/status", headers=via)
+            assert res.status_code == 503 and "Syllabus account" in res.get_json()["error"], res.get_json()
+            assert client.get("/api/status").status_code == 200, "local requests are never gated"
+            check = doctor.check_web_signin()
+            assert check is not None and not check.ok and not check.required, check
+
         account.save(account.Account("syd_t", "a1", "owner@example.com", "Owner", "d1", "Test Mac",
                                      "syllabus", "https://accounts.test", "x"))
         with gui.app.test_client() as client:
@@ -979,10 +862,9 @@ def t36():
             # Nobody yet: the page goes to /login, the API gets 401.
             assert client.get("/api/status", headers=via).status_code == 401
             assert client.get("/", headers=via).status_code == 302
-            # The allowlist no longer opens the door while this Mac is signed in.
-            client.set_cookie(signin.SESSION_COOKIE, signin._signer().dumps({"email": "listed@example.com"}))
-            assert client.get("/api/status", headers=via).status_code == 401, \
-                "an allowlisted address must not get in while the Mac belongs to an account"
+            # A cookie that names no account, as the old allowlist sign-in issued, is nobody.
+            client.set_cookie(signin.SESSION_COOKIE, signin._signer().dumps({"email": "owner@example.com"}))
+            assert client.get("/api/status", headers=via).status_code == 401
             client.delete_cookie(signin.SESSION_COOKIE)
 
             # /login goes to the account service, naming this device and where to come back.
@@ -1016,35 +898,36 @@ def t36():
             assert res.status_code == 200 and res.get_json()["signed_in_as"] == "owner@example.com", res.get_json()
             assert client.get("/api/status").get_json()["signed_in_as"] == "", "local requests are never gated"
 
-            # Doctor says how the web sign-in works now.
+            # Doctor says how the web sign-in works now, and flags leftovers in .env.
             check = doctor.check_web_signin()
             assert check.ok and "owner@example.com" in check.detail and "account" in check.detail, check
-            assert "not consulted" in check.detail, check
+            assert "can be deleted" not in check.detail, check
+            config.ENV_FILE.write_text("OPENAI_API_KEY=x\nPANEL_ALLOWED_EMAILS=old@example.com\n")
+            check = doctor.check_web_signin()
+            assert "PANEL_ALLOWED_EMAILS" in check.detail and "can be deleted" in check.detail, check
+            config.ENV_FILE.unlink()
 
-            # Signed out of the account: the session stops counting, and the
-            # direct Google path (still configured) is back.
+            # A tampered cookie is nobody; the real one still counts.
+            raw = client.get_cookie(signin.SESSION_COOKIE).value
+            client.set_cookie(signin.SESSION_COOKIE, raw[:-3] + "xyz")
+            assert client.get("/api/status", headers=via).status_code == 401
+            client.set_cookie(signin.SESSION_COOKIE, raw)
+            assert client.get("/api/status", headers=via).status_code == 200
+
+            # Signed out of the account: the session stops counting at once.
             account.forget()
-            assert signin.mode() == "google"
-            assert client.get("/api/status", headers=via).status_code == 401
-            res = client.get("/login", headers=via)
-            assert urlparse(res.headers["Location"]).netloc == "accounts.google.com", res.headers["Location"]
-            # An account session cookie from before is not an allowlist session either.
-            assert client.get("/api/status", headers=via).status_code == 401
-
-            # Neither an account nor the three settings: a 503 that names the Setup page.
-            config.PANEL_GOOGLE_CLIENT_SECRET = ""
             assert signin.mode() == ""
-            res = client.get("/", headers=via)
-            assert res.status_code == 503 and "Setup page" in res.get_data(as_text=True), res.status_code
-            assert client.get("/login", headers=via).status_code == 503
-            assert client.get("/account/callback?state=x&code=y", headers=via).status_code == 503
+            assert client.get("/api/status", headers=via).status_code == 503
+            # Signed in to a different account: the old session is nobody there.
+            account.save(account.Account("syd_u", "a2", "other@example.com", "Other", "d2", "Test Mac",
+                                         "syllabus", "https://accounts.test", "x"))
+            assert client.get("/api/status", headers=via).status_code == 401
     finally:
         account.forget()
-        config.PANEL_GOOGLE_CLIENT_ID = config.PANEL_GOOGLE_CLIENT_SECRET = ""
-        config.PANEL_ALLOWED_EMAILS = config.PANEL_PUBLIC_URL = ""
+        config.PANEL_PUBLIC_URL = ""
         config.ACCOUNTS_URL = "off"
         signin.reset()
-results.append(run("with an account, the web sign-in goes through the service and the allowlist is the fallback", t36))
+results.append(run("through Cloudflare, only the account's owner gets in, via the account service; nothing else does", t36))
 
 
 def t37():
