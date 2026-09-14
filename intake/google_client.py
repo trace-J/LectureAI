@@ -9,11 +9,11 @@ nobody installing LectureAI has to create a Cloud project of their own.
 A credentials.json in the home directory overrides the bundled one, for the
 developer who wants to test against a different Cloud project.
 
-TODO(trace): the bundled client belongs to a Cloud project that is still in
-Testing. Until it is switched to Production in the Google Cloud console
-(APIs & Services > OAuth consent screen > Publishing status), only accounts
-added as test users can complete `intake login`, and their refresh tokens
-expire every 7 days. Flip it to Production before handing this to anyone else.
+The bundled client's Cloud project (friendly-bazaar-507320-b7) has been In
+production since 2026-09-14, so anyone can complete `intake login` and the
+refresh tokens no longer expire weekly. The Syllabus account service's Web
+client lives in the same project, which is what lets a Drive grant on the
+account and a Mac's own token see the same files.
 """
 
 from __future__ import annotations
