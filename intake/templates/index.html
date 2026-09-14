@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ profile.title }}</title>
-<link rel="icon" href="/static/icon.png">
+<link rel="icon" href="{{ base }}/static/icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Lexend+Deca:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -497,14 +497,14 @@
 <div class="wrap">
 
   <header>
-    <img src="/static/icon.png" alt="">
+    <img src="{{ base }}/static/icon.png" alt="">
     <div>
       <div class="brandname"><span class="ai">{{ profile.title }}</span></div>
       <div class="tagline">{{ profile.tagline }}</div>
       <div class="tagline viewer" id="viewer" hidden></div>
     </div>
     <div class="today" id="todayLine"></div>
-    <a class="gear" href="/setup" title="Setup" aria-label="Setup">
+    <a class="gear" href="{{ base }}/setup" title="Setup" aria-label="Setup">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="3"/>
         <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>
@@ -531,8 +531,11 @@
   </header>
 
   <div class="flash" id="flash"></div>
+  <div class="flash err" id="relayBanner" hidden>
+    Your Mac is not connected right now. Wake it, or check that its panel is running; this page picks up on its own.
+  </div>
   <div class="flash" id="setupFlash" style="display:none">
-    Nothing is set up yet. <a href="/setup">Finish setup</a> to add your keys and class schedule.
+    Nothing is set up yet. <a href="{{ base }}/setup">Finish setup</a> to add your keys and class schedule.
   </div>
 
   <!-- Record + this week -->
@@ -752,14 +755,24 @@ function flash(message, isError) {
   flash._t = setTimeout(() => { el.style.display = "none"; }, 6000);
 }
 
+// Where this panel is published: "" on this Mac, "/p/<device>" through the
+// account service's relay. Every request and link is written under it.
+const BASE = {{ base|tojson }};
+const RELAYED = BASE !== "";
+
 async function api(path, body) {
-  const res = await fetch(path, {
+  const res = await fetch(BASE + path, {
     method: body === undefined ? "GET" : "POST",
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await res.json();
-  if (!res.ok || data.ok === false) throw new Error(data.error || "request failed");
+  if (!res.ok || data.ok === false) {
+    const err = new Error(data.error || "request failed");
+    // The relay answers for the Mac when the Mac is not there.
+    err.notConnected = res.status === 503 && data.relay === "not-connected";
+    throw err;
+  }
   return data;
 }
 
@@ -1156,7 +1169,9 @@ function render(s) {
   if (s.signed_in_as) {
     viewer.appendChild(document.createTextNode("Signed in as " + s.signed_in_as + " \u00b7 "));
     const out = document.createElement("a");
-    out.href = "/logout"; out.textContent = "Sign out";
+    // Through the relay the sign-in is the account service's, so signing
+    // out happens there; through the tunnel it is this panel's own.
+    out.href = s.signout_url || "/logout"; out.textContent = "Sign out";
     viewer.appendChild(out);
   }
   viewer.hidden = !viewer.textContent;
@@ -1186,13 +1201,42 @@ function render(s) {
   $("checks").innerHTML = Object.entries(labels).map(([k, label]) => {
     const on = s.integrations[k];
     return `<div class="check"><span class="dot ${on ? "on" : "off"}"></span>${label}${on ? "" : " not set up"}</div>`;
-  }).join("") + '<a class="foot-link" href="/setup">Keys, microphone, and schedule</a>';
+  }).join("") + '<a class="foot-link" href="{{ base }}/setup">Keys, microphone, and schedule</a>';
+}
+
+// Locally the page asks every second. Through the relay every request
+// crosses the account service and wakes the Mac's socket, so it asks every
+// three seconds, not at all while the tab is hidden, and every ten while
+// the Mac is not connected.
+const POLL_MS = RELAYED ? 3000 : 1000;
+let pollTimer = null;
+let notConnected = false;
+
+function relayBanner(show) {
+  const el = $("relayBanner");
+  el.hidden = !show;
+  el.style.display = show ? "block" : "none";
 }
 
 async function poll() {
-  try { render(await api("/api/status")); }
-  catch (e) { /* the panel is local; a blip just means the next tick retries */ }
+  clearTimeout(pollTimer);
+  let delay = POLL_MS;
+  // The first draw happens whatever the tab's state, so a page opened in
+  // the background is not an empty shell when it is switched to.
+  if (RELAYED && document.hidden && state !== null) {
+    pollTimer = setTimeout(poll, POLL_MS);
+    return;
+  }
+  try {
+    render(await api("/api/status"));
+    if (notConnected) { notConnected = false; relayBanner(false); }
+  } catch (e) {
+    if (e.notConnected) { notConnected = true; relayBanner(true); delay = 10000; }
+    /* otherwise a blip: the next tick retries */
+  }
+  pollTimer = setTimeout(poll, delay);
 }
+document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
 
 $("recBtn").onclick = async () => {
   if (busy) return;
@@ -1270,7 +1314,6 @@ for (const b of document.querySelectorAll("[data-theme-choice]")) {
 markTheme();
 
 poll();
-setInterval(poll, 1000);
 </script>
 </body>
 </html>

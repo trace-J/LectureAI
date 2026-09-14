@@ -316,6 +316,35 @@ confirm the token each time it loads.
 
 ## The panel on the web
 
+**Every Mac signed in to a Syllabus account has an address on the web**,
+with nothing to install or configure:
+
+```
+https://syllabusaccounts.maincoursemedia.com/p/<device>/
+```
+
+The panel opens a WebSocket to the account service the moment it starts
+with an `account.json`, keeps it open from a thread inside the panel
+process (`intake/relay.py`), and reconnects on its own. The service holds
+the other end and sends each browser request down it; the panel runs the
+request in process and answers up the socket. Only the account's owner
+gets in, and the sign-in is the account service's own, so there is no
+login on the panel for this road: the service names the viewer in every
+request, and the panel believes it because the request arrived on the
+socket the panel opened with its own device token. No port is opened, no
+hostname or tunnel is set up, and a panel with no account never starts the
+socket. When the Mac is asleep, offline, or its panel is not running, the
+address shows a page saying so, with the Mac's name and when it was last
+connected, and tries again every 10 seconds. Through the relay the page
+asks for its status every three seconds instead of every second, and not
+at all while the tab is hidden, since each request crosses the service.
+The address itself is on the status the page polls (`relay.url`) and will
+appear on the Setup page next; the account page will list it for each Mac.
+
+The paragraphs below describe the older road, a Cloudflare Tunnel with the
+panel's own sign-in in front, which this Mac still uses at
+`syllabus.maincoursemedia.com` until the relay has proven itself.
+
 The panel is published at `syllabus.maincoursemedia.com`, and
 `maincoursemedia.com/syllabus` sends you there. Three pieces make that up,
 and only the last needs anything from you when setting up a new Mac.
@@ -788,6 +817,7 @@ credentials, or an API key, none costs anything to run, and none can touch
 .venv/bin/python test_profiles.py            # syllabus vs sous: homes, ports, folders, selection, migration
 .venv/bin/python test_account.py             # claiming this Mac into a Syllabus account, against a fake service
 .venv/bin/python test_sync.py                # the schedule file against the account's copy: push, pull, conflicts
+.venv/bin/python test_relay.py               # the panel on the web: relayed requests, the base path, the socket loop
 ```
 
 ## V2 roadmap

@@ -1,0 +1,386 @@
+"""Tests for relay.py: the panel on the web through the account service.
+
+The socket is a scripted fake, so nothing here reaches the network; the
+requests it carries are run against a small echo app and against the real
+panel app, both through Flask's test client. From the project root:
+
+    .venv/bin/python test_relay.py
+"""
+import base64
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _test_home import fresh_home  # noqa: E402
+
+HOME = fresh_home()  # before config is imported
+
+from flask import Flask, jsonify, request  # noqa: E402
+
+from intake import account, config, gui, relay  # noqa: E402
+
+
+def run(label, fn):
+    try:
+        fn()
+    except AssertionError as exc:
+        print(f"FAIL  {label}\n      {exc}")
+        return False
+    except Exception as exc:
+        print(f"FAIL  {label}\n      unexpected {type(exc).__name__}: {exc}")
+        return False
+    print(f"ok    {label}")
+    return True
+
+
+results = []
+SERVICE = "https://accounts.test"
+config.ACCOUNTS_URL = SERVICE
+
+ME = account.Account("syd_t", "a1", "me@example.com", "Me", "d1", "Test Mac",
+                     "syllabus", SERVICE, "2026-09-14T09:00:00")
+
+
+def b64(text: str) -> str:
+    return base64.b64encode(text.encode()).decode()
+
+
+def unb64(frames) -> bytes:
+    return b"".join(base64.b64decode(f.get("body") or "") for f in frames)
+
+
+def req(path, method="GET", query="", body="", headers=None, base="/p/d1",
+        viewer=None, rid="r1"):
+    return {"t": "req", "id": rid, "method": method, "path": path, "query": query,
+            "headers": headers or {}, "base": base,
+            "viewer": viewer if viewer is not None else {"email": "Me@Example.com", "account_id": "a1"},
+            "body": b64(body) if body else ""}
+
+
+# --- An echo app: what a relayed request looks like from inside Flask ------------
+
+echo = Flask("echo")
+
+
+@echo.route("/e/<path:rest>", methods=["GET", "POST"])
+def _echo(rest):
+    return jsonify({
+        "rest": rest, "script_root": request.script_root, "url": request.url,
+        "method": request.method, "query": request.query_string.decode(),
+        "body": request.get_data().decode(), "cookie": request.headers.get("Cookie"),
+        "forwarded": request.headers.get("X-Forwarded-For"), "accept": request.headers.get("Accept"),
+        "relay": bool(request.environ.get(relay.RELAY_KEY)),
+        "viewer": request.environ.get(relay.VIEWER_KEY),
+        "viewer_account": request.environ.get(relay.VIEWER_ACCOUNT_KEY),
+        "secure": request.is_secure,
+    })
+
+
+@echo.get("/big")
+def _big():
+    return "x" * 10_000, 200, {"Content-Type": "text/plain", "X-Internal": "hide me"}
+
+
+@echo.get("/nothing")
+def _nothing():
+    return "", 304, {"ETag": '"abc"'}
+
+
+@echo.get("/boom")
+def _boom():
+    raise RuntimeError("no")
+
+
+def t1():
+    frames = relay.serve(echo, req("/e/x", query="y=1", headers={
+        "Accept": "application/json", "Cookie": "session=stolen", "X-Forwarded-For": "1.2.3.4",
+        "Cf-Ray": "abc"}))
+    assert len(frames) == 1, frames
+    f = frames[0]
+    assert f["t"] == "res" and f["id"] == "r1" and f["status"] == 200 and f["more"] is False, f
+    assert f["headers"].get("Content-Type", "").startswith("application/json"), f["headers"]
+    got = json.loads(unb64(frames))
+    assert got["rest"] == "x" and got["query"] == "y=1" and got["method"] == "GET", got
+    assert got["script_root"] == "/p/d1", got
+    assert got["url"] == "https://accounts.test/p/d1/e/x?y=1", got
+    assert got["relay"] is True and got["viewer"] == "me@example.com" and got["viewer_account"] == "a1", got
+    assert got["secure"] is True, got
+    assert got["cookie"] is None and got["forwarded"] is None, "cookies and proxy headers must not cross"
+    assert got["accept"] == "application/json", got
+results.append(run("a relayed request runs in process with the base path, the viewer, and only safe headers", t1))
+
+
+def t2():
+    frames = relay.serve(echo, req("/e/post", method="POST", body='{"course":"ACCT-4321"}',
+                                   headers={"Content-Type": "application/json"}))
+    got = json.loads(unb64(frames))
+    assert got["method"] == "POST" and got["body"] == '{"course":"ACCT-4321"}', got
+results.append(run("a POST body arrives intact", t2))
+
+
+def t3():
+    frames = relay.serve(echo, req("/big"), chunk_bytes=4096)
+    assert [f["t"] for f in frames] == ["res", "chunk", "chunk"], [f["t"] for f in frames]
+    assert [f["more"] for f in frames] == [True, True, False], frames
+    assert all(f["id"] == "r1" for f in frames)
+    assert unb64(frames) == b"x" * 10_000
+    assert "X-Internal" not in frames[0]["headers"], frames[0]["headers"]
+    assert frames[0]["headers"]["Content-Type"].startswith("text/plain")
+    # The floor keeps a silly chunk size from producing thousands of frames.
+    assert len(relay.serve(echo, req("/big"), chunk_bytes=1)) == 10, "1 KB floor"
+results.append(run("a long answer is split at the chunk size and carries only safe headers", t3))
+
+
+def t4():
+    frames = relay.serve(echo, req("/nothing"))
+    assert frames[0]["status"] == 304 and frames[0]["body"] == "" and frames[0]["more"] is False, frames
+    assert frames[0]["headers"].get("ETag") == '"abc"', frames[0]["headers"]
+    frames = relay.serve(echo, req("//evil"))
+    assert frames[0]["status"] == 400, frames
+    frames = relay.serve(echo, req("/boom"))
+    assert frames[0]["status"] == 500, frames
+    frames = relay.serve(echo, {"t": "req", "id": "r9", "body": "%%%not base64%%%", "path": "/e/x"})
+    assert frames[0]["status"] == 502 and frames[0]["id"] == "r9", frames
+results.append(run("a 304 has no body; a bad path is 400; a failure is an answer, never a dead socket", t4))
+
+
+# --- Against the real panel -----------------------------------------------------------
+
+def t5():
+    account.save(ME)
+    try:
+        frames = relay.serve(gui.app, req("/api/status"))
+        assert frames[0]["status"] == 200, frames[0]
+        status = json.loads(unb64(frames))
+        assert status["signed_in_as"] == "me@example.com", status["signed_in_as"]
+        assert status["signout_url"] == SERVICE + "/logout", status["signout_url"]
+        assert status["relay"]["url"] == SERVICE + "/p/d1/", status["relay"]
+        assert status["account"]["signed_in"] is True
+
+        frames = relay.serve(gui.app, req("/"))
+        html = unb64(frames).decode()
+        assert 'const BASE = "/p/d1";' in html, "the page must know its base path"
+        assert 'href="/p/d1/setup"' in html and 'src="/p/d1/static/icon.png"' in html, "links under the base"
+        assert 'href="/setup"' not in html, "no absolute link may escape the base"
+
+        frames = relay.serve(gui.app, req("/setup"))
+        html = unb64(frames).decode()
+        assert 'const BASE = "/p/d1";' in html and 'href="/p/d1/"' in html, "the setup page too"
+
+        frames = relay.serve(gui.app, req("/static/icon.png"))
+        assert frames[0]["status"] == 200 and frames[0]["headers"]["Content-Type"] == "image/png", frames[0]
+        assert len(unb64(frames)) > 1000
+    finally:
+        account.forget()
+results.append(run("the panel answers a relayed request as the viewer, with every link under its address", t5))
+
+
+def t6():
+    account.save(ME)
+    try:
+        wrong = relay.serve(gui.app, req("/api/status", viewer={"email": "x@example.com", "account_id": "a2"}))
+        assert wrong[0]["status"] == 403, wrong[0]
+        assert "does not own" in json.loads(unb64(wrong))["error"]
+        nobody = relay.serve(gui.app, req("/api/status", viewer={}))
+        assert nobody[0]["status"] == 403, nobody[0]
+    finally:
+        account.forget()
+    signed_out = relay.serve(gui.app, req("/api/status"))
+    assert signed_out[0]["status"] == 403, signed_out[0]
+results.append(run("a viewer the relay names is refused unless they own this Mac's account", t6))
+
+
+def t7():
+    with gui.app.test_client() as client:
+        res = client.get("/api/status")
+        assert res.status_code == 200
+        s = res.get_json()
+        assert s["signed_in_as"] == "" and s["signout_url"] == "/logout", s
+        assert s["relay"]["state"] == "off" and s["relay"]["url"] == "", s["relay"]
+        html = client.get("/").get_data(as_text=True)
+        assert 'const BASE = "";' in html and 'href="/setup"' in html, "local pages are unchanged"
+        # A forged mark from the network is just a header, not the environ key.
+        res = client.get("/api/status", headers={"Intake-Relay": "1", "Intake-Viewer": "me@example.com"})
+        assert res.get_json()["signed_in_as"] == ""
+results.append(run("a local request is untouched: no viewer, no base path, no relay", t7))
+
+
+# --- The loop that keeps the socket open -----------------------------------------------
+
+class FakeSocket:
+    """One scripted connection. `script` is what happens after the handshake."""
+
+    def __init__(self, log, script):
+        self.log = log
+        self.script = script
+        self.sent = []
+        self.closed = False
+
+    def factory(self, url, headers, on_open, on_message, on_close, on_error):
+        self.log.append(("connect", url, headers))
+        self._cb = (on_open, on_message, on_close, on_error)
+        return self
+
+    def run_forever(self):
+        on_open, on_message, on_close, on_error = self._cb
+        for step, arg in self.script:
+            if step == "open":
+                on_open()
+            elif step == "message":
+                on_message(json.dumps(arg))
+            elif step == "close":
+                on_close(*arg)
+            elif step == "error":
+                on_error(arg)
+
+    def send(self, text):
+        self.sent.append(json.loads(text))
+
+    def close(self):
+        self.closed = True
+
+
+class Clock:
+    def __init__(self):
+        self.t = 1000.0
+        self.slept = []
+
+    def now(self):
+        return self.t
+
+    def sleep(self, seconds):
+        self.slept.append(seconds)
+        self.t += seconds
+
+
+def t8():
+    account.save(ME)
+    log = []
+    sock = FakeSocket(log, [
+        ("open", None),
+        ("message", {"t": "welcome", "device": "d1", "chunk_bytes": 2048}),
+        ("message", req("/e/hi", query="a=b", rid="q1")),
+        ("message", {"t": "noise"}),
+        ("close", (1006, "")),
+    ])
+    clock = Clock()
+    try:
+        r = relay.Relay(echo, socket_factory=sock.factory, sleep=clock.sleep, now=clock.now)
+        assert r.status()["state"] == "off"
+        r.run(rounds=1)
+        assert log[0][1] == "wss://accounts.test/relay/connect", log[0]
+        assert log[0][2] == ["Authorization: Bearer syd_t"], log[0]
+        assert sock.sent[0]["t"] == "hello" and sock.sent[0]["name"] == "Test Mac", sock.sent[0]
+        assert r.chunk_bytes == 2048, r.chunk_bytes
+        answer = [f for f in sock.sent if f["t"] == "res"]
+        assert len(answer) == 1 and answer[0]["id"] == "q1" and answer[0]["status"] == 200, sock.sent
+        got = json.loads(base64.b64decode(answer[0]["body"]))
+        assert got["rest"] == "hi" and got["query"] == "a=b" and got["viewer"] == "me@example.com", got
+        st = r.status()
+        assert st["state"] == "reconnecting" and st["url"] == SERVICE + "/p/d1/", st
+        assert st["requests"] == 1 and st["connected_at"], st
+        assert "1006" in st["error"], st["error"]
+        assert len(clock.slept) == 1 and 1.0 <= clock.slept[0] <= 1.5, clock.slept
+    finally:
+        account.forget()
+results.append(run("the loop connects with the token, says hello, honors the welcome, and answers requests", t8))
+
+
+def t9():
+    account.save(ME)
+    clock = Clock()
+    log = []
+    sock = FakeSocket(log, [("close", (None, None))])
+    try:
+        r = relay.Relay(echo, socket_factory=sock.factory, sleep=clock.sleep, now=clock.now)
+        r.run(rounds=4)
+        assert len(log) == 4, log
+        bounds = [(1, 1.5), (2, 3), (4, 6), (8, 12)]
+        for pause, (lo, hi) in zip(clock.slept, bounds):
+            assert lo <= pause <= hi, (clock.slept, bounds)
+        assert r.status()["attempts"] == 4, r.status()
+
+        # A connection that held for a while resets the pause.
+        clock2 = Clock()
+
+        class Steady(FakeSocket):
+            def run_forever(self):
+                clock2.t += 120
+                super().run_forever()
+
+        sock2 = Steady(log, [("open", None), ("close", (1000, "bye"))])
+        r2 = relay.Relay(echo, socket_factory=sock2.factory, sleep=clock2.sleep, now=clock2.now)
+        r2.run(rounds=3)
+        assert all(1.0 <= p <= 1.5 for p in clock2.slept), clock2.slept
+    finally:
+        account.forget()
+results.append(run("reconnects back off, doubling to a cap, and reset after a steady connection", t9))
+
+
+def t10():
+    account.save(ME)
+    clock = Clock()
+
+    class Refused(Exception):
+        status_code = 401
+
+    sock = FakeSocket([], [("error", Refused("Handshake status 401"))])
+    try:
+        r = relay.Relay(echo, socket_factory=sock.factory, sleep=clock.sleep, now=clock.now)
+        r.run(rounds=1)
+        st = r.status()
+        assert st["error"] == "unauthorized", st
+        assert clock.slept == [relay.MAX_BACKOFF], clock.slept
+    finally:
+        account.forget()
+results.append(run("a refused token waits the full pause rather than hammering the service", t10))
+
+
+def t11():
+    clock = Clock()
+    log = []
+    sock = FakeSocket(log, [])
+    r = relay.Relay(echo, socket_factory=sock.factory, sleep=clock.sleep, now=clock.now)
+    r.run(rounds=2)
+    assert log == [], "no account, no connection"
+    assert clock.slept == [relay.NO_ACCOUNT_WAIT] * 2, clock.slept
+    st = r.status()
+    assert st["state"] == "off" and st["url"] == "" and "not signed in" in st["detail"], st
+
+    def missing(*a, **k):
+        raise ImportError("No module named 'websocket'")
+    account.save(ME)
+    try:
+        r2 = relay.Relay(echo, socket_factory=missing, sleep=clock.sleep, now=clock.now)
+        r2.run()
+        st = r2.status()
+        assert st["state"] == "stopped" and "websocket" in st["error"], st
+        assert "reinstall" in st["detail"], st
+    finally:
+        account.forget()
+results.append(run("with no account the loop idles; a missing library stops it with a reason", t11))
+
+
+def t12():
+    saved = config.ACCOUNTS_URL
+    try:
+        assert relay.panel_url() == "", "no account, no address"
+        account.save(ME)
+        assert relay.panel_url() == SERVICE + "/p/d1/"
+        assert relay.socket_url() == "wss://accounts.test/relay/connect"
+        config.ACCOUNTS_URL = "http://localhost:8787"
+        assert relay.socket_url() == "ws://localhost:8787/relay/connect"
+        config.ACCOUNTS_URL = "off"
+        assert relay.status()["enabled"] is False
+        r = relay.Relay(echo, socket_factory=lambda *a: None)
+        assert r.start() is False and r.status()["state"] == "off", r.status()
+    finally:
+        config.ACCOUNTS_URL = saved
+        account.forget()
+results.append(run("addresses follow the account service's URL, and nothing starts with accounts off", t12))
+
+print()
+print(f"{sum(results)}/{len(results)} passed")
+sys.exit(0 if all(results) else 1)
