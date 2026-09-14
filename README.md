@@ -294,15 +294,14 @@ Every Mac signed in to the account then files to the same Drive, and none of
 them needs `intake login`. The uploader prefers the account's grant whenever
 there is one and falls back to this Mac's own `token.json` otherwise, so a
 Mac that already had Drive connected keeps working the day it signs in.
-One catch for a Mac that already has lectures filed: `drive.file` only
-reaches files made by the same Google Cloud project, and the account's
-grant comes from a different project than the bundled Desktop client, so
-the grant cannot see a "Lecture Notes" folder that `intake login` created.
-Rather than start a second folder, the uploader keeps using this Mac's own
-token when the account's grant cannot see the existing folder, and
-`intake doctor` says so. `DRIVE_SOURCE=account` in `.env` files into a new
-folder under the account instead; `DRIVE_SOURCE=local` never uses the
-grant. If
+The account service's Web client lives in the same Google Cloud project as
+the bundled Desktop client on purpose: `drive.file` only reaches files made
+by the same project, so this is what lets the account's grant see the
+"Lecture Notes" folder that `intake login` created. As a safety net, the
+uploader still checks that the grant can see this Mac's existing folder
+and keeps using this Mac's own token when it cannot, and `intake doctor`
+says so. `DRIVE_SOURCE=account` in `.env` skips that check and files under
+the account regardless; `DRIVE_SOURCE=local` never uses the grant. If
 the account service cannot be reached, the local token is used when there
 is one; without one the upload fails with a message saying so and the
 recording waits in the inbox for the retry. Disconnecting on the account
@@ -557,11 +556,12 @@ truncates silently rather than erroring, which is why audio is split on
 duration as well as size. Lower `CHUNK_SECONDS` in `config.py` if you see
 truncation warnings.
 
-**Uploads suddenly fail with an auth error.** The Google Cloud project behind
-the bundled client is still in External + Testing, so refresh tokens expire
-every 7 days and only accounts added as test users can log in at all.
-`intake login` gets you going again; publishing the project ends it
-permanently.
+**Uploads suddenly fail with an auth error.** Before 2026-09-14 the Google
+Cloud project behind the bundled client was in Testing, so refresh tokens
+expired every 7 days; a token from then may still need one more
+`intake login`. If this Mac is signed in to a Syllabus account whose Drive
+is connected, the account's grant is used instead and the local token
+does not matter.
 
 **A recording was filed under the wrong course.** Rename it with the course
 code in the filename and drop it back in `inbox/`. The filename fallback will
@@ -843,9 +843,7 @@ Syllabus is meant to become a real Mac app that other people can use, with an
 account behind it. The web page at maincoursemedia.com/syllabus is the first
 piece of that, and the rest is planned in this order:
 
-- **Publish the Google Cloud project** (below). Done for the LectureAI
-  project the account service uses; the Desktop client's project is still
-  in Testing, which only matters for a Mac with no account.
+- **Publish the Google Cloud project** (below). Done, 2026-09-14.
 - **A Mac app bundle.** The panel already is the app; what is missing is the
   wrapper. Plan: a `pywebview` window around the same Flask panel, packaged
   with PyInstaller into `Syllabus.app`, signed and notarized, with ffmpeg
@@ -871,11 +869,12 @@ piece of that, and the rest is planned in this order:
 
 ### Loose ends
 
-- **Publish the friendly-bazaar Cloud project.** The bundled Desktop
-  client's project is still in Testing, so `intake login`, the path a Mac
-  with no account takes, only works for accounts listed as test users and
-  their tokens expire weekly. The LectureAI project, which the account
-  service uses for sign-in and Drive, was published on 2026-09-13, so Drive
-  through the account has neither limit.
+- **Publish the Google Cloud project.** Done on 2026-09-14: the
+  friendly-bazaar project, which holds both the bundled Desktop client and
+  the account service's Web client, is In production, with
+  maincoursemedia.com verified in Search Console. `intake login` now works
+  for anyone and its tokens no longer expire weekly. The LectureAI project,
+  which only the panel's own fallback sign-in still uses, was published on
+  2026-09-13.
 - **Recover the September 3, 13:56 ACCT lecture.** Audio and transcript are
   gone, but the summary text survives in the raw JSON of the trashed Doc.
