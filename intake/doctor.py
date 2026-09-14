@@ -106,6 +106,11 @@ def check_drive_token(now: datetime | None = None) -> Check:
     cached = account.drive_cached() if via_account else {}
     if via_account and cached.get("connected"):
         who = cached.get("google_email") or "the account's Google account"
+        if cached.get("in_use") is False and token.exists():
+            return Check("Drive authorization", True,
+                         f"{token.name} present with a refresh token; the account's Drive "
+                         f"({who}) is connected but not used because it "
+                         f"{cached.get('in_use_detail') or 'was set aside'}")
         extra = f"; this Mac also has its own {token.name}" if token.exists() else ""
         return Check("Drive authorization", True,
                      f"through the Syllabus account, as {who} (last confirmed "

@@ -57,18 +57,34 @@ def _escape(value: str) -> str:
 
 
 _said_no_grant = False
+_said_folder = False
+
+
+def _root_visible(creds) -> bool:
+    """Whether these credentials can see the Drive folder this Mac files into."""
+    root = config.DRIVE_ROOT_CACHE.read_text().strip() if config.DRIVE_ROOT_CACHE.exists() else ""
+    if not root:
+        return True
+    service = build("drive", "v3", credentials=creds, cache_discovery=False)
+    return _folder_exists(service, root)
 
 
 def _account_credentials():
     """Credentials from the Syllabus account's Drive grant, or None to use
     this Mac's own token.
 
-    None when this Mac is not signed in, or the account has no grant yet.
-    When the service cannot be reached, the Mac's token.json is used if it
-    exists; without one there is nothing to fall back to, so that raises.
+    None when this Mac is not signed in, the account has no grant yet, or
+    DRIVE_SOURCE says local. Also None, with a note in the log, when the
+    grant cannot see the folder this Mac already files into: drive.file
+    only reaches files made by the same Google Cloud project, and using the
+    grant then would start a second "Lecture Notes" folder. DRIVE_SOURCE=
+    account overrides that. When the service cannot be reached, the Mac's
+    token.json is used if it exists; without one there is nothing to fall
+    back to, so that raises.
     """
-    global _said_no_grant
-    if not (account.enabled() and account.load() is not None):
+    global _said_no_grant, _said_folder
+    source = (config.DRIVE_SOURCE or "auto").strip().lower()
+    if source == "local" or not (account.enabled() and account.load() is not None):
         return None
     creds = account.AccountCredentials()
     try:
@@ -87,6 +103,25 @@ def _account_credentials():
             f"could not get a Drive token from the account service ({exc}), and "
             f"this Mac has no token.json of its own to fall back to") from exc
     _said_no_grant = False
+    if source != "account" and config.TOKEN_FILE.exists():
+        try:
+            visible = _root_visible(creds)
+        except Exception as exc:
+            log(f"  could not check the account's Drive against this Mac's folder ({exc}); "
+                f"using this Mac's own token")
+            account.note_drive_in_use(False, f"could not be checked: {exc}")
+            return None
+        if not visible:
+            if not _said_folder:
+                log("  the account's Drive connection cannot see this Mac's existing "
+                    f"{config.DRIVE_ROOT_FOLDER_NAME} folder, so this Mac's own token is "
+                    "used; set DRIVE_SOURCE=account to file into a new folder under "
+                    "the account instead")
+                _said_folder = True
+            account.note_drive_in_use(False, "cannot see this Mac's existing Drive folder")
+            return None
+    _said_folder = False
+    account.note_drive_in_use(True)
     return creds
 
 

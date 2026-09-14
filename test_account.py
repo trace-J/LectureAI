@@ -386,6 +386,7 @@ def t12():
                                  "syllabus", SERVICE, "x"))
     creds = upload.get_credentials(interactive=False)
     assert isinstance(creds, account.AccountCredentials) and creds.token == "ya29.acct"
+    assert account.drive_cached().get("in_use") is True
 
     # The account has no grant: this Mac's own token is used when it has one.
     account.forget_drive_token()
@@ -398,7 +399,55 @@ def t12():
     creds = upload.get_credentials(interactive=False)
     assert not isinstance(creds, account.AccountCredentials) and creds.token == "ya29.local"
 
+    # The account has a grant, but it cannot see the folder this Mac already
+    # files into (made by another Cloud project): this Mac's token is kept,
+    # unless DRIVE_SOURCE=account says to start over under the account.
+    grant["state"] = "ok"
+    account.forget_drive_token()
+    upload._said_folder = False
+    config.DRIVE_ROOT_CACHE.write_text("root-123\n")
+    seen = {"visible": False, "checks": 0}
+
+    def fake_root_visible(creds):
+        seen["checks"] += 1
+        return seen["visible"]
+    real_root_visible = upload._root_visible
+    upload._root_visible = fake_root_visible
+    try:
+        creds = upload.get_credentials(interactive=False)
+        assert creds.token == "ya29.local" and seen["checks"] == 1, (creds.token, seen)
+        cached = account.drive_cached()
+        assert cached["connected"] and cached["in_use"] is False and "cannot see" in cached["in_use_detail"], cached
+        check = doctor.check_drive_token()
+        assert check.ok and "not used because" in check.detail, check
+        config.DRIVE_SOURCE = "account"
+        creds = upload.get_credentials(interactive=False)
+        assert isinstance(creds, account.AccountCredentials), "DRIVE_SOURCE=account forces the grant"
+        assert seen["checks"] == 1, "no folder check when forced"
+        config.DRIVE_SOURCE = "local"
+        assert upload.get_credentials(interactive=False).token == "ya29.local", "DRIVE_SOURCE=local forces the token"
+        config.DRIVE_SOURCE = "auto"
+        seen["visible"] = True
+        creds = upload.get_credentials(interactive=False)
+        assert isinstance(creds, account.AccountCredentials), "a grant that sees the folder is used"
+        assert account.drive_cached()["in_use"] is True
+        # With no token.json there is nothing to protect: the grant is used as is.
+        seen["visible"] = False
+        config.TOKEN_FILE.unlink()
+        assert isinstance(upload.get_credentials(interactive=False), account.AccountCredentials)
+        assert seen["checks"] == 2, "no folder check without a local token to fall back to"
+        config.TOKEN_FILE.write_text(_json.dumps({
+            "token": "ya29.local", "refresh_token": "1//local", "client_id": "c", "client_secret": "s",
+            "token_uri": "https://oauth2.googleapis.com/token", "scopes": config.DRIVE_SCOPES,
+            "expiry": "2099-01-01T00:00:00Z",
+        }))
+    finally:
+        upload._root_visible = real_root_visible
+        config.DRIVE_ROOT_CACHE.unlink(missing_ok=True)
+        config.DRIVE_SOURCE = "auto"
+
     # The service is unreachable: the local token still works.
+    account.forget_drive_token()
     grant["state"] = "ok"
     grant["down"] = True
     creds = upload.get_credentials(interactive=False)

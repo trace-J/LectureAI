@@ -200,6 +200,7 @@ def env_defaults(profile: Profile) -> dict[str, str]:
         "PANEL_PUBLIC_URL": "",
         "PANEL_SECRET_KEY": "",
         "ACCOUNTS_URL": "https://syllabusaccounts.maincoursemedia.com",
+        "DRIVE_SOURCE": "auto",
     }
 
 
@@ -453,6 +454,13 @@ PANEL_SECRET_KEY = _setting("PANEL_SECRET_KEY")
 # The default is the real one; set it to "off" to hide accounts entirely,
 # or to a dev server's address to test against that.
 ACCOUNTS_URL = _setting("ACCOUNTS_URL")
+# Which Drive credentials the uploader uses when this Mac is signed in to an
+# account that has a Drive grant. "auto" prefers the account's grant unless
+# it cannot see this Mac's existing Drive folder (the folder was created by
+# a different Google Cloud project, so drive.file does not reach it), in
+# which case this Mac's own token.json is kept so nothing is filed twice.
+# "account" and "local" force one or the other.
+DRIVE_SOURCE = _setting("DRIVE_SOURCE")
 
 # Names to fall back through if RECORD_DEVICE matches nothing attached.
 RECORD_DEVICE_FALLBACKS = ("MacBook Pro Microphone", "Built-in", "Microphone")
