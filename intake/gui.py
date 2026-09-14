@@ -332,12 +332,41 @@ def watcher_start():
     # Run as a module from the directory that holds the package, so this works
     # from a checkout (where that is the repo root) and from a pipx install
     # (where it is site-packages) without either needing the other's setup.
-    _children.append(subprocess.Popen(
+    child = subprocess.Popen(
         [sys.executable, "-m", "intake.watch"],
         cwd=str(config.CODE_ROOT), stdin=subprocess.DEVNULL,
         stdout=handle, stderr=handle, start_new_session=True,
-    ))
+    )
+    _children.append(child)
+    # A watcher that exits within its first moments never got going: it
+    # could not take the lock, or preflight refused it. Saying "started"
+    # anyway left the button looking dead, with the reason only in a log
+    # nobody was reading.
+    if _exited_early(child):
+        _children.remove(child)
+        return jsonify({"ok": False, "error": _last_error_line(WATCHER_LOG)}), 500
     return jsonify({"ok": True})
+
+
+def _exited_early(child: subprocess.Popen, seconds: float = 1.5) -> bool:
+    """Whether the child ended within `seconds` of being started."""
+    try:
+        child.wait(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        return False
+    return True
+
+
+def _last_error_line(log: Path) -> str:
+    """The most recent error the watcher logged, or a generic message."""
+    try:
+        lines = log.read_text(errors="replace").splitlines()
+    except OSError:
+        lines = []
+    for line in reversed(lines[-20:]):
+        if "error:" in line:
+            return line.split("error:", 1)[1].strip()
+    return "the watcher exited right after starting; see watcher-gui.log"
 
 
 @app.post("/api/watcher/stop")

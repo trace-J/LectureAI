@@ -612,6 +612,101 @@ results.append(run("watchers the panel started are reaped once they exit", t29))
 
 
 def t30():
+    # A watcher that loses the lock race must leave the winner's pid alone.
+    # Opening the lock file with "w" truncated it before the flock, so every
+    # loser wiped the pid, the panel read a held lock with no pid and said
+    # "stopped", and the button started loser after loser.
+    import fcntl
+    from intake import watch
+    lock = tmp / "race.lock"
+    config.LOCK_FILE = lock
+    lock.write_text("424242")
+    holder = lock.open("r+")
+    fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        try:
+            watch.acquire_single_instance_lock()
+        except RuntimeError as exc:
+            assert "already holds" in str(exc), exc
+        else:
+            raise AssertionError("a second watcher took a held lock")
+        assert lock.read_text() == "424242", f"loser wiped the pid: {lock.read_text()!r}"
+    finally:
+        fcntl.flock(holder, fcntl.LOCK_UN)
+        holder.close()
+    # And the winner writes its own pid over whatever was there.
+    import os as _os
+    handle = watch.acquire_single_instance_lock()
+    try:
+        assert lock.read_text() == str(_os.getpid()), lock.read_text()
+    finally:
+        handle.close()
+    config.LOCK_FILE = tmp / "no-such.lock"
+results.append(run("a watcher that loses the lock race leaves the holder's pid intact", t30))
+
+
+def t31():
+    # A held lock whose pid never got written is still a running watcher.
+    # The panel must not report it stopped, or it offers to start a second.
+    import fcntl
+    import os as _os
+    lock = tmp / "empty-held.lock"
+    config.LOCK_FILE = lock
+    lock.write_text("")
+    holder = lock.open("r+")
+    fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        assert gui._watcher_pid() == _os.getpid(), gui._watcher_pid()
+        assert client.get("/api/status").get_json()["watcher"]["running"] is True
+        res = client.post("/api/watcher/start", json={})
+        assert res.status_code == 409, (res.status_code, res.get_json())
+    finally:
+        fcntl.flock(holder, fcntl.LOCK_UN)
+        holder.close()
+    assert gui._watcher_pid() is None
+    config.LOCK_FILE = tmp / "no-such.lock"
+results.append(run("a held lock with no pid in it still shows the watcher as running", t31))
+
+
+def t32():
+    # A watcher that dies right after starting is a failed start, and the
+    # button should say why, not flash "started" over a process that is gone.
+    import subprocess
+    real_popen = gui.subprocess.Popen
+    log = tmp / "watcher-gui.log"
+    gui.WATCHER_LOG = log
+    config.LOCK_FILE = tmp / "no-such.lock"
+
+    def dying(args, **kw):
+        return real_popen(["sh", "-c", "echo '[10:00:00] error: preflight refused' >&2; exit 1"], **kw)
+
+    gui.subprocess.Popen = dying
+    try:
+        res = client.post("/api/watcher/start", json={})
+    finally:
+        gui.subprocess.Popen = real_popen
+    body = res.get_json()
+    assert res.status_code == 500, (res.status_code, body)
+    assert body["error"] == "preflight refused", body
+    assert gui._children == [], gui._children
+
+    def living(args, **kw):
+        return real_popen(["sleep", "30"], **kw)
+
+    gui.subprocess.Popen = living
+    try:
+        res = client.post("/api/watcher/start", json={})
+    finally:
+        gui.subprocess.Popen = real_popen
+    assert res.status_code == 200 and res.get_json()["ok"] is True, res.get_json()
+    for child in gui._children:
+        child.kill()
+        child.wait(5)
+    gui._children.clear()
+results.append(run("a watcher that exits right after starting fails the start with its error", t32))
+
+
+def t30():
     # A live recording with nothing on disk after the grace period is called
     # out in the status payload, and the page has somewhere to show it.
     from datetime import datetime as _dt, timedelta
