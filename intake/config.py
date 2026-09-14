@@ -426,20 +426,15 @@ NOTION_PROP_SOURCE = _setting("NOTION_PROP_SOURCE")
 RECORD_DEVICE = _setting("RECORD_DEVICE")
 
 # --- The panel on the web (gui.py) ------------------------------------------
-
 # The panel itself only ever listens on this Mac. To reach it from elsewhere
-# it is published through a Cloudflare Tunnel, and the panel's own Google
-# sign-in (signin.py) is the login in front of it. The client ID and secret
-# are a Web OAuth client in the Cloud project named LectureAI (not the one
-# the bundled Desktop client is in); the emails are who may enter,
-# comma-separated. With all three set,
-# any request that arrived through Cloudflare has to carry a session from
-# that sign-in or it is refused. With any of them unset, every request that
-# arrived through Cloudflare is refused, so a tunnel that is up before the
-# login is configured exposes nothing. Requests from this Mac are never gated.
-PANEL_GOOGLE_CLIENT_ID = _setting("PANEL_GOOGLE_CLIENT_ID")
-PANEL_GOOGLE_CLIENT_SECRET = _setting("PANEL_GOOGLE_CLIENT_SECRET")
-PANEL_ALLOWED_EMAILS = _setting("PANEL_ALLOWED_EMAILS")
+# it is published through a Cloudflare Tunnel, and the Syllabus account this
+# Mac is signed in to (account.py, signin.py) is the login in front of it:
+# the account's owner may enter and nobody else. A Mac with no account
+# refuses every request that arrived through Cloudflare, so a tunnel that is
+# up before the Mac is signed in exposes nothing. Requests from this Mac are
+# never gated. (PANEL_GOOGLE_CLIENT_ID, PANEL_GOOGLE_CLIENT_SECRET, and
+# PANEL_ALLOWED_EMAILS, the panel's own Google sign-in with an allowlist,
+# were retired on 2026-09-14 and are no longer read.)
 # The address the panel is published at (https://syllabus.maincoursemedia.com).
 # Google is told to send the browser back here after signing in, so it has
 # to be the address Google knows, whatever hostname the tunnel hands the

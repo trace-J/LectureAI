@@ -640,7 +640,7 @@ def main(argv: list[str] | None = None) -> int:
               f"anyone who can reach it can start and stop processes, read "
               f"pipeline.log, and rewrite the keys in .env. Keep it on this Mac, "
               f"or put something that authenticates in front of it (an SSH "
-              f"tunnel, or a Cloudflare Tunnel with PANEL_ALLOWED_EMAILS set) and pass --expose "
+              f"tunnel, or a Cloudflare Tunnel with this Mac signed in to a Syllabus account) and pass --expose "
               f"to say you have.", file=sys.stderr, flush=True)
         return 2
 
