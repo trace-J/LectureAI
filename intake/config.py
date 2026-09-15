@@ -212,6 +212,9 @@ def env_defaults(profile: Profile) -> dict[str, str]:
     return {
         "OPENAI_API_KEY": "",
         "ANTHROPIC_API_KEY": "",
+        # Only needed when TRANSCRIBE_MODEL names that provider.
+        "DEEPGRAM_API_KEY": "",
+        "GROQ_API_KEY": "",
         "DRIVE_ROOT_FOLDER_NAME": profile.drive_root_folder,
         "DRIVE_PARENT_FOLDER_ID": "",
         "NOTION_TOKEN": "",
@@ -260,6 +263,8 @@ def _setting(name: str) -> str:
 
 OPENAI_API_KEY = _setting("OPENAI_API_KEY")
 ANTHROPIC_API_KEY = _setting("ANTHROPIC_API_KEY")
+DEEPGRAM_API_KEY = _setting("DEEPGRAM_API_KEY")
+GROQ_API_KEY = _setting("GROQ_API_KEY")
 
 # --- Migration from an older install ---------------------------------------
 #
@@ -377,7 +382,10 @@ DRIVE_PARENT_FOLDER_ID = _setting("DRIVE_PARENT_FOLDER_ID")
 
 # --- Models ---------------------------------------------------------------
 
-# Swap to "whisper-1" here to fall back to Whisper; nothing else changes.
+# Which transcription provider runs. Every name in providers.PROVIDERS works:
+# "whisper-1", "groq/whisper-large-v3", "deepgram/nova-3". The chunking limits
+# travel with the model, so swapping this swaps them too; an unlisted name is
+# treated as an OpenAI model on the default limits below.
 TRANSCRIBE_MODEL = "gpt-4o-mini-transcribe"
 CLAUDE_MODEL = "claude-sonnet-5"
 
@@ -385,7 +393,12 @@ CLAUDE_MODEL = "claude-sonnet-5"
 
 AUDIO_EXTENSIONS = {".m4a", ".mp3", ".wav"}
 
-WHISPER_LIMIT_BYTES = 25 * 1024 * 1024   # hard API file-size limit
+# The four constants below are the DEFAULT PROVIDER's limits: OpenAI's
+# transcription endpoint with a gpt-4o transcribe model. They are not facts
+# about audio, and nothing outside providers.py should read them. Deepgram,
+# for one, takes 2GB and never splits on duration.
+
+WHISPER_LIMIT_BYTES = 25 * 1024 * 1024   # hard OpenAI file-size limit
 COMPRESS_THRESHOLD_BYTES = 24 * 1024 * 1024  # compress before we get close to it
 
 # The gpt-4o transcribe models cap their OUTPUT near 2000 tokens (~1740 words)
@@ -395,7 +408,8 @@ COMPRESS_THRESHOLD_BYTES = 24 * 1024 * 1024  # compress before we get close to i
 #
 # 8 minutes leaves headroom for fast talkers (safe to roughly 210 words/min).
 # Lower it if you see truncation warnings; raise it toward 12 for slow ones.
-# whisper-1 has no such output cap, so 20 * 60 is fine when using that model.
+# This is the gpt-4o limit only. Whisper and Deepgram have no output cap, and
+# providers.py gives them their own, longer chunks.
 CHUNK_SECONDS = 8 * 60
 
 # A chunk coming back at or above this word count probably got cut off.

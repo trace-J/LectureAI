@@ -43,8 +43,9 @@ inbox/lecture.m4a
    |                    the course and date from the recording's START time
    |                    (mtime minus duration), falling back to the filename
    v
-   |  transcribe.py     compresses over ~24MB, splits over 8 minutes,
-   |                    transcribes each chunk, stitches them in order
+   |  transcribe.py     compresses and splits to the limits the chosen
+   |                    provider carries (providers.py), transcribes each
+   |                    chunk, stitches them in order
    v
    |  summarize.py      one Claude call, response constrained to a schema:
    |                    summary, key terms, action items, topic slug
@@ -546,8 +547,9 @@ on and prints the fix for the ones that are missing.
 **A summary comes back thin or oddly formatted.** The transcript is probably
 truncated. The `gpt-4o-mini-transcribe` model caps output near 2000 tokens and
 truncates silently rather than erroring, which is why audio is split on
-duration as well as size. Lower `CHUNK_SECONDS` in `config.py` if you see
-truncation warnings.
+duration as well as size. Lower that provider's `max_chunk_seconds` in
+`providers.py` if you see truncation warnings. Models with no output cap,
+Whisper and Deepgram among them, cannot hit this at all.
 
 **Uploads suddenly fail with an auth error.** Before 2026-09-14 the Google
 Cloud project behind the bundled client was in Testing, so refresh tokens
@@ -764,6 +766,35 @@ Every module still runs on its own from the checkout, which is how to debug a
 single stage. The root-level `record.py`, `watch.py`, `gui.py`, `upload.py`,
 `transcribe.py`, `summarize.py`, and `notion_tasks.py` are one-line shims onto
 the package, so these are the same code the CLI runs:
+
+### Transcription providers
+
+`TRANSCRIBE_MODEL` in `config.py` picks one. The limits that decide chunking
+belong to the model, not to the audio, so they live with it in
+`providers.py` and change when the model does:
+
+| `TRANSCRIBE_MODEL` | Request cap | Chunked every | Can truncate | Speakers |
+|---|---|---|---|---|
+| `gpt-4o-mini-transcribe` (default) | 25MB | 8 min | yes | no |
+| `gpt-4o-transcribe` | 25MB | 8 min | yes | no |
+| `whisper-1` | 25MB | 20 min | no | no |
+| `groq/whisper-large-v3` | 100MB | 20 min | no | no |
+| `deepgram/nova-3` | 2GB | never | no | yes |
+
+The gpt-4o models are the only ones that cap their output, so they are the
+only ones that need 8 minute chunks and the re-split guard behind them. A
+39 minute lecture is five requests on the default, two on Whisper, and one on
+Deepgram. Anything not in the table is treated as an OpenAI model on the
+default limits.
+
+The non-OpenAI providers need their own key in `.env`, `DEEPGRAM_API_KEY` or
+`GROQ_API_KEY`. Nothing prompts for them; `intake setup` only asks for the two
+the default pipeline uses. To try one against a lecture without changing the
+setting:
+
+```bash
+.venv/bin/python transcribe.py lecture.m4a --model whisper-1 > transcript.txt
+```
 
 ```bash
 .venv/bin/python record.py --list-devices

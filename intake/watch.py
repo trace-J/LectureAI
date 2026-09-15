@@ -26,6 +26,7 @@ from watchdog.observers import Observer
 
 from intake import config
 from intake import notion_tasks
+from intake import providers
 from intake import summarize
 from intake import transcribe
 from intake import upload as drive
@@ -150,7 +151,8 @@ def wait_until_stable(path: Path) -> None:
 def preflight(interactive: bool) -> None:
     """Fail before spending money on transcription if something obvious is off."""
     config.schedule()
-    config.require("OPENAI_API_KEY")
+    # Whichever provider TRANSCRIBE_MODEL names, not always OpenAI's.
+    config.require(providers.get().api_key_setting)
     config.require("ANTHROPIC_API_KEY")
     drive.get_service(interactive)
 
