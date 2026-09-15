@@ -31,9 +31,20 @@ class ActionItem(BaseModel):
 
     task: str = Field(
         description=(
-            "What the student has to do, phrased as an instruction to "
-            "themselves: 'Read chapter 7', 'Submit the case memo'. Do not "
-            "include the due date here."
+            "The errand itself, at most 10 words, phrased as an instruction "
+            "to themselves: 'Read chapter 7', 'Submit the case memo'. Start "
+            "with the verb. Plain text only: no markdown, no bullet or "
+            "number prefix, no line breaks. Do not restate the due date, the "
+            "course, or why it matters. Anything beyond the errand goes in "
+            "detail. If the same assignment came up more than once in this "
+            "lecture, word it the same way every time."
+        )
+    )
+    detail: str = Field(
+        description=(
+            "One sentence of context that did not fit the task: what to "
+            "bring, which edition, how it will be graded, why it matters. "
+            "Plain text, no markdown. Empty string if the task says it all."
         )
     )
     due_date: str = Field(
@@ -110,6 +121,10 @@ on the exam, or flagged as commonly misunderstood deserves prominence.
 carry a deadline or a requirement.
 - Do not invent action items. If the instructor never mentioned a deadline, \
 return an empty list.
+- Keep each action item's task to the errand alone, under ten words, starting \
+with a verb and free of markdown. Context goes in its detail field. An \
+assignment the instructor brought up two or three times is still one action \
+item, worded identically each time, not one per mention.
 - For each action item, resolve any relative deadline against the lecture date \
 you are given: "next Thursday", "a week from today" and "before the exam" all \
 become a real YYYY-MM-DD. If the instructor genuinely set no deadline, leave \
@@ -136,10 +151,20 @@ class CallActionItem(BaseModel):
 
     task: str = Field(
         description=(
-            "What has to happen, phrased as an instruction to the team: 'Send "
-            "the revised proposal', 'Get logo files from the client'. Name the "
-            "person responsible if the call did. Do not include the due date "
-            "here."
+            "The errand itself, at most 10 words, phrased as an instruction "
+            "to the team: 'Send the revised proposal', 'Get logo files from "
+            "the client'. Start with the verb. Plain text only: no markdown, "
+            "no bullet or number prefix, no line breaks. Do not restate the "
+            "due date or why it matters. Anything beyond the errand goes in "
+            "detail. If the same commitment came up more than once on the "
+            "call, word it the same way every time."
+        )
+    )
+    detail: str = Field(
+        description=(
+            "One sentence of context that did not fit the task: who owns it, "
+            "what it depends on, what the client asked for exactly. Plain "
+            "text, no markdown. Empty string if the task says it all."
         )
     )
     due_date: str = Field(
@@ -215,6 +240,10 @@ said mattered to them deserves prominence.
 - Skip small talk and technical difficulties unless they carry a commitment.
 - Do not invent action items. If nobody committed to anything, return an \
 empty list.
+- Keep each action item's task to the errand alone, under ten words, starting \
+with a verb and free of markdown. Context goes in its detail field. A \
+commitment revisited later in the call is still one action item, worded \
+identically each time, not one per mention.
 - For each action item, resolve any relative deadline against the call date \
 you are given: "by Friday", "end of the month" and "before the launch" all \
 become a real YYYY-MM-DD. If no date was agreed, leave the date empty rather \

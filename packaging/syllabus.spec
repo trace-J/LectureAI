@@ -45,7 +45,10 @@ a = Analysis(
     hiddenimports=collect_submodules("intake"),
     hookspath=[],
     runtime_hooks=[],
-    excludes=["tkinter"],
+    # Nothing here is used at run time; leaving them out keeps the bundle
+    # smaller. pkg_resources and unittest stay: the Google client imports both.
+    excludes=["tkinter", "pydoc_data", "lib2to3",
+              "IPython", "pytest", "numpy"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

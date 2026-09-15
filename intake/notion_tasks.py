@@ -22,7 +22,7 @@ from pathlib import Path
 
 import requests
 
-from intake import config
+from intake import config, tasktext
 
 API = "https://api.notion.com/v1"
 TIMEOUT = 30
@@ -226,33 +226,83 @@ def _value_for(spec_type: str, value: str) -> dict:
     return {"rich_text": [{"type": "text", "text": {"content": value[:2000]}}]}
 
 
-def _already_there(data_source_id: str, mapping: dict, task: str,
-                   due: str) -> bool:
+# How many pages of 100 rows to read when comparing against what is already
+# filed. A semester of one course fits inside this; a database large enough to
+# exceed it would cost more to scan than a stray duplicate costs to delete.
+MATCH_PAGES = 3
+
+
+def _course_filter(mapping: dict, schema: dict, course: str) -> dict | None:
+    """A filter narrowing the query to one course, if the database has one."""
+    name = mapping.get("course")
+    if not (name and course):
+        return None
+    kind = schema.get(name, {}).get("type")
+    if kind == "select":
+        return {"property": name, "select": {"equals": course}}
+    if kind == "multi_select":
+        return {"property": name, "multi_select": {"contains": course}}
+    if kind == "status":
+        return {"property": name, "status": {"equals": course}}
+    return None
+
+
+def _existing_titles(data_source_id: str, mapping: dict, schema: dict,
+                     course: str, due: str) -> list[str]:
+    """Titles already in the database that this task could be a repeat of.
+
+    Scoped to the course when the database records one, because that is the
+    narrowest filter Notion can apply that still holds every candidate. It is
+    deliberately not scoped by due date: an instructor who pushes a deadline
+    back is exactly the case that used to produce a second row.
+    """
+    payload: dict = {"page_size": 100}
+    scope = _course_filter(mapping, schema, course)
+    if scope:
+        payload["filter"] = scope
+    elif mapping.get("due") and due:
+        payload["filter"] = {"property": mapping["due"], "date": {"equals": due}}
+
+    titles: list[str] = []
+    for _ in range(MATCH_PAGES):
+        found = _request("POST", f"/data_sources/{data_source_id}/query", payload)
+        for row in found.get("results", []):
+            prop = row.get("properties", {}).get(mapping["title"], {})
+            titles.append("".join(t.get("plain_text", "")
+                                  for t in prop.get("title", [])))
+        cursor = found.get("next_cursor")
+        if not (found.get("has_more") and cursor):
+            break
+        payload = dict(payload, start_cursor=cursor)
+    return titles
+
+
+def _already_there(data_source_id: str, mapping: dict, schema: dict, task: str,
+                   course: str, due: str) -> bool:
     """Whether this task is already in the database.
 
-    Matched on title, and on the due date too when there is a date property.
-    Keeps a re-run of a lecture from posting its tasks a second time without
-    writing any marker into someone else's database.
+    Matched on meaning rather than on the exact string. An instructor who
+    brings the same assignment up across three class periods gets summarized
+    three times and never in quite the same words, so an equality check on the
+    title filed it three times. Nothing is written into the database to make
+    this work: the comparison happens here, against what is already filed.
     """
-    conditions: list[dict] = [{"property": mapping["title"],
-                               "title": {"equals": task[:2000]}}]
-    if mapping["due"] and due:
-        conditions.append({"property": mapping["due"],
-                           "date": {"equals": due}})
-
-    payload = {"page_size": 1}
-    payload["filter"] = (conditions[0] if len(conditions) == 1
-                         else {"and": conditions})
-    found = _request("POST", f"/data_sources/{data_source_id}/query", payload)
-    return bool(found.get("results"))
+    return any(tasktext.same(task, title)
+               for title in _existing_titles(data_source_id, mapping, schema,
+                                             course, due))
 
 
 def add_task(data_source_id: str, mapping: dict, schema: dict, item: dict,
              course: str, source_url: str = "") -> str:
-    """Create one to-do page. Returns its Notion URL."""
+    """Create one to-do page. Returns its Notion URL.
+
+    The title carries the errand alone. Whatever context came with it goes in
+    the row's body, a click away, so the list stays readable at a glance.
+    """
     properties: dict = {
         mapping["title"]: {
-            "title": [{"type": "text", "text": {"content": item["task"][:2000]}}]
+            "title": [{"type": "text",
+                       "text": {"content": tasktext.clean(item["task"])}}]
         }
     }
     if mapping["due"] and item.get("due_date"):
@@ -270,10 +320,20 @@ def add_task(data_source_id: str, mapping: dict, schema: dict, item: dict,
             schema[mapping["source"]]["type"], source_url
         )
 
-    page = _request("POST", "/pages", {
+    payload: dict = {
         "parent": {"type": "data_source_id", "data_source_id": data_source_id},
         "properties": properties,
-    })
+    }
+    detail = tasktext.strip_markdown(item.get("detail", "") or "")
+    if detail:
+        payload["children"] = [{
+            "object": "block", "type": "paragraph",
+            "paragraph": {"rich_text": [
+                {"type": "text", "text": {"content": detail[:2000]}}
+            ]},
+        }]
+
+    page = _request("POST", "/pages", payload)
     return page.get("url", "")
 
 
@@ -344,8 +404,8 @@ def push(items: list[dict], course: str, source_url: str = "",
     for item in items:
         label = f"{item['task'][:60]}"
         try:
-            if _already_there(data_source_id, mapping, item["task"],
-                              item.get("due_date", "")):
+            if _already_there(data_source_id, mapping, schema, item["task"],
+                              course, item.get("due_date", "")):
                 skipped += 1
                 log(f"  already in Notion: {label}")
                 continue
@@ -524,13 +584,32 @@ def _column_todos(column_id: str) -> list[dict]:
     return [b for b in _children(column_id) if b["type"] == "to_do"]
 
 
+# The link back to the notes, as one character rather than a word. A day
+# column is narrow, and "  notes" pushed most checkboxes onto a second line
+# for no information the arrow does not already carry.
+NOTES_GLYPH = " ↗"
+
+
 def _todo_text(task: str, course: str, source_url: str = "") -> list[dict]:
-    """Rich text for one checkbox: the course, the task, and a link to notes."""
-    label = f"{course}: {task}" if course else task
-    parts = [{"type": "text", "text": {"content": label[:1800]}}]
+    """Rich text for one checkbox: the course, the task, and a link to notes.
+
+    Three separate spans, not one string. The course is set in gray so the eye
+    skips it and lands on the task, and the task itself is cleaned on the way
+    in: Notion's rich_text does no markdown parsing, so an asterisk the model
+    wrote is an asterisk the checkbox shows.
+    """
+    parts: list[dict] = []
+    if course:
+        parts.append({
+            "type": "text", "text": {"content": f"{course} "},
+            "annotations": {"bold": True, "color": "gray"},
+        })
+    parts.append({"type": "text",
+                  "text": {"content": tasktext.clean(task) or task[:200]}})
     if source_url:
         parts.append({"type": "text",
-                      "text": {"content": "  notes", "link": {"url": source_url}}})
+                      "text": {"content": NOTES_GLYPH,
+                               "link": {"url": source_url}}})
     return parts
 
 
@@ -562,13 +641,21 @@ def _already_on_page(page_id: str, task: str, course: str) -> bool:
     ticked off or dragged into a neighbouring day must not come back on the
     next run of the same lecture.
     """
-    label = (f"{course}: {task}" if course else task).strip().lower()
     for block in _children(page_id):
         if block["type"] != "column_list":
             continue
         for column in _children(block["id"]):
             for todo in _column_todos(column["id"]):
-                if _plain(todo).strip().lower().startswith(label):
+                existing = _plain(todo).strip()
+                if not existing:
+                    continue
+                # Drop what this module put around the task before comparing:
+                # the course prefix (whatever course it came from) and the
+                # link glyph on the end.
+                existing = tasktext.strip_course_prefix(
+                    existing.removeprefix(f"{course} ").strip()
+                ).removesuffix(NOTES_GLYPH.strip()).strip()
+                if tasktext.same(task, existing):
                     return True
     return False
 

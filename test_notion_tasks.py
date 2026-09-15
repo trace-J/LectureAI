@@ -228,8 +228,9 @@ class FakeNotion:
     """Stands in for _request, recording what would have been sent."""
 
     def __init__(self, existing_titles=()):
-        self.existing = set(existing_titles)
+        self.existing = list(existing_titles)
         self.created = []
+        self.queries = []
 
     def __call__(self, method, path, payload=None):
         if method == "GET" and path.startswith("/databases/"):
@@ -238,19 +239,19 @@ class FakeNotion:
         if method == "GET" and path.startswith("/data_sources/"):
             return {"properties": SCHEMA}
         if method == "POST" and path.endswith("/query"):
-            wanted = self._title_from_filter(payload.get("filter", {}))
-            return {"results": [{"id": "existing"}] if wanted in self.existing else []}
+            # The duplicate check reads the rows and compares here, so the
+            # stub hands back whole rows rather than answering a filter.
+            self.queries.append(payload)
+            return {"results": [
+                {"id": f"existing-{i}",
+                 "properties": {"Task": {"type": "title",
+                                         "title": [{"plain_text": title}]}}}
+                for i, title in enumerate(self.existing)
+            ], "has_more": False}
         if method == "POST" and path == "/pages":
             self.created.append(payload)
             return {"url": f"https://notion.so/page-{len(self.created)}"}
         raise AssertionError(f"unexpected call: {method} {path}")
-
-    @staticmethod
-    def _title_from_filter(f):
-        for clause in f.get("and", [f]):
-            if "title" in clause:
-                return clause["title"]["equals"]
-        return None
 
 
 ITEMS = [
@@ -534,7 +535,7 @@ def t24():
                              if b["id"] == fake.updated[0]][0]
     parts = body["to_do"]["rich_text"]
     joined = "".join(p["text"]["content"] for p in parts)
-    assert joined.startswith("ACCT-4321: "), joined
+    assert joined.startswith("ACCT-4321 "), joined
     assert any((p["text"].get("link") or {}).get("url") == "https://drive/doc"
                for p in parts), parts
 results.append(run("the checkbox carries the course and links to the notes", t24))
@@ -658,6 +659,106 @@ def t27():
         raise AssertionError("--setup should refuse while the target is weekly")
     reset_overrides()
 results.append(run("--setup refuses to add row properties the weekly target ignores", t27))
+
+
+def t28():
+    # The case that started this: the instructor brings one reading up again
+    # a week later, and the model words it differently the second time.
+    reset_overrides()
+    fake = FakeNotion(existing_titles=["Read chapter 7"])
+    nt._request = fake
+    out = nt.push([{"task": "Please read Chapter Seven", "due_date": "2026-09-22",
+                    "kind": "reading", "date_source": "stated"}], "ACCT-4321")
+    assert out["skipped"] == 1 and out["added"] == 0, out
+    assert not fake.created, fake.created
+results.append(run("a reworded restatement is not filed a second time", t28))
+
+
+def t29():
+    reset_overrides()
+    fake = FakeNotion(existing_titles=["Read chapter 7"])
+    nt._request = fake
+    out = nt.push([{"task": "Read chapter 8", "due_date": "2026-09-22",
+                    "kind": "reading", "date_source": "stated"}], "ACCT-4321")
+    assert out["added"] == 1 and out["skipped"] == 0, out
+results.append(run("the next chapter is a new task, not a near-miss", t29))
+
+
+def t30():
+    # A moved deadline used to slip past the filter and land as a second row.
+    reset_overrides()
+    fake = FakeNotion(existing_titles=["Read chapter 7"])
+    nt._request = fake
+    out = nt.push([{"task": "Read chapter 7", "due_date": "2026-10-01",
+                    "kind": "reading", "date_source": "stated"}], "ACCT-4321")
+    assert out["skipped"] == 1, out
+    # Scoped by course, so a pushed-back due date cannot hide the original.
+    assert fake.queries and "Course" in str(fake.queries[0]), fake.queries
+results.append(run("a task whose due date moved is still the same task", t30))
+
+
+def t31():
+    reset_overrides()
+    fake = FakeNotion()
+    nt._request = fake
+    nt.push([{"task": "**Read** chapter 7 before class",
+              "detail": "Bring the printed case to class.",
+              "due_date": "2026-09-15", "kind": "reading",
+              "date_source": "stated"}], "ACCT-4321")
+    page = fake.created[0]
+    title = page["properties"]["Task"]["title"][0]["text"]["content"]
+    assert title == "Read chapter 7", title
+    body = page["children"][0]["paragraph"]["rich_text"][0]["text"]["content"]
+    assert body == "Bring the printed case to class.", body
+results.append(run("the row title is the errand and the detail is its body", t31))
+
+
+def t32():
+    reset_overrides()
+    fake = FakeNotion()
+    nt._request = fake
+    nt.push(ITEMS, "ACCT-4321")
+    assert "children" not in fake.created[0], fake.created[0]
+results.append(run("an item with no detail gets no empty paragraph", t32))
+
+
+def t33():
+    reset_overrides()
+    config.NOTION_TARGET = "weekly"
+    fake = FakeWeekly(); nt._request = fake
+    nt.push_to_weekly([{"task": "Read chapter 7", "due_date": "2026-09-10",
+                        "kind": "reading", "date_source": "stated"}],
+                      "ACCT-4321", "https://drive/doc")
+    # Same errand, different words, on a later run of the same course.
+    fake.updated.clear()
+    out = nt.push_to_weekly([{"task": "Please read Chapter Seven",
+                              "due_date": "2026-09-10", "kind": "reading",
+                              "date_source": "stated"}],
+                            "ACCT-4321", "https://drive/doc")
+    assert out["skipped"] == 1 and out["added"] == 0, out
+    assert not fake.updated, fake.updated
+    reset_overrides()
+results.append(run("a reworded restatement is not added to the weekly page", t33))
+
+
+def t34():
+    reset_overrides()
+    config.NOTION_TARGET = "weekly"
+    fake = FakeWeekly(); nt._request = fake
+    nt.push_to_weekly([{"task": "- **Read** chapter 7 before class",
+                        "due_date": "2026-09-10", "kind": "reading",
+                        "date_source": "stated"}], "ACCT-4321", "https://drive/doc")
+    body = [b for kids in fake.blocks.values() for b in kids
+            if b["id"] == fake.updated[0]][0]
+    parts = body["to_do"]["rich_text"]
+    joined = "".join(p["text"]["content"] for p in parts)
+    assert "*" not in joined and "\n" not in joined, joined
+    assert joined == "ACCT-4321 Read chapter 7 \u2197", repr(joined)
+    # The course is its own span, so it can be set back without dimming the task.
+    assert parts[0]["annotations"]["color"] == "gray", parts[0]
+    assert "annotations" not in parts[1], parts[1]
+    reset_overrides()
+results.append(run("the checkbox is one clean line with the course set back", t34))
 
 
 print()

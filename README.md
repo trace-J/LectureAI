@@ -71,6 +71,28 @@ keeps anything next to itself.
 Local copies are staged in `processed/` before upload and removed after, so a
 failed upload never costs you the transcription you already paid for.
 
+## Install
+
+**The Mac app.** Download the newest `Syllabus-x.y.z.dmg` from the
+[releases page](https://github.com/trace-J/LectureAI/releases), open it, and
+drag Syllabus to Applications. Open Syllabus and it lands on its Setup page:
+paste your OpenAI and Anthropic keys, pick a microphone, enter your class
+schedule, connect Google Drive, and sign in to a Syllabus account if you have
+one. It runs from the menu bar after that; nothing else to install. Apple
+silicon, macOS 13 or newer.
+
+Until the app is signed with an Apple Developer ID, the first time you open
+it macOS says it could not verify the app and offers only Done or Move to
+Trash. Click Done, open System Settings, choose Privacy & Security, scroll to
+the Security section, click Open Anyway, and confirm. Once per version.
+
+When a newer version is out, the panel and the menu bar say so with a link
+to the download. Quit Syllabus, replace the copy in Applications, open it
+again; everything you set up stays.
+
+**From Terminal instead.** The same program without the window, for anyone
+who prefers a command line:
+
 ## Setup
 
 You need a Mac, Homebrew, an OpenAI API key, and an Anthropic API key. Three
@@ -807,6 +829,16 @@ in the keychain the result is signed ad hoc: it runs on the Mac that built it,
 and on another Mac only after the Gatekeeper steps in System Settings, Privacy
 & Security.
 
+Releases are cut by tag. Bump `__version__` in `intake/__init__.py`, merge,
+then tag that commit `vX.Y.Z` and push the tag: the "Release Syllabus.app"
+workflow builds the app on an Apple silicon runner, wraps it with
+`packaging/dmg.sh`, and publishes the image and its checksum as a GitHub
+Release with the notes in `packaging/release-notes.md`. The tag has to match
+the version or the workflow refuses. Every running panel asks GitHub for the
+release list once a day (`intake/updates.py`) and shows a notice with the
+download link, or the `pipx upgrade` line for a Terminal install; nothing
+replaces itself until the build is signed.
+
 The bundle carries its own ffmpeg and ffprobe, so Homebrew is not needed on
 a Mac that runs the app. They are static builds of a pinned ffmpeg release
 made by `packaging/ffmpeg/build.sh` with the GPL and nonfree parts disabled
@@ -842,6 +874,7 @@ credentials, or an API key, none costs anything to run, and none can touch
 .venv/bin/python test_sync.py                # the schedule file against the account's copy: push, pull, conflicts
 .venv/bin/python test_relay.py               # the panel on the web: relayed requests, the base path, the socket loop
 .venv/bin/python test_app.py                 # the desktop window: attach to a running panel or start one, the bundle's entry point
+.venv/bin/python test_updates.py             # the update notice: picking the newest release, the daily check, what each install is told
 ```
 
 ## V2 roadmap
@@ -897,9 +930,10 @@ piece of that, and the rest is planned in this order:
   that opens the panel in its own window ("Syllabus.app, the desktop build"
   above). The panel's watcher spawn and the launchd agent's command work
   from inside the bundle since the same day, and the bundle carries its own
-  static LGPL ffmpeg, stays resident behind a menu bar item, and has a
-  start-at-login switch. Still to do, one PR each: a release workflow with a
-  DMG and an update notice, then Developer ID signing and notarization.
+  static LGPL ffmpeg, stays resident behind a menu bar item, has a
+  start-at-login switch, ships as a DMG from a tagged release, and tells a
+  person when a newer version is out. Still to do: Developer ID signing and
+  notarization, then self-update.
 - **Sign-ins.** Done. The account service ("A Syllabus account" above), a
   Cloudflare Worker with D1, the same stack `mcm-dashboard` is scaffolded
   on, owns the Google sign-in, lets a panel claim an identity with a device

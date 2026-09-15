@@ -35,6 +35,7 @@ from pathlib import Path
 from flask import Flask, g, jsonify, render_template, request
 
 from intake import account, config, doctor, insights, relay, service, setup_wizard, signin, sync
+from intake import updates
 from intake import notion_tasks
 from intake import record as recording
 from intake import transcribe
@@ -289,6 +290,9 @@ def status():
         # Whether this panel runs inside the desktop app, which has a window
         # to show (see window_hooks).
         "window": "show" in window_hooks,
+        # Whether a newer Syllabus has been released, from the file the daily
+        # check writes (updates.py). Never the network.
+        "update": updates.status(),
     })
 
 
@@ -781,6 +785,8 @@ def prepare(host: str, port: int) -> str:
     # open from a thread, over which browsers at this Mac's address reach
     # it. Nothing without an account; it waits for one.
     relay.start(app)
+    # Once a day, from a thread: is there a newer Syllabus to point at.
+    updates.check_later()
     return url
 
 
