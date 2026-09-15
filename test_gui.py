@@ -134,9 +134,24 @@ def t6():
     config.NOTION_TOKEN = ""
     config.NOTION_DATABASE = ""
     checks = gui._integrations()
-    assert checks == {"openai": True, "anthropic": False,
+    assert checks == {"managed": False, "openai": True, "anthropic": False,
                       "drive": False, "notion": False}, checks
-results.append(run("setup checks report what is configured", t6))
+
+    # Signed in, both keys are the service's. The Setup page must show them as
+    # provided rather than as two empty fields somebody has to go and fill in.
+    from intake import account
+    account.save(account.Account(
+        token="syd_x", account_id="a1", email="me@example.com", name="Me",
+        device_id="d1", device_name="This Mac", profile="syllabus",
+        url=config.ACCOUNTS_URL, claimed_at="2026-09-15T00:00:00Z"))
+    config.OPENAI_API_KEY = config.ANTHROPIC_API_KEY = ""
+    try:
+        managed = gui._integrations()
+        assert managed["managed"] is True, managed
+        assert managed["openai"] and managed["anthropic"], managed
+    finally:
+        account.forget()
+results.append(run("setup checks report what is configured, and who provides it", t6))
 
 
 def t7():
