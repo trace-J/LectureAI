@@ -13,14 +13,13 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 import sys
 from pathlib import Path
 from typing import Callable
 
 from dotenv import dotenv_values
 
-from intake import config
+from intake import config, tools
 
 Ask = Callable[[str], str]
 Say = Callable[[str], None]
@@ -170,7 +169,7 @@ class Wizard:
     def devices(self) -> list[tuple[int, str]]:
         if self._devices is not None:
             return self._devices
-        if shutil.which("ffmpeg") is None:
+        if tools.find("ffmpeg") is None:
             return []
         from intake import record
         return record.list_devices()
@@ -180,8 +179,8 @@ class Wizard:
         current = values.get("RECORD_DEVICE", "")
         devices = self.devices()
         if not devices:
-            if shutil.which("ffmpeg") is None:
-                self.say("Microphone: ffmpeg is not installed yet (brew install ffmpeg), "
+            if tools.find("ffmpeg") is None:
+                self.say(f"Microphone: ffmpeg is not installed yet ({tools.install_hint()}), "
                          "so the list is empty. Keeping the default for now.")
             else:
                 self.say("Microphone: ffmpeg found no audio inputs. If this Mac has "

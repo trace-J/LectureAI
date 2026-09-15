@@ -27,10 +27,18 @@ datas = [
 # The Drive client loads its API description from files inside the package.
 datas += collect_data_files("googleapiclient")
 
+# ffmpeg and ffprobe, static LGPL builds (packaging/ffmpeg/), with their
+# license texts beside them. build.sh sets the folder; intake/tools.py finds
+# them under sys._MEIPASS/ffmpeg at run time.
+FFMPEG_DIR = Path(os.environ["SYLLABUS_FFMPEG_DIR"])
+binaries = [(str(FFMPEG_DIR / name), "ffmpeg") for name in ("ffmpeg", "ffprobe")]
+datas += [(str(FFMPEG_DIR / name), "ffmpeg")
+          for name in ("LICENSE.md", "COPYING.LGPLv2.1", "BUILD.txt")]
+
 a = Analysis(
     [str(ROOT / "packaging" / "entry.py")],
     pathex=[str(ROOT)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     # cli.py imports each subcommand's module inside a function; listing the
     # package makes sure none is left out of the bundle.

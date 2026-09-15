@@ -791,8 +791,22 @@ is made from `intake/static/icon.png` at build time; `packaging/build/` and
 `dist/` are build output and stay out of git. Without a Developer ID identity
 in the keychain the result is signed ad hoc: it runs on the Mac that built it,
 and on another Mac only after the Gatekeeper steps in System Settings, Privacy
-& Security. ffmpeg is still taken from PATH in this build; bundling it, keeping
-the app resident, and the release workflow are the next slices.
+& Security.
+
+The bundle carries its own ffmpeg and ffprobe, so Homebrew is not needed on
+a Mac that runs the app. They are static builds of a pinned ffmpeg release
+made by `packaging/ffmpeg/build.sh` with the GPL and nonfree parts disabled
+and only what the pipeline uses enabled: the microphone input, the AAC
+encoder, the m4a and segment muxers, and decoders for the audio that lands in
+the inbox. That makes them LGPL 2.1; the license texts ride along inside the
+app. The "ffmpeg for Syllabus.app" workflow builds them on an Apple silicon
+runner and, when run from main with publish ticked, attaches the tarball to
+the GitHub Release named in `packaging/ffmpeg/release`; `packaging/build.sh`
+downloads that file and checks its sha256. `intake/tools.py` is how the
+pipeline finds them: the copy inside the app first, then a folder named in
+`$INTAKE_FFMPEG_DIR`, then PATH, so a checkout and a pipx install still use
+Homebrew's as before. Keeping the app resident and the release workflow for
+the app itself are the next slices.
 
 ### Tests
 
@@ -868,8 +882,8 @@ piece of that, and the rest is planned in this order:
   `intake app` and `packaging/build.sh` produce an unsigned `Syllabus.app`
   that opens the panel in its own window ("Syllabus.app, the desktop build"
   above). The panel's watcher spawn and the launchd agent's command work
-  from inside the bundle since the same day. Still to do, one PR each: a
-  bundled ffmpeg, staying resident behind a menu bar item
+  from inside the bundle since the same day, and the bundle carries its own
+  static LGPL ffmpeg. Still to do, one PR each: staying resident behind a menu bar item
   with a start-at-login switch, a release workflow with a DMG and an update
   notice, then Developer ID signing and notarization.
 - **Sign-ins.** Done. The account service ("A Syllabus account" above), a

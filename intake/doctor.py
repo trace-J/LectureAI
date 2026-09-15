@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from intake import config, google_client
+from intake import config, google_client, tools
 
 MIN_PYTHON = (3, 11)
 
@@ -39,11 +38,12 @@ def check_python() -> Check:
 
 
 def check_ffmpeg() -> Check:
-    path = shutil.which("ffmpeg")
-    probe = shutil.which("ffprobe")
+    path = tools.find("ffmpeg")
+    probe = tools.find("ffprobe")
     if path and probe:
-        return Check("ffmpeg", True, path)
-    return Check("ffmpeg", False, "not on PATH", "brew install ffmpeg")
+        where = "bundled with Syllabus.app" if tools.bundled() else path
+        return Check("ffmpeg", True, where)
+    return Check("ffmpeg", False, "not found", tools.install_hint())
 
 
 def check_home() -> Check:
@@ -190,9 +190,9 @@ def check_notion() -> Check:
 
 
 def check_microphone() -> Check:
-    if shutil.which("ffmpeg") is None:
+    if tools.find("ffmpeg") is None:
         return Check("microphone", False, "cannot check without ffmpeg",
-                     "brew install ffmpeg")
+                     tools.install_hint())
     from intake import record
     devices = record.list_devices()
     if not devices:

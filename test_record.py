@@ -312,8 +312,11 @@ def t17():
 
     real_popen, real_which, real_awake = (record.subprocess.Popen, record.shutil.which,
                                           record._keep_awake)
+    real_find = record.tools.find
     record.subprocess.Popen = FakePopen
     record.shutil.which = lambda name: f"/opt/homebrew/bin/{name}"
+    # ffmpeg comes through tools.find: the bundled copy, a named folder, or PATH.
+    record.tools.find = lambda name, env=None: f"/opt/homebrew/bin/{name}"
     record._keep_awake = REAL_KEEP_AWAKE
     record.list_devices = fake_devices
     try:
@@ -321,10 +324,12 @@ def t17():
         rec.start(max_minutes=90)
     finally:
         record.subprocess.Popen, record.shutil.which = real_popen, real_which
+        record.tools.find = real_find
         record._keep_awake = real_awake
-    cmds = {cmd[0]: (cmd, kw) for cmd, kw in launched}
+    cmds = {Path(cmd[0]).name: (cmd, kw) for cmd, kw in launched}
     assert set(cmds) == {"ffmpeg", "caffeinate"}, [c for c, _ in launched]
     cmd, kw = cmds["ffmpeg"]
+    assert cmd[0] == "/opt/homebrew/bin/ffmpeg", "ffmpeg is run by the path tools found"
     assert kw["start_new_session"] is True
     assert cmd[cmd.index("-t") + 1] == "5400", cmd
     # Idle sleep ends the capture, so the Mac is held awake for exactly as
@@ -509,6 +514,53 @@ def t23():
     lock.unlink()
     assert not record._watcher_is_running()
 results.append(run("the watcher is running when its lock is held, not when its pid exists", t23))
+
+
+def t24():
+    """tools: the bundled ffmpeg first, then $INTAKE_FFMPEG_DIR, then PATH."""
+    import os
+    import stat
+    import tempfile
+    import sys
+    from intake import tools
+    with tempfile.TemporaryDirectory() as tmp:
+        bundle = Path(tmp) / "bundle"
+        (bundle / "ffmpeg").mkdir(parents=True)
+        extra = Path(tmp) / "extra"
+        extra.mkdir()
+        for folder in (bundle / "ffmpeg", extra):
+            for name in ("ffmpeg", "ffprobe"):
+                exe = folder / name
+                exe.write_text("#!/bin/sh\n")
+                exe.chmod(exe.stat().st_mode | stat.S_IXUSR)
+
+        # Outside the app: nothing bundled; the named folder wins over PATH.
+        assert tools.bundle_dir() is None
+        assert tools.search_dirs({}) == []
+        assert tools.find("ffmpeg", {tools.FFMPEG_DIR_ENV_VAR: str(extra)}) == str(extra / "ffmpeg")
+        assert tools.find("ffmpeg", {}) == record.shutil.which("ffmpeg")
+        assert tools.find("ffmpeg", {tools.FFMPEG_DIR_ENV_VAR: str(Path(tmp) / "nowhere")}) \
+            == record.shutil.which("ffmpeg"), "an empty folder falls through to PATH"
+        assert tools.install_hint() == "brew install ffmpeg"
+        assert not tools.bundled()
+
+        # Inside Syllabus.app, PyInstaller names the unpacked folder in sys._MEIPASS.
+        sys._MEIPASS = str(bundle)
+        try:
+            assert tools.bundle_dir() == bundle / "ffmpeg"
+            assert tools.find("ffmpeg", {tools.FFMPEG_DIR_ENV_VAR: str(extra)}) \
+                == str(bundle / "ffmpeg" / "ffmpeg"), "the bundled copy comes first"
+            assert tools.find("ffprobe", {}) == str(bundle / "ffmpeg" / "ffprobe")
+            assert tools.bundled()
+            assert "Syllabus.app" in tools.install_hint()
+            # A bundle missing its copy still falls back to PATH.
+            (bundle / "ffmpeg" / "ffmpeg").unlink()
+            assert tools.find("ffmpeg", {}) == record.shutil.which("ffmpeg")
+            assert not tools.bundled()
+        finally:
+            del sys._MEIPASS
+    assert tools.ffmpeg() == (record.shutil.which("ffmpeg") or "ffmpeg")
+results.append(run("tools finds ffmpeg bundled first, then a named folder, then PATH", t24))
 
 print()
 print(f"{sum(results)}/{len(results)} passed")
