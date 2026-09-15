@@ -22,6 +22,12 @@ dependencies = [
     "websocket-client>=1.8",
 ]
 
+# The desktop app (intake/app.py) and the tooling that freezes it into
+# Syllabus.app (packaging/). Neither is needed for the command line install.
+[project.optional-dependencies]
+app = ["pywebview>=6.0"]
+build = ["pyinstaller>=6.10"]
+
 [project.scripts]
 intake = "intake.cli:main"
 # The same entry point with the profile chosen: syllabus for lectures, sous

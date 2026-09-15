@@ -689,8 +689,26 @@ def main(argv: list[str] | None = None) -> int:
               f"to say you have.", file=sys.stderr, flush=True)
         return 2
 
+    url = prepare(args.host, args.port)
+    if not args.no_browser:
+        _open_browser_later(url)
+    serve(args.host, args.port)
+    return 0
+
+
+def start_url(host: str, port: int) -> str:
+    """Where the panel opens: the dashboard, or Setup while nothing is configured."""
     page = "" if _configured() else "setup"
-    url = f"http://{args.host}:{args.port}/{page}"
+    return f"http://{host}:{port}/{page}"
+
+
+def prepare(host: str, port: int) -> str:
+    """Everything the panel does before it listens. Returns the page to open.
+
+    Shared by `intake panel` and the desktop app (app.py), which runs the
+    server from a thread so its window can have the main one.
+    """
+    url = start_url(host, port)
     print(f"{config.PROFILE.title} control panel:  {url}", file=sys.stderr, flush=True)
     if not _configured():
         print("  nothing is set up yet, so the Setup page opens first",
@@ -705,15 +723,16 @@ def main(argv: list[str] | None = None) -> int:
     # open from a thread, over which browsers at this Mac's address reach
     # it. Nothing without an account; it waits for one.
     relay.start(app)
-    if not args.no_browser:
-        _open_browser_later(url)
+    return url
+
+
+def serve(host: str, port: int) -> None:
+    """Listen until the process ends."""
     # load_dotenv=False: Flask would otherwise read a .env from the current
     # directory into the environment, so running the panel from a checkout
     # (or any folder with a stray .env) silently overrode the home directory's
     # settings. The only .env that counts is the one config already loaded.
-    app.run(host=args.host, port=args.port, debug=False, threaded=True,
-            load_dotenv=False)
-    return 0
+    app.run(host=host, port=port, debug=False, threaded=True, load_dotenv=False)
 
 
 if __name__ == "__main__":
