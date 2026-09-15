@@ -13,6 +13,11 @@ terminal. Each profile gets its own agent, since each has its own port.
 Only the panel is kept alive. The watcher spends API credit and writes to
 Drive and Notion, so starting it stays a deliberate click in the panel.
 
+Inside Syllabus.app the agent runs the app itself, hidden, so the menu bar
+item is there from login (app.py); the Setup page's "Start Syllabus when I
+log in" and the menu bar item both come here. That agent is restarted only
+after a crash, so quitting from the menu bar stays quit until the next login.
+
 A launchd agent is what macOS has for a program that belongs to one person's
 login session, which this is: it records from this Mac's microphone, so it
 cannot run anywhere else. The first recording after installing will ask for
@@ -61,9 +66,41 @@ def program(profile=None) -> list[str]:
     config.program spells it the way this process was started: a venv install
     keeps using its venv, a pipx install its own, and Syllabus.app its one
     binary. `-m intake.cli` rather than the `intake` script, which may not be
-    on any PATH launchd knows about.
+    on any PATH launchd knows about. The app is started hidden: the menu bar
+    item appears, the window waits to be asked for.
     """
-    return config.program("panel", "--no-browser", profile=profile or config.PROFILE)
+    profile = profile or config.PROFILE
+    if config.FROZEN:
+        return config.program("app", "--hidden", profile=profile)
+    return config.program("panel", "--no-browser", profile=profile)
+
+
+def keep_alive():
+    """launchd's KeepAlive: always for the bare panel, which has no quit of
+    its own; only after a crash for the app, so Quit means quit."""
+    return {"SuccessfulExit": False} if config.FROZEN else True
+
+
+def installed(profile=None, agents_dir: Path = AGENTS_DIR) -> bool:
+    return plist_path(profile, agents_dir).exists()
+
+
+def installed_program(profile=None, agents_dir: Path = AGENTS_DIR) -> list[str] | None:
+    """The command the installed agent runs, or None when none is installed."""
+    path = plist_path(profile, agents_dir)
+    if not path.exists():
+        return None
+    try:
+        return list(plistlib.loads(path.read_bytes()).get("ProgramArguments") or [])
+    except (OSError, plistlib.InvalidFileException, ValueError):
+        return None
+
+
+def runs_this_program(profile=None, agents_dir: Path = AGENTS_DIR) -> bool:
+    """Whether the installed agent runs the program running now: this app,
+    or this interpreter. False for an agent left by a different install."""
+    command = installed_program(profile, agents_dir)
+    return bool(command) and command[0] == sys.executable
 
 
 def plist(profile=None) -> dict:
@@ -81,7 +118,7 @@ def plist(profile=None) -> dict:
         "ProgramArguments": program(profile),
         "EnvironmentVariables": env,
         "RunAtLoad": True,
-        "KeepAlive": True,
+        "KeepAlive": keep_alive(),
         # A user-facing program, so macOS treats its permission prompts
         # (microphone) as belonging to the person at the screen.
         "ProcessType": "Interactive",
@@ -128,7 +165,9 @@ def install(say=print, run=subprocess.run, agents_dir: Path = AGENTS_DIR,
         return 1
     _launchctl(["kickstart", "-k", f"{domain()}/{label(profile)}"], run)
     say(f"{profile.title} panel installed as {label(profile)}")
-    say(f"  starts at login, restarts if it dies, log in {config.HOME_DIR / 'panel.log'}")
+    how = ("hidden in the menu bar, back after a crash" if config.FROZEN
+           else "restarts if it dies")
+    say(f"  starts at login, {how}, log in {config.HOME_DIR / 'panel.log'}")
     if wait and not wait_for_port(profile.panel_port, wait):
         say(f"  it has not answered on port {profile.panel_port} yet; "
             f"check the log if it stays that way")

@@ -1093,10 +1093,14 @@ def t38():
     try:
         assert gui.watcher_command() == [sys.executable, "--profile", "syllabus", "watch"]
         assert config.program_cwd() == config.HOME_DIR
+        # The app's agent starts the app itself, hidden in the menu bar, and
+        # launchd restarts it only after a crash, so Quit stays quit.
         assert service.program() == [sys.executable, "--profile", "syllabus",
-                                     "panel", "--no-browser"]
+                                     "app", "--hidden"]
+        assert service.keep_alive() == {"SuccessfulExit": False}
     finally:
         config.FROZEN = False
+    assert service.keep_alive() is True
 results.append(run("watcher and agent commands, from a checkout and frozen", t38))
 
 print()
