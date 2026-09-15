@@ -21,6 +21,14 @@ from intake import config, schemas, tasktext
 
 MAX_SLUG_WORDS = 4
 
+# No temperature is set here and none can be. Sonnet 5 removed the sampling
+# parameters: temperature, top_p and top_k are rejected with a 400, and the
+# SDK's messages.parse() does not accept them at all. So run-to-run stability
+# has to come from the prompt and the schema, which is why the action item
+# rules in schemas.py are written to leave no borderline case to a coin flip.
+# If a future model brings temperature back, it is still not the fix; an
+# instruction the model can read two ways is.
+
 
 def fallback_slug() -> str:
     """Topic slug when the model gave none: Lecture-Notes, or the profile's."""
