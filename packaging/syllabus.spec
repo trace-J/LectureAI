@@ -80,6 +80,9 @@ app = BUNDLE(
         "CFBundleVersion": __version__,
         "LSMinimumSystemVersion": "13.0",
         "NSHighResolutionCapable": True,
+        # A menu bar app: no Dock tile at launch. app.py gives it one while
+        # its window is open.
+        "LSUIElement": True,
         "NSHumanReadableCopyright": "Main Course Media",
         # Shown by macOS the first time a recording opens the microphone.
         "NSMicrophoneUsageDescription":

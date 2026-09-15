@@ -296,6 +296,18 @@
     </div>
   </div>
 
+  <!-- Start at login -->
+  <div class="card" id="loginCard">
+    <h2><span class="step">7</span> Keep it running</h2>
+    <p class="lead">
+      Recording, transcribing, and your address on the web all need Syllabus to be
+      running. Starting it when you log in means it is there for every class without
+      a thought.
+    </p>
+    <label class="toggle"><input type="checkbox" id="loginOn"> <span id="loginLabel">Start Syllabus when I log in</span></label>
+    <div class="hint" id="loginHint"></div>
+  </div>
+
   <!-- Checkup -->
   <div class="card">
     <h2>Checkup <button type="button" class="btn small" id="recheck" style="margin-left:auto">Run again</button></h2>
@@ -684,8 +696,27 @@ $("accountOff").onclick = async () => {
   catch (e) { flash(e.message, true); }
 };
 
+function renderLogin(l) {
+  $("loginOn").checked = !!l.installed && !l.other;
+  $("loginLabel").textContent = l.label;
+  $("loginHint").textContent = l.other
+    ? "Something else already starts a Syllabus panel at login. Turning this on replaces it."
+    : (l.installed ? "On. It starts at login and comes back on its own if it stops." : "");
+}
+async function loadLogin() {
+  try { renderLogin(await api("/api/login-item")); }
+  catch (e) { $("loginCard").hidden = true; }
+}
+$("loginOn").onchange = async () => {
+  $("loginOn").disabled = true;
+  try { renderLogin(await api("/api/login-item", { enabled: $("loginOn").checked })); }
+  catch (e) { flash(e.message, true); await loadLogin(); }
+  finally { $("loginOn").disabled = false; }
+};
+
 load().then(checkup);
 loadAccount();
+loadLogin();
 </script>
 </body>
 </html>

@@ -34,7 +34,7 @@ from pathlib import Path
 
 from flask import Flask, g, jsonify, render_template, request
 
-from intake import account, config, doctor, insights, relay, setup_wizard, signin, sync
+from intake import account, config, doctor, insights, relay, service, setup_wizard, signin, sync
 from intake import notion_tasks
 from intake import record as recording
 from intake import transcribe
@@ -44,6 +44,12 @@ app = Flask(__name__)
 # One recorder for the process. The GUI is single-user by construction, and a
 # second concurrent recording would fight over the microphone anyway.
 _recorder: recording.Recorder | None = None
+
+# What the desktop app (app.py) registers when this panel runs inside it:
+# "show" brings its window forward. Empty under `intake panel`, and the
+# status answer says so, which is how a second copy of the app knows whether
+# to ask for the window or to be one.
+window_hooks: dict[str, object] = {}
 
 WATCHER_LOG = config.WORK_DIR / "watcher-gui.log"
 
@@ -280,7 +286,54 @@ def status():
         # The Syllabus account this Mac is claimed into, if any. File only;
         # the status poll never talks to the account service.
         "account": account.summary(),
+        # Whether this panel runs inside the desktop app, which has a window
+        # to show (see window_hooks).
+        "window": "show" in window_hooks,
     })
+
+
+@app.post("/api/window/show")
+def window_show():
+    """Bring the desktop app's window forward. A second copy of the app asks
+    this instead of opening a window of its own."""
+    hook = window_hooks.get("show")
+    if hook is None:
+        return jsonify({"ok": False, "error": "this panel has no window"}), 409
+    hook()
+    return jsonify({"ok": True})
+
+
+# --- Start at login ------------------------------------------------------------
+
+@app.get("/api/login-item")
+def login_item_state():
+    """Whether a launch agent starts this program at login (service.py)."""
+    return jsonify(_login_item())
+
+
+def _login_item() -> dict:
+    return {
+        "installed": service.installed(),
+        # An agent from a different install: the Terminal install's panel
+        # while the app is running, or the other way round.
+        "other": service.installed() and not service.runs_this_program(),
+        "label": (f"Start {config.PROFILE.title} when I log in" if "show" in window_hooks
+                  else f"Start the {config.PROFILE.title} panel when I log in"),
+    }
+
+
+@app.post("/api/login-item")
+def login_item_set():
+    payload = request.get_json(silent=True) or {}
+    said: list[str] = []
+    if payload.get("enabled"):
+        rc = service.install(say=said.append, wait=0)
+    else:
+        rc = service.uninstall(say=said.append)
+    if rc != 0:
+        return jsonify({"ok": False, "error": " ".join(said) or "launchctl refused",
+                        **_login_item()}), 500
+    return jsonify({"ok": True, **_login_item()})
 
 
 @app.post("/api/record/start")

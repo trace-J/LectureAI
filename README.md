@@ -779,6 +779,20 @@ listening on the port, from `intake panel` or the launchd agent, the window
 attaches to it and starts nothing, so a checkout and the live panel never
 fight over one home.
 
+The app stays running after its window is closed: closing hides the window,
+and a menu bar item shows whether a recording is running, starts and stops
+one, opens the window again, and quits. While the window is open the app has
+a Dock tile and a menu bar, so copy and paste work in the key fields; hidden,
+it lives in the menu bar alone. Launching it a second time only brings the
+first copy's window forward. Setup's "Keep it running" card, and the same
+line in the menu, install the launch agent from "Keeping the panel running"
+above with the app as its program, started hidden at login and restarted only
+after a crash, so Quit means quit until the next login. When the app is
+opened on a Mac where `intake panel` or its agent already holds the port, it
+becomes a window on that panel and its menu offers to take over, which moves
+the agent to the app. Quitting never stops a recording or a lecture being
+processed: both run detached and the next panel picks them up.
+
 `packaging/build.sh` freezes that into `dist/Syllabus.app` with PyInstaller
 (`packaging/syllabus.spec`; the `build` extra installs it). The bundle's one
 binary is the app when double-clicked and the `syllabus` command when given
@@ -883,9 +897,9 @@ piece of that, and the rest is planned in this order:
   that opens the panel in its own window ("Syllabus.app, the desktop build"
   above). The panel's watcher spawn and the launchd agent's command work
   from inside the bundle since the same day, and the bundle carries its own
-  static LGPL ffmpeg. Still to do, one PR each: staying resident behind a menu bar item
-  with a start-at-login switch, a release workflow with a DMG and an update
-  notice, then Developer ID signing and notarization.
+  static LGPL ffmpeg, stays resident behind a menu bar item, and has a
+  start-at-login switch. Still to do, one PR each: a release workflow with a
+  DMG and an update notice, then Developer ID signing and notarization.
 - **Sign-ins.** Done. The account service ("A Syllabus account" above), a
   Cloudflare Worker with D1, the same stack `mcm-dashboard` is scaffolded
   on, owns the Google sign-in, lets a panel claim an identity with a device
