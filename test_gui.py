@@ -1076,6 +1076,29 @@ def t37():
         config.ACCOUNTS_URL = "off"
 results.append(run("with an account, the Drive card connects through the account page", t37))
 
+
+def t38():
+    """The panel and the service spawn this program the way it was started."""
+    from intake import profiles, service
+    assert config.FROZEN is False, "tests run from a checkout"
+    assert gui.watcher_command() == [sys.executable, "-m", "intake.cli",
+                                     "--profile", "syllabus", "watch"]
+    assert config.program_cwd() == config.CODE_ROOT
+    assert service.program()[-2:] == ["panel", "--no-browser"]
+    assert service.program(profiles.SOUS)[3:5] == ["--profile", "sous"]
+
+    # Inside Syllabus.app the binary is the command: no -m, no module name,
+    # and nothing to run from but the home directory.
+    config.FROZEN = True
+    try:
+        assert gui.watcher_command() == [sys.executable, "--profile", "syllabus", "watch"]
+        assert config.program_cwd() == config.HOME_DIR
+        assert service.program() == [sys.executable, "--profile", "syllabus",
+                                     "panel", "--no-browser"]
+    finally:
+        config.FROZEN = False
+results.append(run("watcher and agent commands, from a checkout and frozen", t38))
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

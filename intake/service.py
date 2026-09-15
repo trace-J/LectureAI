@@ -58,13 +58,12 @@ def domain() -> str:
 def program(profile=None) -> list[str]:
     """The command the agent runs: this interpreter, this package, this profile.
 
-    The interpreter is the one running now, so a venv install keeps using
-    its venv and a pipx install its own. `-m intake.cli` rather than the
-    `intake` script, which may not be on any PATH launchd knows about.
+    config.program spells it the way this process was started: a venv install
+    keeps using its venv, a pipx install its own, and Syllabus.app its one
+    binary. `-m intake.cli` rather than the `intake` script, which may not be
+    on any PATH launchd knows about.
     """
-    profile = profile or config.PROFILE
-    return [sys.executable, "-m", "intake.cli", "--profile", profile.name,
-            "panel", "--no-browser"]
+    return config.program("panel", "--no-browser", profile=profile or config.PROFILE)
 
 
 def plist(profile=None) -> dict:
