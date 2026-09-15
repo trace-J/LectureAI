@@ -611,6 +611,8 @@ def account_state():
             # another Mac saved; throttled so a page left open is quiet.
             sync.sync_later("setup", throttle=True)
             out["sync"] = sync.status()
+            # This Mac's address on the web, and whether the socket is up.
+            out["relay"] = relay.status()
     return jsonify(out)
 
 

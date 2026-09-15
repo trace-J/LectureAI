@@ -381,6 +381,55 @@ def t12():
         account.forget()
 results.append(run("addresses follow the account service's URL, and nothing starts with accounts off", t12))
 
+def t13():
+    from intake import doctor
+    account.save(ME)
+    clock = Clock()
+    try:
+        relay.state_file().unlink(missing_ok=True)
+        check = doctor.check_panel_web()
+        assert check.ok and SERVICE + "/p/d1/" in check.detail and "no panel has recorded" in check.detail, check
+        assert not check.required
+
+        sock = FakeSocket([], [("open", None), ("close", (1006, ""))])
+        r = relay.Relay(echo, socket_factory=sock.factory, sleep=clock.sleep, now=clock.now)
+        r.run(rounds=1)
+        written = relay.read_state_file()
+        assert written["state"] == "reconnecting" and written["url"] == SERVICE + "/p/d1/", written
+        assert written["written_at"] and written["connected_at"], written
+        check = doctor.check_panel_web()
+        assert not check.ok and "not connected as of" in check.detail and "1006" in check.detail, check
+        assert "intake service status" in check.fix, check
+
+        steady = FakeSocket([], [("open", None)])
+        r2 = relay.Relay(echo, socket_factory=steady.factory, sleep=clock.sleep, now=clock.now)
+        r2._connect_once(ME)  # the socket is "open" and stays that way
+        assert relay.read_state_file()["state"] == "connected"
+        check = doctor.check_panel_web()
+        assert check.ok and "connected since" in check.detail, check
+    finally:
+        relay.state_file().unlink(missing_ok=True)
+        account.forget()
+    assert doctor.check_panel_web() is None, "no account, no line"
+results.append(run("the doctor reads the state the panel last wrote, without the network", t13))
+
+
+def t14():
+    account.save(ME)
+    saved = account.transport
+    account.transport = lambda method, url, headers, body, timeout: (200, {"account": {"id": "a1", "email": "me@example.com"}})
+    try:
+        with gui.app.test_client() as client:
+            out = client.get("/api/account").get_json()
+            assert out["signed_in"] and out["relay"]["url"] == SERVICE + "/p/d1/", out.get("relay")
+            assert out["relay"]["state"] in ("off", "connecting", "reconnecting", "connected", "stopped"), out["relay"]
+            html = client.get("/setup").get_data(as_text=True)
+            assert 'id="accountRelay"' in html and "renderRelay" in html
+    finally:
+        account.transport = saved
+        account.forget()
+results.append(run("the Setup page's account card is told the address and the connection state", t14))
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

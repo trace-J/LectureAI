@@ -251,6 +251,38 @@ def check_web_signin() -> Check | None:
                  required=False)
 
 
+def check_panel_web() -> Check | None:
+    """The panel's address on the web, and whether the socket behind it is up.
+
+    Nothing without an account. The state comes from .work/relay.json, which
+    the running panel writes whenever the connection changes, so this is
+    what the panel last said, stamped with when it said it; the doctor
+    never asks the panel or the network.
+    """
+    from intake import account, relay
+    if not account.enabled():
+        return None
+    acct = account.load()
+    if acct is None:
+        return None
+    url = relay.panel_url(acct)
+    state = relay.read_state_file()
+    how = state.get("state", "")
+    stamp = state.get("written_at") or state.get("since") or ""
+    if not state:
+        return Check("panel on the web", True,
+                     f"{url}; the panel connects when it runs, and no panel has "
+                     f"recorded its connection yet", required=False)
+    if how == "connected":
+        return Check("panel on the web", True,
+                     f"{url}; connected since {state.get('connected_at') or stamp}", required=False)
+    why = state.get("error") or state.get("detail") or how or "not connected"
+    return Check("panel on the web", False,
+                 f"{url}; not connected as of {stamp}: {why}",
+                 "check `intake service status`; the panel reconnects on its own once it "
+                 "is running and online", required=False)
+
+
 def check_account() -> Check | None:
     """Which Syllabus account this Mac belongs to. Nothing when accounts are off.
 
@@ -316,7 +348,8 @@ def run_checks() -> list[Check]:
         check_notion(),
         check_microphone(),
     ]
-    for extra in (check_web_signin(), check_account(), check_legacy(), check_old_home()):
+    for extra in (check_web_signin(), check_account(), check_panel_web(), check_legacy(),
+                  check_old_home()):
         if extra:
             checks.append(extra)
     return checks
