@@ -28,3 +28,6 @@ pipeline.log
 
 # macOS
 .DS_Store
+
+# git worktrees for parallel Claude Code sessions (EnterWorktree puts them here)
+.claude/worktrees/
