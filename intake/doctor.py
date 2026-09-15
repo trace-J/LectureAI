@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from intake import config, google_client, tools
+from intake import account, config, google_client, tools
 
 MIN_PYTHON = (3, 11)
 
@@ -335,13 +335,29 @@ def check_old_home() -> Check | None:
                  f"{config.HOME_DIR} is the home in use", required=False)
 
 
+def _key_checks() -> list[Check]:
+    """The keys this Mac needs, which on a managed Mac is none of them.
+
+    Signed in, transcription and summaries are the account service's calls on
+    the account service's keys, so a missing OPENAI_API_KEY here is correct
+    rather than broken and doctor must not report it as a fault.
+    """
+    if account.managed():
+        acct = account.load()
+        who = acct.email if acct else ""
+        return [Check("API keys", True,
+                      f"managed by the Syllabus account{f' ({who})' if who else ''}",
+                      "")]
+    return [check_key("OpenAI key", "OPENAI_API_KEY"),
+            check_key("Anthropic key", "ANTHROPIC_API_KEY")]
+
+
 def run_checks() -> list[Check]:
     checks = [
         check_python(),
         check_ffmpeg(),
         check_home(),
-        check_key("OpenAI key", "OPENAI_API_KEY"),
-        check_key("Anthropic key", "ANTHROPIC_API_KEY"),
+        *_key_checks(),
         check_schedule(),
         check_drive_client(),
         check_drive_token(),

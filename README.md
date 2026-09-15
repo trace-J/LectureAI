@@ -96,8 +96,11 @@ who prefers a command line:
 
 ## Setup
 
-You need a Mac, Homebrew, an OpenAI API key, and an Anthropic API key. Three
-commands in Terminal, then the rest happens in your browser:
+You need a Mac and Homebrew. Sign in to a Syllabus account and that is all:
+transcription and summaries are then billed to the account, and no API key
+goes on your Mac at all. Without an account you can still run it on two keys
+of your own, one from OpenAI and one from Anthropic. Three commands in
+Terminal, then the rest happens in your browser:
 
 ```bash
 brew install ffmpeg pipx
@@ -112,12 +115,14 @@ intake panel
 ```
 
 That opens the control panel in your browser. The first time, with nothing
-configured, it lands on the **Setup** page: paste your two keys, pick a
-microphone from the list, add a row for every time a class meets, tick Notion
-if you want it, and click **Connect Google Drive**, which opens a Google
-sign-in tab. A checkup at the bottom of the page shows what still needs doing
-and turns green as you go. Everything is saved on your Mac in `~/.intake/syllabus`;
-nothing is sent anywhere but to the services you gave keys for.
+configured, it lands on the **Setup** page: sign in to a Syllabus account (or
+paste two keys of your own), pick a microphone from the list, add a row for
+every time a class meets, tick Notion if you want it, and click **Connect
+Google Drive**, which opens a Google sign-in tab. Signed in, step 1 says there
+is nothing to do and means it. A checkup at the bottom of the page shows what
+still needs doing and turns green as you go. Everything is saved on your Mac
+in `~/.intake/syllabus`; nothing is sent anywhere but to the account service
+and the services it spends on.
 
 Come back to the Setup page any time from the gear in the panel's header.
 Saved keys are shown masked and a blank field keeps what is there, so
@@ -987,10 +992,11 @@ piece of that, and the rest is planned in this order:
   code, signs people in to the panel on the web, syncs the class schedule,
   and holds the Drive grant, handing each Mac short-lived access tokens.
   The panel's own Google sign-in and email allowlist were retired on
-  2026-09-14. What the account makes possible next is paying for
-  transcription centrally instead of asking every student for two API keys. That is also what would let Syllabus
-  pay for transcription centrally instead of asking every student for two
-  API keys.
+  2026-09-14. Since 2026-09-15 it also pays for transcription and summaries
+  centrally: a signed-in Mac sends each audio chunk and each transcript to the
+  account service, which holds the provider keys, meters what the account has
+  spent, and stores neither the audio nor the transcript. Nobody has to make
+  two AI accounts to use this any more.
 - **The panel on the web is this Mac's panel.** It records from this Mac's
   microphone and starts processes here, so the address always reaches the
   one running on the Mac that does the recording. Done, 2026-09-14: every

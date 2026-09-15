@@ -175,6 +175,12 @@
     <!-- 1. Keys -->
     <div class="card">
       <h2><span class="step">1</span> API keys</h2>
+      <p class="lead" id="managedKeys" hidden>
+        Nothing to do here. Transcription and summaries are billed to your
+        Syllabus account, <strong id="managedEmail"></strong>, so this Mac
+        needs no keys of its own.
+      </p>
+      <div id="ownKeys">
       <p class="lead">
         Two services do the work, each billed to your own account.
         <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI</a>
@@ -188,6 +194,7 @@
       <label for="anthropic">Anthropic API key</label>
       <input type="password" id="anthropic" placeholder="sk-ant-..." spellcheck="false">
       <div class="hint" id="anthropicHint"></div>
+      </div>
     </div>
 
     <!-- 2. Microphone -->
@@ -420,6 +427,10 @@ function render(s) {
   current = s;
   $("homePath").textContent = s.home;
   DAYS = s.days;
+
+  $("managedKeys").hidden = !s.managed;
+  $("ownKeys").hidden = !!s.managed;
+  $("managedEmail").textContent = s.managed_email || "your Syllabus account";
 
   $("openaiHint").textContent = s.openai_set ? `Saved: ${s.openai}. Leave blank to keep it.` : "";
   $("anthropicHint").textContent = s.anthropic_set ? `Saved: ${s.anthropic}. Leave blank to keep it.` : "";

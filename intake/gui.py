@@ -136,8 +136,17 @@ def _current_class() -> str | None:
 
 
 def _configured() -> bool:
-    """Whether the pipeline can run at all: both keys and a readable schedule."""
-    return bool(config.OPENAI_API_KEY and config.ANTHROPIC_API_KEY and _courses())
+    """Whether the pipeline can run at all: somewhere to spend, and classes.
+
+    A signed-in Mac spends the service's keys, so it needs no keys of its own
+    and the Setup page must not demand any. One that is not signed in is on
+    its own two keys, as every Mac was before managed keys existed.
+    """
+    if not _courses():
+        return False
+    if account.managed():
+        return True
+    return bool(config.OPENAI_API_KEY and config.ANTHROPIC_API_KEY)
 
 
 def _inbox() -> list[dict]:
@@ -211,9 +220,13 @@ def _drive_via_account_cached() -> bool:
 
 def _integrations() -> dict:
     """Which pieces are configured. Presence only; no secrets leave here."""
+    managed = account.managed()
     return {
-        "openai": bool(config.OPENAI_API_KEY),
-        "anthropic": bool(config.ANTHROPIC_API_KEY),
+        # On managed keys both are the service's, and the page says so rather
+        # than showing two empty key fields nobody has to fill in.
+        "managed": managed,
+        "openai": managed or bool(config.OPENAI_API_KEY),
+        "anthropic": managed or bool(config.ANTHROPIC_API_KEY),
         "drive": config.TOKEN_FILE.exists() or _drive_via_account_cached(),
         "notion": notion_tasks.enabled(),
     }
@@ -484,8 +497,13 @@ def setup_state():
         devices = []
     rows, tolerance, schedule_error = _schedule_rows()
     notion_on = bool(values.get("NOTION_TOKEN") and values.get("NOTION_DATABASE"))
+    acct = account.load()
     return jsonify({
         "home": str(config.HOME_DIR),
+        # Signed in, the keys are the service's and step 1 is not this
+        # person's job. The page swaps the two fields for a line saying so.
+        "managed": account.managed(),
+        "managed_email": acct.email if acct else "",
         "openai": setup_wizard.mask(values.get("OPENAI_API_KEY", "")),
         "openai_set": bool(values.get("OPENAI_API_KEY")),
         "anthropic": setup_wizard.mask(values.get("ANTHROPIC_API_KEY", "")),

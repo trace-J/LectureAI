@@ -56,7 +56,9 @@ class TranscriptionProvider(Protocol):
     #: it is what a diarization roadmap item would turn on.
     diarization: bool
     #: The .env setting holding this provider's key, so a preflight check can
-    #: ask for the right one rather than always asking for OpenAI's.
+    #: ask for the right one rather than always asking for OpenAI's. Empty
+    #: when the provider brings its own credential and needs nothing from
+    #: .env, which is how the managed proxy works.
     api_key_setting: str
 
     def transcribe_file(self, path: Path, prompt: str = "") -> str:
@@ -206,6 +208,141 @@ class DeepgramProvider:
         return (alternatives[0].get("transcript", "") if alternatives else "").strip()
 
 
+class ProxyRefused(RuntimeError):
+    """The managed proxy declined, in its own words rather than a provider's.
+
+    `error` is the machine-readable reason ("allowance_exhausted",
+    "rate_limited", "provider_unavailable", ...) and `detail` is the whole
+    payload, so the panel can say how much of the month is left rather than
+    just that something failed.
+    """
+
+    def __init__(self, message: str, error: str = "", status: int = 0,
+                 detail: dict | None = None) -> None:
+        super().__init__(message)
+        self.error = error
+        self.status = status
+        self.detail = detail or {}
+
+
+def _post_audio(url: str, token: str, path: Path, seconds: float, timeout: int):
+    """One multipart POST to the proxy. Replaced wholesale by the tests."""
+    import requests
+
+    with path.open("rb") as fh:
+        return requests.post(
+            url,
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            files={"audio": (path.name, fh, "audio/mp4")},
+            data={"duration_seconds": f"{seconds:.3f}"},
+            timeout=timeout,
+        )
+
+
+class ProxyProvider:
+    """Transcription through the Syllabus account service, on managed keys.
+
+    The point of this one is that no key lives on the Mac. The device token
+    from `intake login` is the whole credential, the account service holds the
+    provider key, and it meters what the account has spent before it spends
+    any more (see syllabus-accounts/src/proxy.ts).
+
+    The limits below are the proxy's, not any model's, and they are the one
+    place these two repos have to agree. They are deliberately the SMALLER of
+    what the proxy accepts and what its upstream model needs, so a proxy that
+    later swaps its upstream cannot make this Mac send chunks the new model
+    would truncate. Raising them belongs with a proxy that advertises its own
+    limits; until it does, they are pinned here and asserted in the tests.
+    """
+
+    #: syllabus-accounts: MAX_AUDIO_BYTES, the per-chunk cap the proxy refuses above.
+    MAX_AUDIO_BYTES = 12 * 1024 * 1024
+    #: syllabus-accounts: MAX_CHUNK_SECONDS, the longest chunk it will meter.
+    MAX_CHUNK_SECONDS = 1800
+
+    def __init__(self, *, timeout: int = 600) -> None:
+        self.name = "syllabus"
+        self.timeout = timeout
+        # No .env key at all: the device token is the credential.
+        self.api_key_setting = ""
+        self.max_bytes = self.MAX_AUDIO_BYTES
+        # Comfortably under the cap, so a chunk that encodes fatter than
+        # expected is compressed here rather than refused there.
+        self.compress_threshold_bytes = 10 * 1024 * 1024
+        # The proxy would meter a 30 minute chunk, but its upstream today is
+        # gpt-4o-mini-transcribe, which truncates past about 8 minutes. The
+        # binding limit is the model's, so that is the one used.
+        self.max_chunk_seconds = config.CHUNK_SECONDS
+        self.truncation_word_threshold = config.TRUNCATION_WORD_THRESHOLD
+        self.diarization = False
+
+    def transcribe_file(self, path: Path, prompt: str = "") -> str:
+        # Imported here rather than at module scope: transcribe.py imports
+        # this module, so the dependency only runs one way at import time.
+        from intake import account
+        from intake.transcribe import duration_seconds
+
+        size = path.stat().st_size
+        if size > self.max_bytes:
+            raise _too_big(self, path, size)
+
+        acct = account.load()
+        if not acct or not acct.token:
+            raise ProxyRefused(
+                "this Mac is not signed in to a Syllabus account; run: intake login",
+                error="not_signed_in",
+            )
+        seconds = duration_seconds(path)
+        if not seconds or seconds <= 0:
+            raise ProxyRefused(
+                f"could not read how long {path.name} is, so it cannot be metered",
+                error="unreadable_audio",
+            )
+        # `prompt` is deliberately dropped: the proxy fixes the upstream call
+        # and sends no prompt, for the reason in _transcribe_chunk.
+        response = _post_audio(
+            f"{account.url()}/proxy/transcribe", acct.token, path, seconds, self.timeout
+        )
+        if response.status_code != 200:
+            raise _proxy_refusal(response)
+        try:
+            return str(response.json().get("text", "")).strip()
+        except ValueError:
+            raise ProxyRefused("the account service sent back something unreadable",
+                               error="bad_response", status=response.status_code)
+
+
+#: What each proxy refusal means to somebody reading a log or a panel.
+PROXY_REASONS = {
+    "not_a_device": "this Mac's sign-in was not accepted; sign in again",
+    "allowance_exhausted": "this account has used its transcription allowance for the month",
+    "rate_limited": "too many requests at once; this will retry",
+    "provider_busy": "the transcription provider is busy; this will retry",
+    "provider_unavailable": "the transcription provider could not be reached",
+    "too_large": "the chunk is bigger than the service accepts",
+    "too_long": "the chunk is longer than the service accepts",
+}
+
+
+def _proxy_refusal(response) -> ProxyRefused:
+    """A proxy error response as an exception that says what happened."""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    error = str(payload.get("error", "")) or f"http_{response.status_code}"
+    reason = PROXY_REASONS.get(error, "")
+    if error == "allowance_exhausted":
+        used, allowed = payload.get("used"), payload.get("allowance")
+        if isinstance(used, (int, float)) and isinstance(allowed, (int, float)):
+            reason = (f"this account has used {used / 3600:.1f} of its "
+                      f"{allowed / 3600:.1f} hours for the month")
+    return ProxyRefused(reason or f"the account service refused: {error}",
+                        error=error, status=response.status_code, detail=payload)
+
+
 # Every provider this program knows how to reach, keyed by what you would put
 # in TRANSCRIBE_MODEL. The values are factories: building one asks config for a
 # key, and importing this module must not.
@@ -238,11 +375,26 @@ PROVIDERS: dict[str, callable] = {
 
 
 def get(name: str | None = None) -> TranscriptionProvider:
-    """The provider for `name`, or for config.TRANSCRIBE_MODEL.
+    """The provider to transcribe with.
 
-    An unregistered name is assumed to be an OpenAI model, which is what
-    TRANSCRIBE_MODEL meant before this module existed.
+    A Mac signed in to a Syllabus account uses the proxy, whatever
+    TRANSCRIBE_MODEL says: the model is the service's choice there, not this
+    machine's, and no key exists here to call anything else with. Naming a
+    provider explicitly (transcribe.py --model) still wins, so a managed Mac
+    can still be pointed at a model for a one-off comparison.
+
+    Otherwise it is TRANSCRIBE_MODEL, and an unregistered name is assumed to
+    be an OpenAI model, which is what that setting meant before this module.
+
+    There is deliberately no fall back from the proxy to a local key. A Mac
+    that is signed in should never quietly start spending its owner's own
+    OpenAI credit because the service was unreachable for a minute.
     """
+    if name is None:
+        from intake import account
+
+        if account.managed():
+            return ProxyProvider()
     name = name or config.TRANSCRIBE_MODEL
     factory = PROVIDERS.get(name)
     return factory() if factory else OpenAIProvider(name)

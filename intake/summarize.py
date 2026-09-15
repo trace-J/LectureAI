@@ -199,10 +199,76 @@ def _parse(raw: str) -> dict:
     }
 
 
+def shape(payload: dict, course: str, date: str) -> dict:
+    """The model's answer as the rest of the pipeline wants it.
+
+    Takes a plain dict so the two ways an answer can arrive, the schema-parsed
+    object from this Mac's own Anthropic call and the JSON the proxy sends
+    back, land in exactly one piece of code. A field the model left out is
+    missing, not a crash.
+    """
+    terms = []
+    for term in payload.get("key_terms") or []:
+        if not isinstance(term, dict):
+            continue
+        name = str(term.get("term", "")).strip()
+        if name:
+            terms.append({"term": name,
+                          "definition": str(term.get("definition", "")).strip()})
+    return {
+        "summary_md": str(payload.get("summary_md", "")).strip(),
+        "topic_slug": slugify_topic(str(payload.get("topic_slug", ""))),
+        "key_terms": terms,
+        "action_items": normalize_actions(payload.get("action_items"), course, date),
+    }
+
+
+def _summarize_via_proxy(transcript: str, course: str, date: str) -> dict:
+    """Summarize on the service's key instead of one from this Mac's .env.
+
+    The prompt, the schema and the model all live in the proxy; this sends the
+    transcript and the two labels that frame it and nothing else. Which
+    profile's prompt runs is decided there too, from this device's own row, so
+    a Sous Mac gets call notes without asking for them.
+    """
+    from intake import account, providers
+
+    acct = account.load()
+    if not acct or not acct.token:
+        raise RuntimeError("this Mac is not signed in to a Syllabus account; "
+                           "run: intake login")
+    log(f"summarizing {len(transcript.split())} words for {course} on {date} "
+        f"via the Syllabus account service")
+    status, data = account.call(
+        "POST", "/proxy/summarize",
+        {"transcript": transcript, "subject": course, "date": date},
+        token=acct.token, timeout=account.SLOW_TIMEOUT,
+    )
+    if status != 200:
+        raise providers.ProxyRefused(
+            providers.PROXY_REASONS.get(str(data.get("error", "")), "")
+            or f"the account service refused to summarize: {data.get('error', status)}",
+            error=str(data.get("error", "")), status=status, detail=data,
+        )
+    payload = data.get("summary")
+    if not isinstance(payload, dict):
+        raise RuntimeError("the account service sent back no summary")
+    result = shape(payload, course, date)
+    log(f"  topic: {result['topic_slug']} | {len(result['key_terms'])} terms | "
+        f"{len(result['action_items'])} action items | "
+        f"{data.get('tokens', 0)} tokens")
+    return result
+
+
 def summarize(transcript: str, course: str, date: str) -> dict:
     """Summarize a transcript. Returns summary_md, topic_slug, key_terms, action_items."""
     if not transcript.strip():
         raise ValueError("transcript is empty")
+
+    from intake import account
+
+    if account.managed():
+        return _summarize_via_proxy(transcript, course, date)
 
     client = anthropic.Anthropic(api_key=config.require("ANTHROPIC_API_KEY"))
     log(f"summarizing {len(transcript.split())} words for {course} on {date} "
@@ -221,15 +287,7 @@ def summarize(transcript: str, course: str, date: str) -> dict:
 
     parsed = getattr(response, "parsed_output", None)
     if parsed is not None:
-        result = {
-            "summary_md": parsed.summary_md.strip(),
-            "topic_slug": slugify_topic(parsed.topic_slug),
-            "key_terms": [
-                {"term": t.term.strip(), "definition": t.definition.strip()}
-                for t in parsed.key_terms if t.term.strip()
-            ],
-            "action_items": normalize_actions(parsed.action_items, course, date),
-        }
+        result = shape(parsed.model_dump(), course, date)
     else:
         # Shouldn't happen with a schema, but a truncated or refused response
         # still needs to degrade rather than crash.

@@ -20,6 +20,7 @@ from _test_home import fresh_home  # noqa: E402
 HOME = fresh_home()  # before config is imported
 
 from intake import account, config, doctor  # noqa: E402
+from intake import transcribe as transcribe_module  # noqa: E402
 
 
 def run(label, fn):
@@ -462,6 +463,194 @@ def t12():
     grant["down"] = False
     account.forget_drive_token()
 results.append(run("the uploader prefers the account's grant and falls back to this Mac's token", t12))
+
+
+# --- managed keys: the panel spending the service's keys, not its own -------
+#
+# Signed in, there is no OPENAI_API_KEY on this Mac and nothing is wrong with
+# that. These cover the switch itself, the limits the two repos have to agree
+# on, and what a refusal turns into for whoever has to read it.
+
+from intake import gui, providers, summarize, watch  # noqa: E402
+
+
+def signed_in(**over):
+    """Put a claimed account on disk so account.managed() is true."""
+    account.save(account.Account(
+        token=over.get("token", "syd_abc"), account_id="a1", email="me@example.com",
+        name="Me", device_id="d1", device_name="This Mac", profile="syllabus",
+        url=SERVICE, claimed_at="2026-09-15T00:00:00Z"))
+
+
+class FakeResponse:
+    def __init__(self, status, payload):
+        self.status_code = status
+        self._payload = payload
+
+    def json(self):
+        if self._payload is None:
+            raise ValueError("no json")
+        return self._payload
+
+
+def t13():
+    # Signed in, the proxy is the provider, whatever TRANSCRIBE_MODEL says.
+    signed_in()
+    assert account.managed()
+    chosen = providers.get()
+    assert isinstance(chosen, providers.ProxyProvider), chosen
+    assert chosen.name == "syllabus"
+    # It brings its own credential, so there is no .env key to demand.
+    assert chosen.api_key_setting == ""
+    # Naming one explicitly still wins, for a one-off comparison.
+    assert providers.get("whisper-1").name == "whisper-1"
+    # Signed out, nothing changed: TRANSCRIBE_MODEL decides as it always did.
+    account.forget()
+    assert not account.managed()
+    assert providers.get().name == config.TRANSCRIBE_MODEL
+    signed_in()
+results.append(run("a signed-in Mac transcribes through the proxy, a signed-out one does not", t13))
+
+
+def t14():
+    # The numbers the two repos have to agree on. If syllabus-accounts moves
+    # MAX_AUDIO_BYTES or MAX_CHUNK_SECONDS, this is what should fail first.
+    prov = providers.ProxyProvider()
+    assert prov.MAX_AUDIO_BYTES == 12 * 1024 * 1024, "proxy.ts MAX_AUDIO_BYTES"
+    assert prov.MAX_CHUNK_SECONDS == 1800, "proxy.ts MAX_CHUNK_SECONDS"
+    assert prov.max_bytes == prov.MAX_AUDIO_BYTES
+    assert prov.compress_threshold_bytes < prov.max_bytes, "compress before it is refused"
+    # The binding limit is the upstream model's, not the proxy's: the proxy
+    # would meter 30 minutes, but its upstream truncates well before that.
+    assert prov.max_chunk_seconds == config.CHUNK_SECONDS
+    assert prov.max_chunk_seconds < prov.MAX_CHUNK_SECONDS
+    assert prov.truncation_word_threshold == config.TRUNCATION_WORD_THRESHOLD
+results.append(run("the proxy provider's limits are the smaller of the proxy's and its model's", t14))
+
+
+def t15():
+    signed_in()
+    clip = config.WORK_DIR / "chunk.m4a"
+    clip.write_bytes(b"x" * 2048)
+    sent = {}
+
+    def fake_post(url, token, path, seconds, timeout):
+        sent.update(url=url, token=token, name=Path(path).name, seconds=seconds)
+        return FakeResponse(200, {"text": "  hello from the proxy  ", "audio_seconds": 61})
+
+    real_post, real_duration = providers._post_audio, transcribe_module.duration_seconds
+    providers._post_audio = fake_post
+    transcribe_module.duration_seconds = lambda p: 60.5
+    try:
+        text = providers.ProxyProvider().transcribe_file(clip)
+    finally:
+        providers._post_audio, transcribe_module.duration_seconds = real_post, real_duration
+    assert text == "hello from the proxy", repr(text)
+    assert sent["url"] == SERVICE + "/proxy/transcribe", sent
+    assert sent["token"] == "syd_abc", "the device token is the whole credential"
+    assert sent["seconds"] == 60.5, "the proxy meters on a duration we send"
+    clip.unlink()
+results.append(run("a chunk goes up with the device token and the duration it is metered on", t15))
+
+
+def t16():
+    signed_in()
+    clip = config.WORK_DIR / "chunk.m4a"
+    clip.write_bytes(b"x" * 2048)
+    real_post, real_duration = providers._post_audio, transcribe_module.duration_seconds
+    transcribe_module.duration_seconds = lambda p: 60.0
+    cases = [
+        (402, {"error": "allowance_exhausted", "used": 17000, "allowance": 18000},
+         "allowance_exhausted", "4.7"),
+        (429, {"error": "rate_limited", "limit": 20}, "rate_limited", "retry"),
+        (502, {"error": "provider_unavailable"}, "provider_unavailable", "could not be reached"),
+        (500, None, "http_500", "refused"),
+    ]
+    try:
+        for status, payload, expect_error, expect_text in cases:
+            providers._post_audio = lambda *a, s=status, p=payload, **k: FakeResponse(s, p)
+            try:
+                providers.ProxyProvider().transcribe_file(clip)
+            except providers.ProxyRefused as exc:
+                assert exc.error == expect_error, (exc.error, expect_error)
+                assert exc.status == status, exc.status
+                assert expect_text in str(exc), (str(exc), expect_text)
+            else:
+                raise AssertionError(f"{status} should have raised")
+    finally:
+        providers._post_audio, transcribe_module.duration_seconds = real_post, real_duration
+    clip.unlink()
+results.append(run("a refusal says which one it was, and the allowance one says how much is left", t16))
+
+
+def t17():
+    signed_in()
+    seen = {}
+
+    def answers(method, url, headers, body, timeout):
+        seen.update(path=url[len(SERVICE):], body=body, auth=headers.get("Authorization"),
+                    timeout=timeout)
+        return 200, {"summary": {
+            "summary_md": "  ## Notes  ", "topic_slug": "Job Order Costing",
+            "key_terms": [{"term": " POHR ", "definition": " a rate "}, {"term": "", "definition": "x"}],
+            "action_items": [{"task": "Read chapter 3", "detail": "", "due_date": "",
+                              "kind": "reading"}],
+        }, "tokens": 14883}
+
+    real = account.transport
+    account.transport = answers
+    config.set_schedule({("Tue", 14): "ACCT-4321", ("Thu", 14): "ACCT-4321"})
+    try:
+        result = summarize.summarize("a real transcript", "ACCT-4321", "2026-09-01")
+    finally:
+        account.transport = real
+        config.set_schedule(None)
+    assert seen["path"] == "/proxy/summarize", seen
+    assert seen["auth"] == "Bearer syd_abc", seen
+    assert seen["body"]["subject"] == "ACCT-4321" and seen["body"]["date"] == "2026-09-01"
+    assert "transcript" in seen["body"]
+    # Claude reading a whole lecture outlasts the control-plane timeout, which
+    # is how a summary got paid for and then thrown away in testing.
+    assert seen["timeout"] == account.SLOW_TIMEOUT > account.TIMEOUT, seen["timeout"]
+    # The proxy's JSON is shaped by exactly the code the local path uses.
+    assert result["summary_md"] == "## Notes"
+    assert result["topic_slug"] == "Job-Order-Costing"
+    assert result["key_terms"] == [{"term": "POHR", "definition": "a rate"}]
+    assert len(result["action_items"]) == 1
+    assert result["action_items"][0]["date_source"] == "assumed", result["action_items"]
+results.append(run("a summary comes back through the proxy, shaped like a local one", t17))
+
+
+def t18():
+    # Nothing may ask a managed Mac for a key it is not supposed to have.
+    signed_in()
+    config.set_schedule({("Tue", 14): "ACCT-4321"})
+    saved = config.OPENAI_API_KEY, config.ANTHROPIC_API_KEY
+    config.OPENAI_API_KEY = config.ANTHROPIC_API_KEY = ""
+    real = watch.drive.get_service
+    watch.drive.get_service = lambda interactive: None
+    try:
+        watch.preflight(False)          # must not raise
+        assert gui._configured(), "a signed-in Mac with classes is ready"
+        assert gui._integrations()["managed"] is True
+        assert gui._integrations()["openai"] is True, "shown as provided, not missing"
+        assert [c for c in doctor._key_checks() if c.ok and "managed" in c.detail], \
+            "doctor must not report a missing key as a fault"
+        # Signed out with no keys, the old demand is back.
+        account.forget()
+        assert not gui._configured()
+        try:
+            watch.preflight(False)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("a signed-out Mac with no keys must still be stopped")
+    finally:
+        watch.drive.get_service = real
+        config.OPENAI_API_KEY, config.ANTHROPIC_API_KEY = saved
+        config.set_schedule(None)
+        signed_in()
+results.append(run("a managed Mac is never asked for a key, a signed-out one still is", t18))
 
 
 print()

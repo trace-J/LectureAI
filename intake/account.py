@@ -36,6 +36,11 @@ from intake import config
 
 OFF_WORDS = {"off", "none", "no", "false", "0"}
 TIMEOUT = 15
+# The proxy's summarize call waits on Claude reading a whole lecture, which is
+# tens of seconds and occasionally more. The 15 above is right for the control
+# plane (/me, /device/poll) and far too short for that one, which fails as a
+# client-side timeout after the tokens have already been spent.
+SLOW_TIMEOUT = 300
 # If the service says nothing about how often to poll, this is how often.
 DEFAULT_INTERVAL = 5
 DEFAULT_CODE_SECONDS = 900
@@ -74,6 +79,18 @@ def enabled() -> bool:
     """Whether accounts are a thing for this install at all."""
     value = url()
     return bool(value) and value.lower() not in OFF_WORDS
+
+
+def managed() -> bool:
+    """Whether this Mac spends the service's keys rather than its own.
+
+    True once it is signed in to a Syllabus account: transcription and
+    summaries then go through the proxy, which holds the provider keys and
+    meters the account (see providers.ProxyProvider). Everything that used to
+    ask whether OPENAI_API_KEY is set asks this first, because on a managed
+    Mac there is no such key and nothing is wrong with that.
+    """
+    return enabled() and load() is not None
 
 
 def load() -> Account | None:
@@ -137,11 +154,11 @@ transport = _http
 
 
 def call(method: str, path: str, body: dict | None = None,
-         token: str | None = None) -> tuple[int, dict]:
+         token: str | None = None, timeout: float = TIMEOUT) -> tuple[int, dict]:
     headers = {"Accept": "application/json"}
     if token:
         headers["Authorization"] = "Bearer " + token
-    return transport(method, url() + path, headers, body, TIMEOUT)
+    return transport(method, url() + path, headers, body, timeout)
 
 
 def summary() -> dict:

@@ -24,6 +24,7 @@ from pathlib import Path
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
+from intake import account
 from intake import config
 from intake import notion_tasks
 from intake import providers
@@ -151,9 +152,15 @@ def wait_until_stable(path: Path) -> None:
 def preflight(interactive: bool) -> None:
     """Fail before spending money on transcription if something obvious is off."""
     config.schedule()
-    # Whichever provider TRANSCRIBE_MODEL names, not always OpenAI's.
-    config.require(providers.get().api_key_setting)
-    config.require("ANTHROPIC_API_KEY")
+    # A provider with no key setting carries its own credential: the managed
+    # proxy signs with this Mac's device token, and there is no .env key to
+    # check. Otherwise it is whichever key that provider actually spends,
+    # which is not always OpenAI's.
+    setting = providers.get().api_key_setting
+    if setting:
+        config.require(setting)
+    if not account.managed():
+        config.require("ANTHROPIC_API_KEY")
     drive.get_service(interactive)
 
 
