@@ -770,6 +770,26 @@ reset it on this same client in the Cloud console, put the new file in the
 package, and the next release carries it; existing tokens keep working,
 because they are tied to the client id, which does not change.
 
+### Syllabus.app, the desktop build
+
+`intake app` opens the same panel in a window of its own instead of a browser
+tab (`intake/app.py`, a pywebview window over the Flask panel). It needs the
+`app` extra: `.venv/bin/pip install -e '.[app]'`. When a panel is already
+listening on the port, from `intake panel` or the launchd agent, the window
+attaches to it and starts nothing, so a checkout and the live panel never
+fight over one home.
+
+`packaging/build.sh` freezes that into `dist/Syllabus.app` with PyInstaller
+(`packaging/syllabus.spec`; the `build` extra installs it). The bundle's one
+binary is the app when double-clicked and the `syllabus` command when given
+arguments, so `Syllabus.app/Contents/MacOS/Syllabus doctor` works. The icon
+is made from `intake/static/icon.png` at build time; `packaging/build/` and
+`dist/` are build output and stay out of git. Without a Developer ID identity
+in the keychain the result is signed ad hoc: it runs on the Mac that built it,
+and on another Mac only after the Gatekeeper steps in System Settings, Privacy
+& Security. ffmpeg is still taken from PATH in this build; bundling it, keeping
+the app resident, and the release workflow are the next slices.
+
 ### Tests
 
 Every suite is self-contained: the upload tests run against an in-memory fake
@@ -789,6 +809,7 @@ credentials, or an API key, none costs anything to run, and none can touch
 .venv/bin/python test_account.py             # claiming this Mac into a Syllabus account, against a fake service
 .venv/bin/python test_sync.py                # the schedule file against the account's copy: push, pull, conflicts
 .venv/bin/python test_relay.py               # the panel on the web: relayed requests, the base path, the socket loop
+.venv/bin/python test_app.py                 # the desktop window: attach to a running panel or start one, the bundle's entry point
 ```
 
 ## V2 roadmap
@@ -839,7 +860,13 @@ piece of that, and the rest is planned in this order:
   wrapper. Plan: a `pywebview` window around the same Flask panel, packaged
   with PyInstaller into `Syllabus.app`, signed and notarized, with ffmpeg
   bundled so Homebrew stops being a requirement. The pipx install stays as
-  the path for people who prefer a terminal.
+  the path for people who prefer a terminal. First slice done 2026-09-15:
+  `intake app` and `packaging/build.sh` produce an unsigned `Syllabus.app`
+  that opens the panel in its own window ("Syllabus.app, the desktop build"
+  above). Still to do, one PR each: the frozen binary as the watcher the
+  panel starts, a bundled ffmpeg, staying resident behind a menu bar item
+  with a start-at-login switch, a release workflow with a DMG and an update
+  notice, then Developer ID signing and notarization.
 - **Sign-ins.** Done. The account service ("A Syllabus account" above), a
   Cloudflare Worker with D1, the same stack `mcm-dashboard` is scaffolded
   on, owns the Google sign-in, lets a panel claim an identity with a device

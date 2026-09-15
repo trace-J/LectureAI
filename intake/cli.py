@@ -6,6 +6,7 @@
     intake watch            process the inbox until Ctrl-C
     intake watch --once F   process one file and exit
     intake panel            the control panel, and setup, in your browser
+    intake app              the same panel in a window of its own
     intake service install  keep the panel running: now, and at every login
     intake service status   is that agent running
     intake login            authorize Google Drive
@@ -34,7 +35,8 @@ from intake import __version__, profiles
 
 USAGE = __doc__.split("\n\n")[1]
 
-COMMANDS = ("setup", "doctor", "record", "watch", "panel", "service", "login", "notion")
+COMMANDS = ("setup", "doctor", "record", "watch", "panel", "app", "service", "login",
+            "notion")
 
 # Subcommands that cannot do anything useful without a schedule, so they fail
 # up front with one readable line rather than a traceback from deep inside.
@@ -157,6 +159,9 @@ def main(argv: list[str] | None = None) -> int:
     if command == "panel":
         from intake import gui
         return gui.main(rest)
+    if command == "app":
+        from intake import app
+        return app.main(rest)
     if command == "service":
         from intake import service
         return service.main(rest)
