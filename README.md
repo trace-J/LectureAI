@@ -375,23 +375,23 @@ the Mac is asleep or offline, or the panel is not running. "The account
 service refused this Mac's token" means the Mac was removed from the account
 page; sign in again from the Setup page.
 
-### The older road: a Cloudflare Tunnel
+`maincoursemedia.com/syllabus` is a short way to this author's address.
+
+### The older road: a Cloudflare Tunnel, retired 2026-09-15
 
 Before the relay, the only panel on the web was this author's, at
-`syllabus.maincoursemedia.com` (which `maincoursemedia.com/syllabus` sends
-you to), through a Cloudflare Tunnel (`cloudflared`, run as its own launch
-agent) to `127.0.0.1:5173`. Anyone arriving that way is sent to the account
-service to sign in and comes back with a one-time code that the panel
-trades for the account using its device token (`intake/signin.py`); the
-account's owner is the one person allowed. That panel needs one setting,
-`PANEL_PUBLIC_URL=https://syllabus.maincoursemedia.com`, because the
-tunnel's ingress rewrites the Host header on the way in. A Mac that is not
-signed in to an account refuses every request through the tunnel with a
-503. The session is a signed cookie, good for 30 days, keyed by a secret the
-panel generates once into `.work/panel-secret` (or `PANEL_SECRET_KEY` in
-`.env`). This road stays until the relay has carried that panel for a
-while; then the tunnel, the hostname, and `PANEL_PUBLIC_URL` go, and the
-redirect from `maincoursemedia.com/syllabus` points at the address above.
+`syllabus.maincoursemedia.com`, through a Cloudflare Tunnel (`cloudflared`,
+run as its own launch agent) to `127.0.0.1:5173`. Anyone arriving that way
+was sent to the account service to sign in and came back with a one-time
+code that the panel traded for the account using its device token
+(`intake/signin.py`); the account's owner was the one person allowed. That
+panel needed `PANEL_PUBLIC_URL` set, because the tunnel's ingress rewrote
+the Host header on the way in, and kept a session in a signed cookie keyed
+by `.work/panel-secret` (or `PANEL_SECRET_KEY` in `.env`). The tunnel, the
+hostname, and the setting were retired on 2026-09-15 once the relay had
+carried that panel; the code behind that road (the Cf-Ray gate, `/login`,
+`/account/callback`, and the service's `/panel/authorize` and
+`/panel/exchange`) is still present and goes next.
 
 Both the recorder and the watcher are started detached, on purpose, so
 closing the panel abandons neither. A recording keeps going if the panel
