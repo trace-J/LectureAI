@@ -562,6 +562,241 @@ def t24():
     assert tools.ffmpeg() == (record.shutil.which("ffmpeg") or "ffmpeg")
 results.append(run("tools finds ffmpeg bundled first, then a named folder, then PATH", t24))
 
+# --- the transcriber seam -------------------------------------------------
+#
+# The chunking rules are the provider's, not the audio's. These drive
+# transcribe() with the ffmpeg calls and the API call stubbed out, so what is
+# under test is only the decision: compress or not, split or not, into how
+# many pieces, and whether a suspiciously long result gets re-split.
+
+from intake import providers  # noqa: E402
+
+MB = 1024 * 1024
+# The real benchmark lecture: 39.5 minutes, 19.3MB of aac.
+LECTURE_SECONDS = 2369.4
+LECTURE_BYTES = 20287896
+
+
+class FakeProvider:
+    """A provider with limits set per test and no API behind it."""
+
+    def __init__(self, name="fake", max_bytes=25 * MB, compress_threshold_bytes=24 * MB,
+                 max_chunk_seconds=8 * 60, truncation_word_threshold=1700,
+                 diarization=False, words=100):
+        self.name = name
+        self.max_bytes = max_bytes
+        self.compress_threshold_bytes = compress_threshold_bytes
+        self.max_chunk_seconds = max_chunk_seconds
+        self.truncation_word_threshold = truncation_word_threshold
+        self.diarization = diarization
+        self.words = words
+        self.calls = []
+
+    def transcribe_file(self, path, prompt=""):
+        self.calls.append(Path(path).name)
+        words = self.words(len(self.calls)) if callable(self.words) else self.words
+        return " ".join(["word"] * words)
+
+
+def stub_of(provider):
+    """A FakeProvider wearing a real provider's limits.
+
+    Lets the decision be tested against the registry's actual numbers without
+    an API call behind it.
+    """
+    return FakeProvider(
+        name=provider.name,
+        max_bytes=provider.max_bytes,
+        compress_threshold_bytes=provider.compress_threshold_bytes,
+        max_chunk_seconds=provider.max_chunk_seconds,
+        truncation_word_threshold=provider.truncation_word_threshold,
+        diarization=provider.diarization,
+    )
+
+
+def drive_transcribe(provider, *, size=LECTURE_BYTES, seconds=LECTURE_SECONDS):
+    """transcribe() over a fake file, with ffmpeg and the network removed.
+
+    Returns (text, log) where log records what the pipeline decided to do.
+    """
+    import math
+
+    audio = config.WORK_DIR / "lecture.m4a"
+    audio.write_bytes(b"x")
+    events = {"compressed": False, "splits": [], "sizes": {}}
+    events["sizes"][audio.name] = size
+
+    def fake_size(path):
+        return events["sizes"].get(Path(path).name, 1)
+
+    def fake_duration(path):
+        return events["sizes"].get(Path(path).name + ":seconds", seconds)
+
+    def fake_compress(src, work_dir):
+        events["compressed"] = True
+        dest = work_dir / "compressed.m4a"
+        events["sizes"][dest.name] = size // 4
+        return dest
+
+    def fake_split(src, work_dir, seconds):
+        events["splits"].append((Path(src).name, seconds))
+        length = fake_duration(src)
+        count = max(1, math.ceil(length / seconds))
+        out = []
+        for i in range(count):
+            chunk = work_dir / f"{Path(src).stem}_chunk{len(events['splits'])}_{i:03d}.m4a"
+            events["sizes"][chunk.name] = fake_size(src) // count
+            events["sizes"][chunk.name + ":seconds"] = length / count
+            out.append(chunk)
+        return out
+
+    real = (transcribe._size, transcribe.duration_seconds,
+            transcribe.compress, transcribe.split, transcribe.log)
+    transcribe._size = fake_size
+    transcribe.duration_seconds = fake_duration
+    transcribe.compress = fake_compress
+    transcribe.split = fake_split
+    transcribe.log = lambda msg: None
+    try:
+        text = transcribe.transcribe(audio, provider=provider)
+    finally:
+        (transcribe._size, transcribe.duration_seconds, transcribe.compress,
+         transcribe.split, transcribe.log) = real
+        audio.unlink(missing_ok=True)
+    return text, events
+
+
+def t25():
+    """The registry hands out each model's own limits, not one global set."""
+    default = providers.get()
+    assert default.name == config.TRANSCRIBE_MODEL
+    # The config constants are still the default provider's values, so a
+    # change there still changes what the default does.
+    assert default.max_bytes == config.WHISPER_LIMIT_BYTES
+    assert default.compress_threshold_bytes == config.COMPRESS_THRESHOLD_BYTES
+    assert default.max_chunk_seconds == config.CHUNK_SECONDS
+    assert default.truncation_word_threshold == config.TRUNCATION_WORD_THRESHOLD
+
+    whisper = providers.get("whisper-1")
+    assert whisper.max_chunk_seconds == 20 * 60, "whisper has no output cap to guard"
+    assert whisper.truncation_word_threshold is None
+
+    groq = providers.get("groq/whisper-large-v3")
+    assert groq.model == "whisper-large-v3" and "groq.com" in groq.base_url
+    assert groq.api_key_setting == "GROQ_API_KEY"
+    assert groq.max_bytes == 100 * MB
+
+    deepgram = providers.get("deepgram/nova-3")
+    # watch.preflight asks the provider which key it needs, so a non-OpenAI
+    # provider must not be gated on an OpenAI key that is never used.
+    assert deepgram.api_key_setting == "DEEPGRAM_API_KEY"
+    assert default.api_key_setting == "OPENAI_API_KEY"
+    assert config.DEEPGRAM_API_KEY == "" and config.GROQ_API_KEY == ""
+    assert deepgram.max_chunk_seconds == providers.NO_DURATION_LIMIT
+    assert deepgram.truncation_word_threshold is None
+    assert deepgram.diarization and not default.diarization
+
+    # An unregistered name is an OpenAI model on the default limits, which is
+    # what TRANSCRIBE_MODEL meant before providers existed.
+    other = providers.get("gpt-5-transcribe-imaginary")
+    assert isinstance(other, providers.OpenAIProvider)
+    assert other.max_chunk_seconds == config.CHUNK_SECONDS
+    # Every provider satisfies the protocol it claims to.
+    for prov in (default, whisper, groq, deepgram):
+        assert isinstance(prov, providers.TranscriptionProvider), prov.name
+results.append(run("each provider carries its own limits, defaulting to config's", t25))
+
+
+def t26():
+    """The same 39.5 minute lecture splits differently per provider."""
+    text, events = drive_transcribe(stub_of(providers.get("gpt-4o-mini-transcribe")))
+    assert events["splits"] == [("lecture.m4a", 8 * 60)], events["splits"]
+    assert not events["compressed"], "19MB is under the 24MB threshold"
+
+    _, whisper = drive_transcribe(FakeProvider(
+        max_chunk_seconds=20 * 60, truncation_word_threshold=None))
+    assert whisper["splits"] == [("lecture.m4a", 20 * 60)], whisper["splits"]
+
+    _, deep = drive_transcribe(stub_of(providers.get("deepgram/nova-3")))
+    assert deep["splits"] == [], "no duration limit means one request"
+    assert not deep["compressed"], "19MB is far under Deepgram's threshold"
+results.append(run("one lecture, three providers, three chunking decisions", t26))
+
+
+def t27():
+    """The split boundary is the provider's number, exactly."""
+    for limit in (8 * 60, 20 * 60, 600):
+        prov = FakeProvider(max_chunk_seconds=limit, truncation_word_threshold=None)
+        _, at = drive_transcribe(prov, seconds=float(limit))
+        assert at["splits"] == [], f"exactly {limit}s must not split"
+        assert len(prov.calls) == 1
+
+        over = FakeProvider(max_chunk_seconds=limit, truncation_word_threshold=None)
+        _, past = drive_transcribe(over, seconds=limit + 1.0)
+        assert past["splits"] == [("lecture.m4a", limit)], past["splits"]
+        assert len(over.calls) == 2, over.calls
+results.append(run("audio splits one second over the provider's limit, not at it", t27))
+
+
+def t28():
+    """Size splits and compression are the provider's thresholds too."""
+    # Short but heavy: duration says no, size says yes.
+    prov = FakeProvider(max_chunk_seconds=providers.NO_DURATION_LIMIT, truncation_word_threshold=None)
+    _, events = drive_transcribe(prov, size=30 * MB, seconds=60.0)
+    assert events["compressed"], "30MB is over the 24MB compress threshold"
+    assert events["splits"] == [], "compression got it under 25MB"
+
+    # Deepgram's thresholds are so much higher that the same file is one call.
+    deep = stub_of(providers.get("deepgram/nova-3"))
+    _, big = drive_transcribe(deep, size=30 * MB, seconds=60.0)
+    assert not big["compressed"] and big["splits"] == []
+
+    # Still over the cap after compressing: split on size.
+    heavy = FakeProvider(max_chunk_seconds=providers.NO_DURATION_LIMIT, truncation_word_threshold=None)
+    _, split_on_size = drive_transcribe(heavy, size=200 * MB, seconds=60.0)
+    assert split_on_size["compressed"]
+    assert split_on_size["splits"] == [("compressed.m4a", providers.NO_DURATION_LIMIT)]
+results.append(run("compression and size splits follow the provider's bytes", t28))
+
+
+def t29():
+    """A chunk over max_bytes is a readable error naming the provider."""
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".m4a") as fh:
+        fh.write(b"x" * 2048)
+        fh.flush()
+        prov = providers.OpenAIProvider("gpt-4o-mini-transcribe", max_bytes=1024)
+        try:
+            prov.transcribe_file(Path(fh.name))
+        except RuntimeError as exc:
+            assert "gpt-4o-mini-transcribe" in str(exc), exc
+            assert "over" in str(exc) and "API limit" in str(exc), exc
+        else:
+            raise AssertionError("a chunk over max_bytes must raise")
+results.append(run("an oversized chunk names the provider whose limit it broke", t29))
+
+
+def t30():
+    """Only a provider that can truncate gets the re-split treatment."""
+    # Every chunk comes back implausibly long, so each is halved twice (the
+    # depth cap) before the pipeline gives up and keeps what it has.
+    truncating = FakeProvider(max_chunk_seconds=8 * 60, truncation_word_threshold=1700,
+                              words=2000)
+    _, events = drive_transcribe(truncating, seconds=16 * 60.0)
+    assert events["splits"][0] == ("lecture.m4a", 8 * 60)
+    halvings = [s for s in events["splits"][1:]]
+    assert halvings, "a long result must be re-split"
+    assert all(seconds < 8 * 60 for _, seconds in halvings), halvings
+
+    # Same output, from a model with no output cap: nothing is re-split.
+    cannot = FakeProvider(max_chunk_seconds=8 * 60, truncation_word_threshold=None,
+                          words=2000)
+    _, quiet = drive_transcribe(cannot, seconds=16 * 60.0)
+    assert quiet["splits"] == [("lecture.m4a", 8 * 60)], quiet["splits"]
+    assert len(cannot.calls) == 2, cannot.calls
+results.append(run("re-splitting on suspected truncation is per-provider", t30))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
