@@ -692,8 +692,8 @@ the weekly page and vice versa, so a task can be filed perfectly and still be
 nowhere you would ever see it. That happened.
 
 By default (`NOTION_TARGET=weekly`) each action item becomes a **checkbox in
-the day column matching its due date**, prefixed with the course and carrying
-a link back to the Drive summary. Set `NOTION_TARGET=database` to create rows
+the day column matching its due date**, prefixed with the course in gray and
+ending in a `↗` that links back to the Drive summary. Set `NOTION_TARGET=database` to create rows
 with Due/Course/Source fields instead.
 
 The weekly page is found by its date heading, e.g. `Sep 9 - Sep 13`, matched
@@ -718,9 +718,24 @@ computed from your schedule, and labeled `assumed` in the Drive summary so you
 can tell the two apart. Nothing lands undated, because an undated task has no
 day column to go in and gets skipped.
 
-**Re-runs don't duplicate.** Before adding anything, the database is checked
-for a task with the same title and due date. Re-processing a lecture adds
-nothing the second time.
+**Re-runs and restatements don't duplicate.** Before adding anything, what is
+already filed is checked for the same errand. The match is on meaning, not on
+the exact string: an instructor who brings one assignment up across three
+class periods gets summarized three times and never in quite the same words,
+so "Read chapter 7", "Please read Chapter Seven" and "Read ch. 7" all count as
+one task. Numbers are matched exactly, so chapter 7 and chapter 8 stay
+separate. A due date that moved does not create a second copy either. Nothing
+is written into your database to make this work; the comparison happens here.
+
+**Checkboxes stay short.** The model is asked for the errand alone, under ten
+words and starting with a verb, with any context in a separate detail field.
+On top of that the task is cleaned before it is filed: markdown is stripped
+(Notion's checkbox text is a plain string, so an asterisk would show up as an
+asterisk), line breaks are flattened, a polite opener like "Please make sure
+to" comes off, and a deadline restated inside the task is dropped since the
+day column already says it. The detail goes in the Drive summary, and in the
+row's body when the target is `database`. What is left is one line: the course
+set back in gray, the task, and a `↗` linking to the notes.
 
 **Failures are contained.** Notion runs last, after Drive, and never raises. A
 bad token or an outage costs you the Notion tasks for that lecture and nothing
@@ -866,6 +881,7 @@ credentials, or an API key, none costs anything to run, and none can touch
 .venv/bin/python test_upload_collisions.py   # collisions, re-runs, two-part days
 .venv/bin/python test_record.py              # device selection and naming
 .venv/bin/python test_notion_tasks.py        # property mapping and de-duplication
+.venv/bin/python test_tasktext.py            # cleaning a task, and telling two of them apart
 .venv/bin/python test_gui.py                 # log parsing and API guard rails
 .venv/bin/python test_insights.py            # the dashboard's numbers against a fake log and week
 .venv/bin/python test_setup.py               # home directory, schedule file, setup wizard, doctor

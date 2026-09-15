@@ -279,6 +279,12 @@ def render_markdown(result: dict, course: str, date: str) -> str:
     if result["action_items"]:
         for a in result["action_items"]:
             lines.append(f"- [ ] {render_action(a)}")
+            # The context was deliberately kept out of the task so the Notion
+            # checkbox stays one line. It has to survive somewhere, and this
+            # document is what that checkbox links to.
+            detail = (a.get("detail") or "").strip() if isinstance(a, dict) else ""
+            if detail:
+                lines.append(f"      {detail}")
     else:
         lines.append(f"_None mentioned in this {config.PROFILE.filename_prefix}._")
     lines.append("")
