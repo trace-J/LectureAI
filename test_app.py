@@ -318,6 +318,41 @@ def test_service_reads_the_agent_back():
         assert service.installed_program(agents_dir=agents) is None
 
 
+def test_menu_controller_under_cocoa():
+    """The Objective-C side: the controller initializes and fills a real NSMenu.
+
+    Needs pyobjc (the app extra); skipped where it is missing. No window, no
+    status bar item, no run loop: an NSMenu can be built without any of them.
+    """
+    try:
+        from AppKit import NSMenu
+    except ImportError:
+        print("      (pyobjc not installed; skipped)")
+        return
+    resident = app.Resident("http://127.0.0.1:5199/", 5199, attached=False, hidden=False)
+    controller = app._MenuController.alloc().initWithResident_(resident)
+    assert controller is not None and controller.resident is resident
+    again = app._MenuController.alloc().initWithResident_(resident)
+    assert again is not None, "the class must be defined once and reused"
+    resident._controller = controller
+    real_probe, real_runs = app.probe, app.service.runs_this_program
+    app.probe = lambda port, host=app.HOST, timeout=1.5: {
+        "watcher": {}, "configured": True, "now_class": "ACCT-4321",
+        "recording": {"active": True, "course": "ACCT-4321", "elapsed": 65}}
+    app.service.runs_this_program = lambda profile=None, agents_dir=None: True
+    try:
+        menu = NSMenu.alloc().initWithTitle_("test")
+        controller.menuNeedsUpdate_(menu)
+        titles = [menu.itemAtIndex_(i).title() or "-" for i in range(menu.numberOfItems())]
+        assert titles == ["Open Syllabus", "-", "Recording ACCT-4321 · 1:05", "Stop Recording", "-",
+                          "Start Syllabus when I log in", "-", "Quit Syllabus"], titles
+        login = menu.itemAtIndex_(5)
+        assert login.state() == 1 and login.target() is controller and login.representedObject() == "login_toggle"
+        assert menu.itemAtIndex_(2).isEnabled() is False, "the recording line is information"
+    finally:
+        app.probe, app.service.runs_this_program = real_probe, real_runs
+
+
 if __name__ == "__main__":
     results = [
         run("probe recognizes a running panel and attaches to it", test_probe_finds_a_panel),
@@ -334,6 +369,7 @@ if __name__ == "__main__":
         run("takeover stops if the old panel will not", test_takeover_gives_up_if_the_old_panel_stays),
         run("the Setup page's start-at-login switch", test_login_item_api),
         run("service reads the installed agent back", test_service_reads_the_agent_back),
+        run("the menu controller builds a real menu under Cocoa", test_menu_controller_under_cocoa),
     ]
     print(f"\n{sum(results)}/{len(results)} passed")
     sys.exit(0 if all(results) else 1)

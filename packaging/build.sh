@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Build Syllabus.app from this checkout into dist/Syllabus.app.
+# Build Syllabus.app from this checkout into dist/Syllabus.app (or $SYLLABUS_DIST).
 #
 #     packaging/build.sh
 #
@@ -15,6 +15,9 @@ set -euo pipefail
 ROOT="${0:A:h:h}"
 cd "$ROOT"
 PY="${PYTHON:-$ROOT/.venv/bin/python}"
+# Where the .app lands. Build somewhere else while a copy in dist/ is running:
+# replacing files under a running bundle can crash it on its next import.
+DIST="${SYLLABUS_DIST:-$ROOT/dist}"
 
 if ! "$PY" -c "import PyInstaller, webview" 2>/dev/null; then
     echo "build.sh: $PY lacks PyInstaller or pywebview." >&2
@@ -65,10 +68,10 @@ done
 export SYLLABUS_FFMPEG_DIR="$FFMPEG_DIR"
 
 "$PY" -m PyInstaller --noconfirm --clean \
-    --distpath "$ROOT/dist" --workpath "$BUILD/pyinstaller" \
+    --distpath "$DIST" --workpath "$BUILD/pyinstaller" \
     packaging/syllabus.spec
 
-APP="$ROOT/dist/Syllabus.app"
+APP="$DIST/Syllabus.app"
 codesign --verify --deep --strict "$APP"
 echo
 echo "built $APP ($(du -sh "$APP" | cut -f1))"
