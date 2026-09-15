@@ -18,7 +18,7 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from intake import config
+from intake import config, tools
 
 
 def log(msg: str) -> None:
@@ -40,7 +40,7 @@ def _mb(n_bytes: int) -> str:
 def _ffmpeg(args: list[str], what: str) -> None:
     """Run ffmpeg quietly; raise with its stderr if it fails."""
     result = subprocess.run(
-        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *args],
+        [tools.ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", *args],
         capture_output=True,
         text=True,
     )
@@ -53,7 +53,7 @@ def duration_seconds(path: Path) -> float | None:
     """Length of the audio, or None if ffprobe can't tell."""
     result = subprocess.run(
         [
-            "ffprobe", "-v", "error",
+            tools.ffprobe(), "-v", "error",
             "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1",
             str(path),
@@ -71,7 +71,7 @@ def audio_codec(path: Path) -> str:
     """Codec name of the first audio stream, or "" if ffprobe can't tell."""
     result = subprocess.run(
         [
-            "ffprobe", "-v", "error",
+            tools.ffprobe(), "-v", "error",
             "-select_streams", "a:0",
             "-show_entries", "stream=codec_name",
             "-of", "default=noprint_wrappers=1:nokey=1",

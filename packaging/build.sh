@@ -38,6 +38,32 @@ done
 cp intake/static/icon.png "$ICONSET/icon_512x512.png"
 iconutil -c icns "$ICONSET" -o "$BUILD/Syllabus.icns"
 
+# ffmpeg and ffprobe, static LGPL builds from packaging/ffmpeg/. In order:
+# a folder named in SYLLABUS_FFMPEG_DIR, a local build in packaging/build/ffmpeg
+# (packaging/ffmpeg/build.sh puts one there), or the release pinned in
+# packaging/ffmpeg/release, downloaded and checked against its sha256.
+FFMPEG_DIR="${SYLLABUS_FFMPEG_DIR:-$BUILD/ffmpeg}"
+if [[ ! -x "$FFMPEG_DIR/ffmpeg" || ! -x "$FFMPEG_DIR/ffprobe" ]]; then
+    source <(sed 's/^/PIN_/' packaging/ffmpeg/release)
+    if [[ -z "${PIN_sha256:-}" ]]; then
+        echo "build.sh: no ffmpeg build to bundle." >&2
+        echo "  packaging/ffmpeg/release has no sha256 yet: publish one with the" >&2
+        echo "  'ffmpeg for Syllabus.app' workflow and record it there, or build" >&2
+        echo "  locally with packaging/ffmpeg/build.sh, or set SYLLABUS_FFMPEG_DIR." >&2
+        exit 1
+    fi
+    URL="https://github.com/trace-J/LectureAI/releases/download/$PIN_tag/$PIN_asset"
+    echo "fetching $URL"
+    mkdir -p "$FFMPEG_DIR"
+    curl -sfL -o "$BUILD/$PIN_asset" "$URL"
+    echo "$PIN_sha256  $BUILD/$PIN_asset" | shasum -a 256 -c -
+    tar -xzf "$BUILD/$PIN_asset" -C "$FFMPEG_DIR"
+fi
+for f in ffmpeg ffprobe LICENSE.md COPYING.LGPLv2.1 BUILD.txt; do
+    [[ -e "$FFMPEG_DIR/$f" ]] || { echo "build.sh: $FFMPEG_DIR lacks $f" >&2; exit 1; }
+done
+export SYLLABUS_FFMPEG_DIR="$FFMPEG_DIR"
+
 "$PY" -m PyInstaller --noconfirm --clean \
     --distpath "$ROOT/dist" --workpath "$BUILD/pyinstaller" \
     packaging/syllabus.spec
@@ -47,4 +73,5 @@ codesign --verify --deep --strict "$APP"
 echo
 echo "built $APP ($(du -sh "$APP" | cut -f1))"
 echo "  version $("$PY" -c 'import intake; print(intake.__version__)'), $(codesign -dv "$APP" 2>&1 | grep -o 'Signature=.*' || echo 'signed ad hoc')"
+echo "  ffmpeg: $("$APP/Contents/Frameworks/ffmpeg/ffmpeg" -version | head -1 | cut -d' ' -f1-3)"
 echo "  open it:  open '$APP'"

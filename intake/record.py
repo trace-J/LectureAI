@@ -25,6 +25,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from intake import config
+from intake import tools
 from intake import transcribe
 
 DEVICE_LINE = re.compile(r"^\[AVFoundation indev @ [^\]]*\] \[(\d+)\] (.+)$")
@@ -41,7 +42,7 @@ def list_devices() -> list[tuple[int, str]]:
     listing devices is not a valid transcode. That failure is expected.
     """
     proc = subprocess.run(
-        ["ffmpeg", "-hide_banner", "-f", "avfoundation",
+        [tools.ffmpeg(), "-hide_banner", "-f", "avfoundation",
          "-list_devices", "true", "-i", ""],
         capture_output=True, text=True,
     )
@@ -125,7 +126,7 @@ def output_name(started: datetime, course: str | None = None) -> str:
 def _ffmpeg_command(device_index: int, destination: Path,
                     max_minutes: float | None = None) -> list[str]:
     command = [
-        "ffmpeg", "-hide_banner", "-loglevel", "error",
+        tools.ffmpeg(), "-hide_banner", "-loglevel", "error",
         "-f", "avfoundation", "-i", f":{device_index}",
         "-ac", str(config.RECORD_CHANNELS),
         "-ar", str(config.RECORD_SAMPLE_RATE),
@@ -366,9 +367,8 @@ class Recorder:
         """
         if self.is_recording:
             raise RuntimeError("already recording")
-        if shutil.which("ffmpeg") is None:
-            raise RuntimeError(
-                "ffmpeg is not on your PATH. Install it:  brew install ffmpeg")
+        if tools.find("ffmpeg") is None:
+            raise RuntimeError(f"ffmpeg was not found. Fix: {tools.install_hint()}")
         other = Recorder.adopt(keep_awake=False)
         if other is not None:
             raise RuntimeError(
