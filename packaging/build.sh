@@ -44,7 +44,7 @@ iconutil -c icns "$ICONSET" -o "$BUILD/Syllabus.icns"
 # packaging/ffmpeg/release, downloaded and checked against its sha256.
 FFMPEG_DIR="${SYLLABUS_FFMPEG_DIR:-$BUILD/ffmpeg}"
 if [[ ! -x "$FFMPEG_DIR/ffmpeg" || ! -x "$FFMPEG_DIR/ffprobe" ]]; then
-    source <(sed 's/^/PIN_/' packaging/ffmpeg/release)
+    eval "$(sed 's/^/PIN_/' packaging/ffmpeg/release)"
     if [[ -z "${PIN_sha256:-}" ]]; then
         echo "build.sh: no ffmpeg build to bundle." >&2
         echo "  packaging/ffmpeg/release has no sha256 yet: publish one with the" >&2

@@ -38,7 +38,7 @@ jobs:
           COPYFILE_DISABLE: "1"
         run: |
           set -euo pipefail
-          source <(sed 's/^/PIN_/' packaging/ffmpeg/release)
+          eval "$(sed 's/^/PIN_/' packaging/ffmpeg/release)"
           cd "$RUNNER_TEMP/ffmpeg"
           tar -czf "$PIN_asset" ffmpeg ffprobe LICENSE.md COPYING.LGPLv2.1 BUILD.txt
           shasum -a 256 "$PIN_asset" | tee "$PIN_asset.sha256"
