@@ -534,6 +534,7 @@
   <div class="flash err" id="relayBanner" hidden>
     Your Mac is not connected right now. Wake it, or check that its panel is running; this page picks up on its own.
   </div>
+  <div class="flash" id="updateBanner" style="display:none"></div>
   <div class="flash" id="setupFlash" style="display:none">
     Nothing is set up yet. <a href="{{ base }}/setup">Finish setup</a> to add your keys and class schedule.
   </div>
@@ -1158,7 +1159,29 @@ function renderToday(s) {
   $("todayLine").innerHTML = `<strong>${DAY_NAMES[now.getDay()]}, ${MONTHS[now.getMonth()]} ${now.getDate()}</strong>${line}`;
 }
 
+function renderUpdate(u) {
+  const el = $("updateBanner");
+  if (!u || !u.available) { el.style.display = "none"; return; }
+  el.textContent = "";
+  el.appendChild(document.createTextNode(`Syllabus ${u.version} is available. `));
+  if (u.how === "download") {
+    const a = document.createElement("a");
+    a.href = u.url; a.target = "_blank"; a.rel = "noopener";
+    a.textContent = "Download it";
+    el.appendChild(a);
+    el.appendChild(document.createTextNode(", then replace the copy in Applications."));
+  } else {
+    el.appendChild(document.createTextNode("Update with "));
+    const code = document.createElement("code");
+    code.textContent = "pipx upgrade intake";
+    el.appendChild(code);
+    el.appendChild(document.createTextNode(", then restart the panel."));
+  }
+  el.style.display = "block";
+}
+
 function render(s) {
+  renderUpdate(s.update);
   // Who is signed in, when the page came through the tunnel, and which
   // Syllabus account this Mac belongs to, when it has been claimed into one.
   const viewer = $("viewer");

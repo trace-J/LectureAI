@@ -17,7 +17,7 @@ from pathlib import Path
 
 import anthropic
 
-from intake import config, schemas
+from intake import config, schemas, tasktext
 
 MAX_SLUG_WORDS = 4
 
@@ -102,6 +102,11 @@ def normalize_actions(raw_items, course: str, date: str) -> list[dict]:
     since that is when a reading or problem set is usually wanted. `date_source`
     records which happened, so an assumption is never presented as something
     the instructor said.
+
+    The task text is cleaned here rather than at each destination, so the
+    short form is what gets stored, shown and compared everywhere. The schema
+    asks for it plain, but a model that ignores that would otherwise put
+    markdown into Notion, which shows it as literal asterisks.
     """
     items: list[dict] = []
     for raw in raw_items or []:
@@ -112,13 +117,18 @@ def normalize_actions(raw_items, course: str, date: str) -> list[dict]:
         else:  # a pydantic ActionItem
             entry = {
                 "task": getattr(raw, "task", ""),
+                "detail": getattr(raw, "detail", ""),
                 "due_date": getattr(raw, "due_date", ""),
                 "kind": getattr(raw, "kind", "other"),
             }
 
-        task = str(entry.get("task", "")).strip()
+        task = tasktext.clean(str(entry.get("task", "")))
         if not task:
             continue
+
+        # The detail is a sentence, not a checkbox, so it keeps its full stop
+        # and its length; it only loses markup Notion would show verbatim.
+        detail = tasktext.strip_markdown(str(entry.get("detail", "") or ""))
 
         kind = str(entry.get("kind", "other")).strip().lower()
         if kind not in config.PROFILE.summary_schema.ACTION_KINDS:
@@ -131,8 +141,8 @@ def normalize_actions(raw_items, course: str, date: str) -> list[dict]:
             due = config.next_class_meeting(course, date) or ""
             source = "assumed" if due else "none"
 
-        items.append({"task": task, "due_date": due, "kind": kind,
-                      "date_source": source})
+        items.append({"task": task, "detail": detail, "due_date": due,
+                      "kind": kind, "date_source": source})
     return items
 
 

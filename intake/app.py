@@ -192,6 +192,10 @@ def menu_items(status: dict | None, attached: bool, login_installed: bool) -> li
                       "enabled": reachable and bool((status or {}).get("configured")),
                       "checked": False})
     items.append({"title": "-", "action": "-", "enabled": False, "checked": False})
+    update = (status or {}).get("update") or {}
+    if update.get("available") and update.get("how") == "download":
+        items.append({"title": f"Download {title()} {update.get('version')}…",
+                      "action": "update", "enabled": True, "checked": False})
     if attached:
         items.append({"title": f"Run {title()} from this app instead…",
                       "action": "takeover", "enabled": True, "checked": False})
@@ -370,6 +374,12 @@ class Resident:
                         "Take over"):
                 if takeover(self.port) == 0:
                     self.quit(confirm=False)
+        elif action == "update":
+            import webbrowser
+            status = probe(self.port, timeout=1.0) or {}
+            url = ((status.get("update") or {}).get("url")) or ""
+            if url:
+                webbrowser.open(url)
         elif action == "quit":
             self.quit()
 

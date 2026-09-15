@@ -1,0 +1,88 @@
+# Build Syllabus.app and its disk image, and publish them as a GitHub Release.
+#
+# Pushing a tag vX.Y.Z that matches intake.__version__ builds the app on an
+# Apple silicon runner, wraps it in Syllabus-X.Y.Z.dmg, and creates the
+# release with the image and its checksum attached. The app's update notice
+# (intake/updates.py) reads that list. A manual run, or a push touching the
+# packaging, builds everything and keeps the image as a workflow artifact
+# without publishing, so the recipe can be checked first.
+#
+# Signing: when the SYLLABUS_CODESIGN_IDENTITY variable and the certificate
+# secrets exist the build is signed and notarized; until then the image is
+# signed ad hoc and the release notes carry the Gatekeeper steps.
+name: Release Syllabus.app
+
+on:
+  push:
+    tags: ["v*"]
+    paths-ignore: []
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15  # Apple silicon
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the package with the app and build extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[app,build]'
+
+      - name: The tag must be the package's version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          VERSION="$(python -c 'import intake; print(intake.__version__)')"
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "$TAG" != "v$VERSION" ]]; then
+            echo "tag $TAG does not match intake.__version__ $VERSION; bump intake/__init__.py first" >&2
+            exit 1
+          fi
+
+      - name: Build Syllabus.app
+        env:
+          PYTHON: python
+        run: packaging/build.sh
+
+      - name: Build the disk image
+        id: dmg
+        run: |
+          set -euo pipefail
+          packaging/dmg.sh dist/Syllabus.app dist
+          DMG="$(ls dist/Syllabus-*.dmg)"
+          echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$DMG")" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the result
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.dmg.outputs.name }}
+          path: |
+            ${{ steps.dmg.outputs.dmg }}
+            ${{ steps.dmg.outputs.dmg }}.sha256
+          if-no-files-found: error
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DMG: ${{ steps.dmg.outputs.dmg }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          {
+            sed "s/{{version}}/$VERSION/g; s/{{dmg}}/$(basename "$DMG")/g" packaging/release-notes.md
+            echo
+            echo "sha256: $(cut -d' ' -f1 "$DMG.sha256")"
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" "$DMG" "$DMG.sha256" \
+            --repo "$GITHUB_REPOSITORY" --title "Syllabus $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" --generate-notes

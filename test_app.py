@@ -189,6 +189,13 @@ def test_menu_items():
     actions = [i["action"] for i in items if i["action"] and i["action"] != "-"]
     assert "takeover" in actions and "login_toggle" not in actions, actions
 
+    # A newer app is out: a download line, in the app only.
+    newer = {**idle, "update": {"available": True, "version": "0.9.0", "how": "download", "url": "u"}}
+    items = app.menu_items(newer, attached=False, login_installed=False)
+    assert "Download Syllabus 0.9.0…" in titles(items), titles(items)
+    items = app.menu_items({**newer, "update": {**newer["update"], "how": "pipx"}}, attached=False, login_installed=False)
+    assert not any(i["action"] == "update" for i in items), "pipx installs are told on the page instead"
+
     # The panel is gone: say so, and do not offer to record.
     items = app.menu_items(None, attached=False, login_installed=False)
     assert "The panel is not answering" in titles(items)
