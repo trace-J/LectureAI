@@ -782,7 +782,11 @@ fight over one home.
 `packaging/build.sh` freezes that into `dist/Syllabus.app` with PyInstaller
 (`packaging/syllabus.spec`; the `build` extra installs it). The bundle's one
 binary is the app when double-clicked and the `syllabus` command when given
-arguments, so `Syllabus.app/Contents/MacOS/Syllabus doctor` works. The icon
+arguments, so `Syllabus.app/Contents/MacOS/Syllabus doctor` works. That is
+also how the panel starts the watcher and how `service install` writes the
+agent from inside the bundle: `config.program()` spells the command the way
+this process was started, this interpreter with `-m intake.cli` from a
+checkout or pipx, the binary itself when frozen. The icon
 is made from `intake/static/icon.png` at build time; `packaging/build/` and
 `dist/` are build output and stay out of git. Without a Developer ID identity
 in the keychain the result is signed ad hoc: it runs on the Mac that built it,
@@ -863,8 +867,9 @@ piece of that, and the rest is planned in this order:
   the path for people who prefer a terminal. First slice done 2026-09-15:
   `intake app` and `packaging/build.sh` produce an unsigned `Syllabus.app`
   that opens the panel in its own window ("Syllabus.app, the desktop build"
-  above). Still to do, one PR each: the frozen binary as the watcher the
-  panel starts, a bundled ffmpeg, staying resident behind a menu bar item
+  above). The panel's watcher spawn and the launchd agent's command work
+  from inside the bundle since the same day. Still to do, one PR each: a
+  bundled ffmpeg, staying resident behind a menu bar item
   with a start-at-login switch, a release workflow with a DMG and an update
   notice, then Developer ID signing and notarization.
 - **Sign-ins.** Done. The account service ("A Syllabus account" above), a

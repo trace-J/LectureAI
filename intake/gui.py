@@ -341,12 +341,12 @@ def watcher_start():
     # start_new_session so the watcher outlives this GUI: closing the control
     # panel should not abandon a lecture that is midway through transcription.
     #
-    # Run as a module from the directory that holds the package, so this works
-    # from a checkout (where that is the repo root) and from a pipx install
-    # (where it is site-packages) without either needing the other's setup.
+    # config.program spells the command the way this process was started:
+    # this interpreter and the package from a checkout or a pipx install, the
+    # app's own binary inside Syllabus.app.
     child = subprocess.Popen(
-        [sys.executable, "-m", "intake.watch"],
-        cwd=str(config.CODE_ROOT), stdin=subprocess.DEVNULL,
+        watcher_command(),
+        cwd=str(config.program_cwd()), stdin=subprocess.DEVNULL,
         stdout=handle, stderr=handle, start_new_session=True,
     )
     _children.append(child)
@@ -358,6 +358,11 @@ def watcher_start():
         _children.remove(child)
         return jsonify({"ok": False, "error": _last_error_line(WATCHER_LOG)}), 500
     return jsonify({"ok": True})
+
+
+def watcher_command() -> list[str]:
+    """The command that starts the watcher for this profile."""
+    return config.program("watch")
 
 
 def _exited_early(child: subprocess.Popen, seconds: float = 1.5) -> bool:

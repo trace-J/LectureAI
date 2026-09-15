@@ -19,6 +19,7 @@ import fcntl
 import os
 import re
 import subprocess
+import sys
 import time
 import tomllib
 from dataclasses import dataclass
@@ -37,6 +38,33 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 # The checkout this package was loaded from, when it is one. Under pipx this
 # is a site-packages directory and nothing below looks for anything in it.
 CODE_ROOT = PACKAGE_DIR.parent
+
+# Whether this is Syllabus.app, the package frozen with PyInstaller (see
+# packaging/). There sys.executable is the app's one binary, which runs the
+# intake command when given arguments and the window when given none, and
+# has no -m flag to offer anyone.
+FROZEN = bool(getattr(sys, "frozen", False))
+
+
+def program(*args: str, profile: Profile | None = None) -> list[str]:
+    """The command that runs `intake <args>` the way this process was run.
+
+    From a checkout or a pipx install that is this interpreter with
+    `-m intake.cli`, so a venv keeps its venv and pipx its own. Frozen, it
+    is the app binary itself. Used wherever the panel or the service starts
+    another copy of this program: the watcher, the launchd agent. The profile
+    is always spelled out, so the child cannot land in another home.
+    """
+    profile = profile or PROFILE
+    head = [sys.executable] if FROZEN else [sys.executable, "-m", "intake.cli"]
+    return [*head, "--profile", profile.name, *args]
+
+
+def program_cwd() -> Path:
+    """Where to run program() from: the directory holding the package, so
+    `-m intake.cli` resolves from a checkout as well as from site-packages.
+    The frozen binary needs no such help and runs from the home directory."""
+    return HOME_DIR if FROZEN else CODE_ROOT
 
 HOME_ENV_VAR = "INTAKE_HOME"
 # The variable's name before the rename to intake. Still read when the new one
