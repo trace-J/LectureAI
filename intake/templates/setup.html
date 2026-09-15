@@ -291,6 +291,9 @@
       <div class="hint" id="accountExpires"></div>
     </div>
     <div class="hint" id="accountHint"></div>
+    <div class="status-line" id="accountRelay" hidden style="margin-top:12px">
+      <span class="dot off" id="relayDot"></span><span id="relayText"></span>
+    </div>
   </div>
 
   <!-- Checkup -->
@@ -615,11 +618,36 @@ function renderAccount(a) {
   else if (a.check && a.check.state === "revoked") hint = "This Mac was removed from the account, so it is signed out here too.";
   else if (a.signed_in && a.sync) hint = syncLine(a.sync);
   $("accountHint").textContent = hint;
+  renderRelay(a.signed_in ? a.relay : null);
   if (waiting && !accountPoll) {
     accountPoll = setInterval(loadAccount, 3000);
   } else if (!waiting && accountPoll) {
     clearInterval(accountPoll); accountPoll = null;
     if (a.signed_in) { flash(`Signed in as ${a.email}.`); checkup(); }
+  }
+}
+
+// This Mac's address on the web, through the account service, and whether
+// the panel's socket to it is up right now.
+function renderRelay(r) {
+  const row = $("accountRelay");
+  row.hidden = !r || !r.url;
+  if (row.hidden) return;
+  const text = $("relayText");
+  text.textContent = "";
+  const link = document.createElement("a");
+  link.href = r.url; link.textContent = r.url.replace(/^https:\/\//, "");
+  link.target = "_blank"; link.rel = "noopener";
+  if (r.state === "connected") {
+    $("relayDot").className = "dot on";
+    text.append("Reach this panel from any browser or phone at ", link, ". Only your account gets in.");
+  } else if (r.state === "connecting" || r.state === "reconnecting") {
+    $("relayDot").className = "dot off";
+    const why = r.error ? ` (${r.error}${r.detail ? "; " + r.detail : ""})` : "";
+    text.append("Connecting this panel to its address ", link, why);
+  } else {
+    $("relayDot").className = "dot bad";
+    text.append("This panel's address ", link, " is not connected", r.error ? `: ${r.error}` : "", r.detail ? `. ${r.detail}` : "");
   }
 }
 

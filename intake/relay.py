@@ -73,7 +73,21 @@ WORKERS = 4
 
 
 def _say(msg: str) -> None:
-    print(f"relay: {msg}", file=sys.stderr, flush=True)
+    print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} relay: {msg}", file=sys.stderr, flush=True)
+
+
+def state_file():
+    """Where the running panel leaves its connection state for `intake doctor`,
+    which never talks to the panel or the network."""
+    return config.WORK_DIR / "relay.json"
+
+
+def read_state_file() -> dict:
+    try:
+        data = json.loads(state_file().read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
 
 
 def _iso(ts: float | None = None) -> str:
@@ -213,9 +227,23 @@ class Relay:
 
     def _set(self, **fields) -> None:
         with self._lock:
-            if "state" in fields and fields["state"] != self._state["state"]:
+            changed = "state" in fields and fields["state"] != self._state["state"]
+            if changed:
                 self._state["since"] = _iso(self._now())
             self._state.update(fields)
+            snapshot = dict(self._state)
+        if changed or "error" in fields:
+            self._write_state(snapshot)
+
+    def _write_state(self, snapshot: dict) -> None:
+        """Leave the state where the doctor can read it. Best effort."""
+        try:
+            path = state_file()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            snapshot["written_at"] = _iso(self._now())
+            path.write_text(json.dumps(snapshot, indent=2) + "\n")
+        except OSError:
+            pass
 
     # -- lifecycle --
 

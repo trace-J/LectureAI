@@ -19,13 +19,14 @@ schedule, the audio is compressed and split to clear the transcription API's
 size limit, Claude writes the summary, and the original recording is deleted
 once both uploads land.
 
-The control panel is reachable from anywhere at
-<https://maincoursemedia.com/syllabus> (it lands on
-`syllabus.maincoursemedia.com`), behind a Google sign-in. The
-panel still runs on the Mac that does the recording; the address is a
-Cloudflare Tunnel to it, and `intake service install` is what keeps the
-panel running there without a terminal. See "The panel on the web" below.
-This repository is public so that the install line below can fetch from it.
+The control panel is reachable from any browser or phone. Every Mac signed
+in to a Syllabus account has an address on the account service,
+`syllabusaccounts.maincoursemedia.com/p/<device>/`, that only the account's
+owner can open, with nothing to install or configure; the panel still runs
+on the Mac that does the recording, and `intake service install` is what
+keeps it running there without a terminal. See "The panel on the web"
+below. This repository is public so that the install line below can fetch
+from it.
 
 ## How a recording flows through
 
@@ -224,9 +225,10 @@ key or token is ever sent to the browser.
 and without that flag the panel refuses and says why: it has no login of its
 own, so anyone who can reach the port can start processes and rewrite the
 keys in `.env`. Reaching it from elsewhere is done differently, and without
-that flag: the panel keeps listening on localhost, a Cloudflare Tunnel on the
-same Mac carries requests to it, and the panel's own Google sign-in is the
-login in front. That is the next section.
+that flag: the panel keeps listening on localhost and holds a connection out
+to the account service, which puts your account's sign-in in front and
+carries your requests down that connection. That is "The panel on the web"
+below.
 
 ## Keeping the panel running
 
@@ -316,111 +318,80 @@ confirm the token each time it loads.
 
 ## The panel on the web
 
-**Every Mac signed in to a Syllabus account has an address on the web**,
-with nothing to install or configure:
+Every Mac signed in to a Syllabus account has an address:
 
 ```
 https://syllabusaccounts.maincoursemedia.com/p/<device>/
 ```
 
-The panel opens a WebSocket to the account service the moment it starts
-with an `account.json`, keeps it open from a thread inside the panel
-process (`intake/relay.py`), and reconnects on its own. The service holds
-the other end and sends each browser request down it; the panel runs the
-request in process and answers up the socket. Only the account's owner
-gets in, and the sign-in is the account service's own, so there is no
-login on the panel for this road: the service names the viewer in every
-request, and the panel believes it because the request arrived on the
-socket the panel opened with its own device token. No port is opened, no
-hostname or tunnel is set up, and a panel with no account never starts the
-socket. When the Mac is asleep, offline, or its panel is not running, the
-address shows a page saying so, with the Mac's name and when it was last
-connected, and tries again every 10 seconds. Through the relay the page
-asks for its status every three seconds instead of every second, and not
-at all while the tab is hidden, since each request crosses the service.
-The address itself is on the status the page polls (`relay.url`) and will
-appear on the Setup page next; the account page will list it for each Mac.
+The Setup page shows yours under the account step, with a dot that says
+whether the panel is connected right now, and `intake doctor` has a "panel
+on the web" line with the same. Open the address from any browser or phone,
+sign in with the Google account your Mac is signed in to, and you are
+looking at the panel on that Mac: the same page, the same Record button,
+the same Setup page. Nothing to install beyond Syllabus, no port to open,
+no hostname or tunnel to set up, no Cloudflare account.
 
-The paragraphs below describe the older road, a Cloudflare Tunnel with the
-panel's own sign-in in front, which this Mac still uses at
-`syllabus.maincoursemedia.com` until the relay has proven itself.
+How it works: the panel opens a WebSocket to the account service the moment
+it starts with an `account.json`, keeps it open from a thread inside the
+panel process (`intake/relay.py`), and reconnects on its own if it drops.
+The service holds the other end and sends each browser request down it as a
+small message; the panel runs the request in process and sends the answer
+back up. Only what the panel serves is carried: its two pages, its API, and
+its two images. Recordings, transcripts, and keys never travel this way,
+because the panel never serves them.
 
-The panel is published at `syllabus.maincoursemedia.com`, and
-`maincoursemedia.com/syllabus` sends you there. Three pieces make that up,
-and only the last needs anything from you when setting up a new Mac.
+Who may open the address is the account service's decision: the account
+that owns the Mac, and nobody else. A different account is told "That
+Syllabus belongs to someone else." The sign-in is the service's own Google
+sign-in, so there is no login on the panel for this road. The service names
+the viewer in every request it relays, and the panel believes it because the
+request arrived on the socket the panel itself opened with its own device
+token; a request from the local network cannot carry that mark. The header
+shows who is signed in, with a sign-out link that goes to the account
+service.
 
-1. **The panel**, kept running by `intake service install`, listening on
-   `127.0.0.1:5173` as always.
-2. **A Cloudflare Tunnel** (`cloudflared`, installed with Homebrew and run
-   as its own launch agent by `cloudflared service install <token>`). It
-   holds an outbound connection to Cloudflare and hands requests for that
-   hostname to the panel's port. Nothing is opened on the router, and the
-   panel's port is still not reachable from the network. The tunnel is
-   named `syllabus-panel` in the Cloudflare account; the hostname is a CNAME
-   to `<tunnel-id>.cfargotunnel.com`.
-3. **The sign-in** is the Syllabus account this Mac is signed in to ("A
-   Syllabus account" above). Anyone who arrives through the tunnel is sent
-   to the account service, signs in with Google there if they have not
-   already, and comes back to the panel with a one-time code that the panel
-   trades for the account using its own device token. The account's owner
-   is the one person allowed; a different account is told "That Syllabus
-   belongs to someone else." The only setting the panel needs is where it
-   is published:
+When the Mac is asleep, offline, or its panel is not running, there is no
+socket, and the address shows a page saying so, with the Mac's name and when
+it was last connected, trying again every 10 seconds. A panel that is up
+but does not answer within 25 seconds gets the same treatment: the service
+closes the socket as dead and the panel reconnects. Through the relay the
+page asks for its status every three seconds instead of every second, and
+not at all while the tab is hidden, since every request crosses the
+service. A closed lid drops the socket, and the next wake reconnects it;
+the panel's log (`panel.log` in the profile's home) has a line for each.
 
-   ```
-   PANEL_PUBLIC_URL=https://syllabus.maincoursemedia.com
-   ```
-
-   It is needed because this tunnel's ingress rewrites the Host header to
-   `127.0.0.1:5173` on the way in, so the panel cannot learn its public
-   hostname from the request; without it the account service is asked to
-   send the browser back to an address it will not accept. Left empty, the
-   request's own hostname is used, which is what the dev preview wants.
-   Each `/login` writes the return address it used to `panel.log`, and
-   registers it with the account service, which will only ever send a
-   browser back there.
-
-   A request that came through Cloudflare must carry a session from that
-   sign-in or it is refused: the page is sent to `/login`, the API gets a
-   401. A Mac that is not signed in to an account refuses every request that
-   came through Cloudflare with a 503 saying so, so a tunnel that is up
-   before the Mac is signed in exposes nothing. Requests from the Mac itself
-   carry no Cloudflare headers and are never gated, so
-   `http://127.0.0.1:5173` keeps working whatever the tunnel is doing. The
-   header shows who is signed in, with a sign-out link, when the page came
-   through the tunnel.
-
-   The session is a signed cookie naming the account, good for 30 days,
-   keyed by a secret the panel generates once into `.work/panel-secret` (or
-   `PANEL_SECRET_KEY` in `.env`, if you would rather manage it). It stops
-   counting the moment this Mac is signed out of the account or signed in
-   to a different one. Signing in is done in `intake/signin.py`; the state
-   of each attempt rides in a short-lived cookie.
-
-   Until 2026-09-14 the panel could also run Google's sign-in itself, with
-   a Web OAuth client and an allowlist of addresses in `.env`
-   (`PANEL_GOOGLE_CLIENT_ID`, `PANEL_GOOGLE_CLIENT_SECRET`,
-   `PANEL_ALLOWED_EMAILS`). Those settings are no longer read; `intake
-   doctor` points out any still sitting in `.env` so they can be deleted,
-   and the Web client they named can be removed from the Cloud console.
-
-Signing this Mac in to an account, from the Setup page, is what turns the
-web sign-in on; signing it out turns it off. Letting a second person in is
-not a matter of adding an address: their Syllabus is their own Mac, signed
-in to their own account, behind their own tunnel.
+Signing this Mac out of the account closes the socket and the address stops
+working; signing in again starts it. A second person's Syllabus is their own
+Mac, signed in to their own account, at their own address. A panel with no
+account never starts the socket and is exactly the local tool it always
+was.
 
 If the address stops working, check the pieces in order: `intake service
-status` (is the panel up), `launchctl print gui/$(id -u)/com.cloudflare.cloudflared`
-and `~/Library/Logs/com.cloudflare.cloudflared.err.log` (is the tunnel
-connected), then `intake doctor`, whose "web sign-in" line says whether this
-Mac is signed in to an account and where the service returns to. A 503 page
-saying the Mac is not signed in to a Syllabus account means exactly that;
-"belongs to someone else" means the Google account chosen is not the one
-this Mac is signed in to; "has not told the account service where it is
-published" means `PANEL_PUBLIC_URL` is empty or not https, so restart the
-panel after fixing it; "could not be confirmed" means the account service
-refused the code, usually because it expired, so sign in again. `panel.log`
-in the profile's home has the reason each time.
+status` (is the panel up), then `intake doctor`, whose "panel on the web"
+line says whether the panel was connected the last time it said anything,
+and if not, why. "Not connected" on the address itself means exactly that:
+the Mac is asleep or offline, or the panel is not running. "The account
+service refused this Mac's token" means the Mac was removed from the account
+page; sign in again from the Setup page.
+
+### The older road: a Cloudflare Tunnel
+
+Before the relay, the only panel on the web was this author's, at
+`syllabus.maincoursemedia.com` (which `maincoursemedia.com/syllabus` sends
+you to), through a Cloudflare Tunnel (`cloudflared`, run as its own launch
+agent) to `127.0.0.1:5173`. Anyone arriving that way is sent to the account
+service to sign in and comes back with a one-time code that the panel
+trades for the account using its device token (`intake/signin.py`); the
+account's owner is the one person allowed. That panel needs one setting,
+`PANEL_PUBLIC_URL=https://syllabus.maincoursemedia.com`, because the
+tunnel's ingress rewrites the Host header on the way in. A Mac that is not
+signed in to an account refuses every request through the tunnel with a
+503. The session is a signed cookie, good for 30 days, keyed by a secret the
+panel generates once into `.work/panel-secret` (or `PANEL_SECRET_KEY` in
+`.env`). This road stays until the relay has carried that panel for a
+while; then the tunnel, the hostname, and `PANEL_PUBLIC_URL` go, and the
+redirect from `maincoursemedia.com/syllabus` points at the address above.
 
 Both the recorder and the watcher are started detached, on purpose, so
 closing the panel abandons neither. A recording keeps going if the panel
@@ -881,8 +852,11 @@ piece of that, and the rest is planned in this order:
   API keys.
 - **The panel on the web is this Mac's panel.** It records from this Mac's
   microphone and starts processes here, so the address always reaches the
-  one running on the Mac that does the recording. A second person's Syllabus
-  would be a second tunnel to their Mac, under their own hostname.
+  one running on the Mac that does the recording. Done, 2026-09-14: every
+  Mac signed in to an account has an address on the account service, over a
+  connection the panel holds open ("The panel on the web" above). Left to
+  do: list each Mac's address on the account page, move this author's panel
+  off the tunnel, and retire the tunnel code.
 
 ### Loose ends
 
