@@ -414,14 +414,22 @@ def _confirm(message: str, detail: str, ok: str) -> bool:
     return alert.runModal() == 1000  # NSAlertFirstButtonReturn
 
 
+_controller_class = None
+
+
 def _menu_controller_class():
     """The Objective-C object the menu talks to. Built on first use so that
-    importing this module never needs Cocoa (tests, the CLI)."""
+    importing this module never needs Cocoa (tests, the CLI), and built once:
+    the Objective-C runtime refuses a second class of the same name."""
+    global _controller_class
+    if _controller_class is not None:
+        return _controller_class
+    import objc
     from AppKit import NSObject
 
     class MenuController(NSObject):
         def initWithResident_(self, resident):
-            self = MenuController.init(self)
+            self = objc.super(MenuController, self).init()
             if self is None:
                 return None
             self.resident = resident
@@ -433,6 +441,7 @@ def _menu_controller_class():
         def perform_(self, sender):
             self.resident.perform(sender.representedObject())
 
+    _controller_class = MenuController
     return MenuController
 
 
