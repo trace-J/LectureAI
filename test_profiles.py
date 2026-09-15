@@ -324,6 +324,51 @@ def t13():
 results.append(run("the sous and syllabus commands run intake with that profile, and --profile still wins", t13))
 
 
+# --- action items: the two halves of the undated-assignment contract -------
+#
+# A lecture's only assignment was silently dropped in 2 of 8 runs because the
+# prompt said "if the instructor never mentioned a deadline, return an empty
+# list", conflating an undated assignment with no assignment. Sonnet 5 takes
+# no temperature (sampling parameters return a 400), so an instruction the
+# model can read two ways is re-decided on every run. These guard both halves:
+# the prompt must not reintroduce the ambiguity, and the pipeline must keep an
+# item that arrives without a date.
+
+def t14():
+    import re
+    for prompt in (schemas.LECTURE_SYSTEM_PROMPT, schemas.CALL_SYSTEM_PROMPT):
+        for sentence in re.split(r"(?<=[.:])\s+", prompt):
+            low = sentence.lower()
+            assert not ("deadline" in low and "empty list" in low), (
+                "an action item with no deadline is still an action item; this "
+                f"sentence makes a missing date a reason to drop it: {sentence!r}"
+            )
+results.append(run("no prompt makes a missing deadline a reason to return nothing", t14))
+
+
+def t15():
+    # An undated assignment survives and is dated to the next class meeting,
+    # marked as an assumption rather than presented as something that was said.
+    config.set_schedule({("Tue", 14): "ACCT-4321", ("Thu", 14): "ACCT-4321"})
+    try:
+        items = summarize.normalize_actions(
+            [{"task": "Complete the individual project in Connect", "detail": "",
+              "due_date": "", "kind": "project"}],
+            "ACCT-4321", "2026-09-01")
+        assert len(items) == 1, f"an undated assignment must not be dropped: {items}"
+        assert items[0]["due_date"], "an undated item gets the next meeting"
+        assert items[0]["date_source"] == "assumed", items[0]
+        # A date the instructor actually gave is kept and marked as stated.
+        stated = summarize.normalize_actions(
+            [{"task": "Read chapter 3", "due_date": "2026-09-10", "kind": "reading"}],
+            "ACCT-4321", "2026-09-01")
+        assert stated[0]["due_date"] == "2026-09-10", stated
+        assert stated[0]["date_source"] == "stated", stated
+    finally:
+        config.set_schedule(None)
+results.append(run("an assignment with no date is kept and dated as an assumption", t15))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
