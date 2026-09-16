@@ -126,6 +126,11 @@ def check_drive_token(now: datetime | None = None) -> Check:
     try:
         data = json.loads(token.read_text())
     except (OSError, ValueError):
+        data = None
+    if not isinstance(data, dict):
+        # A token file holding `[]` or `5` parsed fine and then broke on
+        # .get(). Nothing catches that: the Setup page polls this through
+        # /api/doctor, so it became a 500, and `intake doctor` a traceback.
         return Check("Drive authorization", False, f"{token} is not readable JSON",
                      f"delete it and run intake login")
 

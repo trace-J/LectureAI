@@ -40,6 +40,10 @@ CHART_WEEKS = 8
 
 MEASURES = ("seconds", "words", "actions", "terms")
 
+# Far past any real lecture (a thousand years of audio), and small enough that
+# what comes out still fits anywhere an int is expected downstream.
+MAX_MEASURE = 2 ** 53
+
 
 def parse_measures(text: str) -> dict:
     """The seventh field as numbers, or nothing if it is not what we wrote."""
@@ -52,8 +56,19 @@ def parse_measures(text: str) -> dict:
     out = {}
     for key in MEASURES:
         value = data.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
-            out[key] = int(value)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            continue
+        # JSON has no infinity, but json.loads reads 1e999 as one anyway, and
+        # int(inf) raises. This runs inside parse_log, which /api/status
+        # reaches before anything else it returns, so one bad measurement in
+        # one old line took the whole panel down: no recording state, no
+        # Record button, no watcher, no inbox. A number nobody can use is not
+        # worth any of that, so it is dropped and the rest of the line stands.
+        if value != value or value in (float("inf"), float("-inf")):
+            continue
+        if not 0 <= value <= MAX_MEASURE:
+            continue
+        out[key] = int(value)
     return out
 
 

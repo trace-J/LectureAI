@@ -500,6 +500,15 @@ def t21():
             '"scopes": ["https://www.googleapis.com/auth/drive.file"]}')
         assert not doctor.check_drive_token().ok, "expired token with no refresh must fail"
 
+        # A token file that parses but is not an object used to get past the
+        # try/except and break on .get(). Nothing catches that, so the Setup
+        # page's checkup poll became a 500 and `intake doctor` a traceback.
+        for shape in ("[]", "5", '"x"', "null"):
+            (HOME / "no-token.json").write_text(shape)
+            check = doctor.check_drive_token()
+            assert not check.ok, shape
+            assert "readable JSON" in check.detail, (shape, check.detail)
+
         config.SCHEDULE_FILE = HOME / "broken.toml"
         config.SCHEDULE_FILE.write_text('classes = [ { day = "Nope", start = 1, course = "X" } ]')
         broken = doctor.check_schedule()
