@@ -653,6 +653,36 @@ def t18():
 results.append(run("a managed Mac is never asked for a key, a signed-out one still is", t18))
 
 
+def t19():
+    # The proxy now refuses a blank, but this Mac must not file one either:
+    # shaped rather than checked, an empty payload becomes a note with no
+    # words in it, named for the fallback slug, uploaded to Drive.
+    signed_in()
+    for payload in ({}, {"topic_slug": "Job-Order-Costing", "key_terms": []},
+                    {"summary_md": "   "}):
+        real = account.transport
+        account.transport = lambda *a, p=payload, **k: (200, {"summary": p, "tokens": 12})
+        try:
+            summarize.summarize("a real transcript", "ACCT-4321", "2026-09-01")
+        except RuntimeError as exc:
+            assert "empty summary" in str(exc), exc
+            assert "run again" in str(exc), "say that the recording survived"
+        else:
+            raise AssertionError(f"{payload!r} should not become a note")
+        finally:
+            account.transport = real
+    # And a real one still passes straight through.
+    real = account.transport
+    account.transport = lambda *a, **k: (200, {"summary": {
+        "summary_md": "## Real notes", "topic_slug": "Job-Order-Costing",
+        "key_terms": [], "action_items": []}, "tokens": 12})
+    try:
+        assert summarize.summarize("t", "ACCT-4321", "2026-09-01")["summary_md"]
+    finally:
+        account.transport = real
+results.append(run("an empty summary is an error, not a blank note filed to Drive", t19))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

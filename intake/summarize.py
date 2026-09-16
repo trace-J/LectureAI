@@ -223,6 +223,24 @@ def shape(payload: dict, course: str, date: str) -> dict:
     }
 
 
+def require_written(result: dict) -> dict:
+    """A summary with no summary in it is a failed call, not a thin one.
+
+    Both paths can produce one: a tool_use block whose input carried none of
+    the fields (seen once in six runs against a 5,500 word transcript), or a
+    parsed object of empty strings. Shaped rather than checked, that becomes a
+    blank note filed under the fallback slug and uploaded to Drive, which is
+    worse than an error because nothing says it happened. The lecture is still
+    on disk, so failing here costs a retry and nothing else.
+    """
+    if not result.get("summary_md", "").strip():
+        raise RuntimeError(
+            "the model returned an empty summary; nothing was written. "
+            "The recording is untouched, so this can be run again."
+        )
+    return result
+
+
 def _summarize_via_proxy(transcript: str, course: str, date: str) -> dict:
     """Summarize on the service's key instead of one from this Mac's .env.
 
@@ -253,7 +271,7 @@ def _summarize_via_proxy(transcript: str, course: str, date: str) -> dict:
     payload = data.get("summary")
     if not isinstance(payload, dict):
         raise RuntimeError("the account service sent back no summary")
-    result = shape(payload, course, date)
+    result = require_written(shape(payload, course, date))
     log(f"  topic: {result['topic_slug']} | {len(result['key_terms'])} terms | "
         f"{len(result['action_items'])} action items | "
         f"{data.get('tokens', 0)} tokens")
@@ -287,7 +305,7 @@ def summarize(transcript: str, course: str, date: str) -> dict:
 
     parsed = getattr(response, "parsed_output", None)
     if parsed is not None:
-        result = shape(parsed.model_dump(), course, date)
+        result = require_written(shape(parsed.model_dump(), course, date))
     else:
         # Shouldn't happen with a schema, but a truncated or refused response
         # still needs to degrade rather than crash.
