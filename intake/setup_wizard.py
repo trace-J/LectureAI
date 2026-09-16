@@ -157,6 +157,16 @@ class Wizard:
         return answer or current
 
     def ask_keys(self, values: dict[str, str]) -> None:
+        from intake import account
+
+        # A signed-in Mac spends the account's keys. Asking for two it does
+        # not have invites the user to invent an answer, and Enter through
+        # both prompts is the only reason this wizard was a way around the
+        # panel's own managed-account gate.
+        if account.managed():
+            self.say("")
+            self.say("API keys are covered by your Syllabus account; nothing to enter.")
+            return
         self.say("")
         self.say("API keys. Paste each one; Enter keeps the value shown.")
         values["OPENAI_API_KEY"] = self._prompt(
