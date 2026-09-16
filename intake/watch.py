@@ -149,6 +149,93 @@ def wait_until_stable(path: Path) -> None:
         time.sleep(config.STABILITY_POLL_SECONDS)
 
 
+# How long a half-finished lecture's working files are kept. Long enough to
+# survive a weekend of Drive being unreachable, short enough that abandoned
+# work does not accumulate forever.
+RESUME_DAYS = 14
+
+
+class Resume:
+    """What an attempt at one recording has already paid for.
+
+    Transcription and summarization both cost money and minutes. The code
+    here used to stage its output only after both had finished, and then
+    never read it again, so the comment promising that "a retry costs nothing
+    but the upload" was not true of any path: a failed upload re-ran both
+    stages, and a failed summary threw away a transcript that had just been
+    paid for.
+
+    Keyed by the recording rather than by the filename, because the topic slug
+    comes out of the summary and the filename changes with it.
+    """
+
+    def __init__(self, key: str):
+        # The key is a timestamp, but a colon is a path separator's cousin on
+        # some filesystems and this becomes a directory name.
+        self.dir = config.WORK_DIR / "resume" / key.replace(":", "-")
+
+    def _read(self, name: str):
+        try:
+            return (self.dir / name).read_text()
+        except OSError:
+            return None
+
+    def _write(self, name: str, text: str) -> Path:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        path = self.dir / name
+        path.write_text(text)
+        return path
+
+    def transcript(self) -> str | None:
+        return self._read("transcript.txt")
+
+    def save_transcript(self, text: str) -> Path:
+        # Written before summarizing, not after. A summary that fails used to
+        # discard the whole transcript with it.
+        return self._write("transcript.txt", text)
+
+    def transcript_path(self) -> Path:
+        """The transcript on disk, which is the file the upload sends."""
+        return self.dir / "transcript.txt"
+
+    def summary(self) -> dict | None:
+        raw = self._read("summary.json")
+        if raw is None:
+            return None
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            return None
+        return data if isinstance(data, dict) else None
+
+    def save_summary(self, result: dict) -> None:
+        self._write("summary.json", json.dumps(result))
+
+    def markdown(self, text: str) -> Path:
+        """The rendered summary, as the file the upload actually sends."""
+        return self._write("summary.md", text)
+
+    def done(self) -> None:
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+
+def sweep_resume(days: int = RESUME_DAYS) -> int:
+    """Drop working files from attempts nobody came back to. Returns how many."""
+    root = config.WORK_DIR / "resume"
+    if not root.is_dir():
+        return 0
+    cutoff = time.time() - days * 86400
+    dropped = 0
+    for slot in root.iterdir():
+        try:
+            if slot.is_dir() and slot.stat().st_mtime < cutoff:
+                shutil.rmtree(slot, ignore_errors=True)
+                dropped += 1
+        except OSError:
+            continue
+    return dropped
+
+
 def preflight(interactive: bool) -> None:
     """Fail before spending money on transcription if something obvious is off."""
     config.schedule()
@@ -170,6 +257,7 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
     if not path.is_file():
         raise FileNotFoundError(f"no such audio file: {path}")
 
+    sweep_resume()
     mtime = path.stat().st_mtime
     length = transcribe.duration_seconds(path)
     course, source = config.resolve_course(path, mtime, length)
@@ -185,26 +273,39 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
     status = lambda stage, detail="": write_status(  # noqa: E731
         stage, path.name, course, detail, began)
 
-    status("transcribing", "starting")
-    transcript = transcribe.transcribe(
-        path, on_progress=lambda detail: status("transcribing", detail))
-
-    status("summarizing", f"{len(transcript.split()):,} words")
-    result = summarize.summarize(transcript, course, date)
-    stem = summarize.build_filename(course, date, result["topic_slug"])
-
-    # Stage local copies first. If an upload fails, the expensive work survives
-    # and the retry costs nothing but the upload.
-    txt_path = config.PROCESSED_DIR / f"{stem}.txt"
-    md_path = config.PROCESSED_DIR / f"{stem}.md"
-    txt_path.write_text(transcript)
-    md_path.write_text(summarize.render_markdown(result, course, date))
-
     # Identifies this recording on the Drive files it produces, so re-running
     # it replaces its own past output instead of colliding with a different
-    # lecture that happens to share a name.
+    # lecture that happens to share a name. It also names the folder holding
+    # what an earlier attempt already paid for.
     rec_key = config.recording_key(mtime, length)
     time_suffix = config.recording_time_suffix(mtime, length)
+    saved = Resume(rec_key)
+
+    status("transcribing", "starting")
+    transcript = saved.transcript()
+    if transcript is None:
+        transcript = transcribe.transcribe(
+            path, on_progress=lambda detail: status("transcribing", detail))
+        saved.save_transcript(transcript)
+    else:
+        log(f"  reusing the transcript an earlier attempt paid for "
+            f"({len(transcript.split()):,} words)")
+
+    status("summarizing", f"{len(transcript.split()):,} words")
+    result = saved.summary()
+    if result is None:
+        result = summarize.summarize(transcript, course, date)
+        saved.save_summary(result)
+    else:
+        log("  reusing the summary an earlier attempt paid for")
+    stem = summarize.build_filename(course, date, result["topic_slug"])
+
+    # The files the upload sends live beside the checkpoint rather than in
+    # processed/. Two lectures of one class on one day produce the same stem,
+    # and staging them under it meant the second overwrote the first's copy
+    # while both were still waiting on Drive.
+    txt_path = saved.transcript_path()
+    md_path = saved.markdown(summarize.render_markdown(result, course, date))
 
     # The summary goes in the course folder as a Doc; the raw transcript goes
     # one level down, so the course folder stays a clean list of study notes.
@@ -212,7 +313,10 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
     summary = drive.upload(
         md_path, course, interactive,
         as_google_doc=config.SUMMARY_AS_GOOGLE_DOC,
-        name=stem if config.SUMMARY_AS_GOOGLE_DOC else md_path.name,
+        # Named explicitly in both cases: md_path is the checkpoint's
+        # summary.md now, and passing that through would file every lecture
+        # in Drive under the same name.
+        name=stem if config.SUMMARY_AS_GOOGLE_DOC else f"{stem}.md",
         recording_key=rec_key, time_suffix=time_suffix,
     )
     md_url = summary.url
@@ -227,9 +331,8 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
     )
     txt_url = transcript_upload.url
 
-    # Both uploads landed, so the local staging copies are redundant.
-    txt_path.unlink(missing_ok=True)
-    md_path.unlink(missing_ok=True)
+    # Both uploads landed, so there is nothing left to resume.
+    saved.done()
 
     # Notion comes last and never raises. The lecture is already safe in Drive
     # by this point, so a Notion outage or a misconfigured database must not
@@ -263,6 +366,10 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
     else:
         destination = config.PROCESSED_DIR / path.name
         if destination.resolve() != path:
+            # Not onto whatever is already sitting there. A phone hands back
+            # the same filename every time, and the older lecture's audio was
+            # replaced without a word.
+            destination = config.free_path(config.PROCESSED_DIR, path.name)
             shutil.move(str(path), str(destination))
         original = str(destination)
 

@@ -514,12 +514,10 @@ def _report_failure(name: str, stderr: str, device_name: str,
 
 def _file_into_inbox(staging: Path, started: datetime, course: str | None) -> Path:
     """Move a finalized recording into inbox/ under its lecture name."""
-    destination = config.INBOX_DIR / output_name(started, course)
-    if destination.exists():
-        destination = config.INBOX_DIR / output_name(
-            started, course
-        ).replace(".m4a", f"_{int(time.time())}.m4a")
-    config.INBOX_DIR.mkdir(parents=True, exist_ok=True)
+    # The old fallback picked one alternative name and used it without
+    # checking that one was free either, so two recordings finalized in the
+    # same second still landed on top of each other.
+    destination = config.free_path(config.INBOX_DIR, output_name(started, course))
     shutil.move(str(staging), str(destination))
     return destination
 

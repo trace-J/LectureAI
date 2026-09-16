@@ -1083,6 +1083,32 @@ def activate(profile: Profile | str) -> Profile:
     return PROFILE
 
 
+def free_path(directory: Path, name: str) -> Path:
+    """A path in `directory` that nothing is using yet.
+
+    Moving a file onto a name something else already holds destroys what was
+    there, without a word. Drive has had this guard since upload._free_name;
+    the local moves never did, so an imported recording sharing a name with
+    an older one replaced it.
+
+    Never raises. Both callers run after a recording has been finalized and
+    its state file cleared, so an exception here would leave audio in a
+    temporary directory that nothing ever comes back for — which is the
+    failure this is supposed to prevent, arrived at another way.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    if not (directory / name).exists():
+        return directory / name
+    stem, suffix = Path(name).stem, Path(name).suffix
+    for n in range(2, 1000):
+        candidate = directory / f"{stem}_{n}{suffix}"
+        if not candidate.exists():
+            return candidate
+    # A thousand files of one name is not a real situation, but guessing
+    # again forever is not an answer either.
+    return directory / f"{stem}_{datetime.now():%Y%m%d%H%M%S%f}{suffix}"
+
+
 def append_log_line(*fields: str) -> None:
     """Append one tab-separated record to pipeline.log.
 
