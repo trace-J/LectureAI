@@ -116,7 +116,13 @@ def output_name(started: datetime, course: str | None = None) -> str:
     The course code goes in the name so the pipeline's filename fallback can
     still place the lecture if the schedule lookup misses at processing time.
     """
-    resolved = course or config.infer_course(started)
+    # Through safe_course because this is where a course stops being text and
+    # becomes a path: `../escaped` used to file the recording above inbox/,
+    # and an absolute one threw the inbox away entirely. It repairs instead of
+    # raising on purpose — this runs after the recording has been finalized
+    # and its state file cleared, so anything that raises here strands audio
+    # nothing will ever come back for.
+    resolved = config.safe_course(course or config.infer_course(started))
     stamp = started.strftime("%Y-%m-%d_%H%M")
     if resolved == config.UNKNOWN_COURSE:
         return f"{config.PROFILE.filename_prefix}_{stamp}.m4a"

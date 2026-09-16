@@ -559,6 +559,18 @@ UNKNOWN_COURSE = "UNKNOWN"
 # Matches a course code in a filename: "acct-4321", "ACCT4321", "acct_4321".
 COURSE_CODE_RE = re.compile(r"([A-Za-z]{2,4})[-_ ]?(\d{4})")
 
+# Long enough for "Introduction to Financial Accounting II", short enough that
+# it cannot push a generated filename past what a filesystem will take.
+MAX_COURSE_LENGTH = 64
+
+# A course code is typed by the user and then used as a TOML value, a path
+# component, a Drive folder name and the text of an <option>. These are the
+# characters that break one of those: the control codes, the quote and
+# backslash that TOML would have to escape, and the two path separators.
+# Everything else, including spaces, parentheses and periods, is left alone —
+# real course names have all three.
+COURSE_UNSAFE_RE = re.compile(r'[\x00-\x1f\x7f"\\/]')
+
 
 class ScheduleError(RuntimeError):
     """The schedule file is missing or cannot be read."""
@@ -625,15 +637,61 @@ def normalize_course(raw: object) -> str:
 
     Anything shaped like a course code is written the one way the filename
     fallback and the Drive folders expect. A code with another shape is kept
-    exactly as typed.
+    as typed, provided it is safe to put in a filename and a schedule file.
+
+    This is the write path, and it refuses rather than repairs. A course being
+    typed into Setup has somebody sitting in front of it who can fix it, and
+    silently changing what they typed would file their lectures somewhere they
+    did not ask for. Text that is already on disk goes through safe_course()
+    instead, which never refuses.
     """
+    if isinstance(raw, bool) or not isinstance(raw, (str, int)):
+        raise ValueError(f"course code must be text, not {type(raw).__name__}")
     text = str(raw).strip()
     if not text:
         raise ValueError("course code is empty")
+    if len(text) > MAX_COURSE_LENGTH:
+        raise ValueError(
+            f"course code is longer than {MAX_COURSE_LENGTH} characters")
+    found = COURSE_UNSAFE_RE.search(text)
+    if found:
+        shown = repr(found.group())
+        raise ValueError(
+            f"course code cannot contain {shown}; it becomes a filename and a "
+            f"folder name, so a slash or a quote would break them"
+        )
+    if text.startswith("."):
+        # ".." walks out of the inbox; a leading dot also hides the file.
+        raise ValueError("course code cannot start with a period")
     match = COURSE_CODE_RE.fullmatch(text)
     if match:
         return f"{match.group(1).upper()}-{match.group(2)}"
     return text
+
+
+def safe_course(raw: object) -> str:
+    """A course repaired into something safe to use. Never raises.
+
+    The read path, and the last line before a course becomes a real path. A
+    schedule.toml can be edited by hand, can arrive from the account service,
+    and on an install predating normalize_course's checks can hold text that
+    would break a filename. Refusing the whole file over one bad row would
+    take the panel down for somebody else's typo, so the row is repaired and
+    the rest of the timetable keeps working.
+
+    Returns UNKNOWN_COURSE when nothing usable is left, which is the same
+    thing the pipeline already does with a recording it cannot place.
+    """
+    text = "" if raw is None else str(raw)
+    text = COURSE_UNSAFE_RE.sub("-", text)
+    text = " ".join(text.split()).lstrip(".").strip()
+    text = text[:MAX_COURSE_LENGTH].strip()
+    if not text:
+        return UNKNOWN_COURSE
+    try:
+        return normalize_course(text)
+    except ValueError:
+        return UNKNOWN_COURSE
 
 
 def parse_schedule(text: str, source: str = "schedule.toml") -> Schedule:
@@ -677,10 +735,18 @@ def parse_schedule(text: str, source: str = "schedule.toml") -> Schedule:
                 f"{source}: class row {n} is missing {', '.join(missing)}"
             )
         try:
+            # A course carrying a stray slash still names a real class, so it
+            # is repaired rather than refused: a file written before these
+            # checks existed has to keep loading. A row with no course at all
+            # is different in kind — there is nothing to repair, and inventing
+            # UNKNOWN for it would add a class meeting that quietly collects
+            # every recording made at that hour.
+            if not str(row["course"] if row["course"] is not None else "").strip():
+                raise ValueError("course code is empty")
             meetings.append(Meeting(
                 normalize_day(row["day"]),
                 normalize_hour(row["start"]),
-                normalize_course(row["course"]),
+                safe_course(row["course"]),
             ))
         except ValueError as exc:
             raise ScheduleError(f"{source}: class row {n}: {exc}") from None
@@ -721,6 +787,31 @@ tolerance_minutes = {tolerance}
 """
 
 
+_TOML_ESCAPES = {'"': '\\"', "\\": "\\\\", "\b": "\\b", "\t": "\\t",
+                 "\n": "\\n", "\f": "\\f", "\r": "\\r"}
+
+
+def _toml_string(value: str) -> str:
+    """`value` as a TOML basic string, quotes included.
+
+    The schedule used to be built by interpolating the course straight into
+    quoted TOML, so one holding a quote, a backslash or a newline wrote a file
+    that no longer parsed — and it was written over the timetable that did.
+    normalize_course refuses those characters now, but a serializer that
+    depends on its caller having validated is one call site away from doing
+    this again.
+    """
+    out = []
+    for char in value:
+        if char in _TOML_ESCAPES:
+            out.append(_TOML_ESCAPES[char])
+        elif ord(char) < 0x20 or ord(char) == 0x7F:
+            out.append(f"\\u{ord(char):04X}")
+        else:
+            out.append(char)
+    return '"' + "".join(out) + '"'
+
+
 def render_schedule(meetings, tolerance_minutes: int = DEFAULT_TOLERANCE_MINUTES) -> str:
     """The text of a schedule file for these meetings.
 
@@ -729,29 +820,45 @@ def render_schedule(meetings, tolerance_minutes: int = DEFAULT_TOLERANCE_MINUTES
     """
     normalized = []
     for row in meetings:
-        if isinstance(row, Meeting):
-            normalized.append(row)
-        else:
-            day, hour, course = row
-            normalized.append(Meeting(normalize_day(day), normalize_hour(hour),
-                                      normalize_course(course)))
+        # A Meeting used to be trusted and copied through unchecked, which let
+        # a hand-built one carry text no typed course could ever get past.
+        day, hour, course = (
+            (row.day, row.hour, row.course) if isinstance(row, Meeting) else row)
+        normalized.append(Meeting(normalize_day(day), normalize_hour(hour),
+                                  normalize_course(course)))
     normalized.sort(key=lambda m: (DAYS.index(m.day), m.hour))
-    width = max((len(m.course) for m in normalized), default=0)
+    quoted = [_toml_string(m.course) for m in normalized]
+    width = max((len(q) for q in quoted), default=0)
     lines = [
         f'  {{ day = "{m.day}", start = {m.hour:>2}, '
-        f'course = "{m.course}"{" " * (width - len(m.course))} }},'
-        for m in normalized
+        f'course = {q}{" " * (width - len(q))} }},'
+        for m, q in zip(normalized, quoted)
     ]
-    return SCHEDULE_TEMPLATE.format(title=PROFILE.title, rows="\n".join(lines),
+    # The title only reaches a comment line, but a newline in it would comment
+    # out the row below just the same.
+    title = " ".join(str(PROFILE.title).split())
+    return SCHEDULE_TEMPLATE.format(title=title, rows="\n".join(lines),
                                     tolerance=tolerance_minutes)
 
 
 def write_schedule(meetings, tolerance_minutes: int = DEFAULT_TOLERANCE_MINUTES,
                    path: Path | None = None) -> Path:
-    """Write the schedule file and drop the cached copy."""
+    """Write the schedule file and drop the cached copy.
+
+    The rendered text is read back before it replaces anything. A schedule
+    that cannot be parsed is the user's whole timetable gone, and the old one
+    had already been overwritten by the time anyone found out, so the check
+    that matters is the one that happens before the write. Rendering to a
+    temporary file and renaming means an interrupted write cannot leave half
+    a schedule behind either.
+    """
     file = Path(path) if path is not None else SCHEDULE_FILE
+    text = render_schedule(meetings, tolerance_minutes)
+    parse_schedule(text, file.name)
     file.parent.mkdir(parents=True, exist_ok=True)
-    file.write_text(render_schedule(meetings, tolerance_minutes))
+    temporary = file.with_name(f".{file.name}.new")
+    temporary.write_text(text)
+    temporary.replace(file)
     reload_schedule()
     return file
 
