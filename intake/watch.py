@@ -263,7 +263,9 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
     course, source = config.resolve_course(path, mtime, length)
     date = config.lecture_date(mtime, length)
     log(f"processing {path.name} -> {course} on {date} (matched by {source})")
-    if source == "filename":
+    if source == "chosen":
+        log("  filed under the course chosen when the recording was started")
+    elif source == "filename":
         log("  timestamp matched no class; took the course from the filename")
     elif course == config.UNKNOWN_COURSE:
         log("  neither the timestamp nor the filename identifies a course; "
@@ -372,6 +374,9 @@ def process(audio_path: str | Path, interactive: bool = True) -> dict:
             destination = config.free_path(config.PROCESSED_DIR, path.name)
             shutil.move(str(path), str(destination))
         original = str(destination)
+    # The recording has been filed, so the note about which course somebody
+    # picked for it has nothing left to answer.
+    config.forget_course(path)
 
     # Fields six and seven: what did not reach Notion (blank when everything
     # did), then a small JSON object of measurements the panel's dashboard

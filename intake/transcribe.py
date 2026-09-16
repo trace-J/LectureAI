@@ -174,7 +174,12 @@ def transcribe(
 
         if not (too_long or too_big):
             progress("transcribing")
-            text = provider.transcribe_file(audio)
+            # Through _transcribe_chunk, not straight to the provider. The
+            # truncation check lives in there, and a recording short enough to
+            # go up whole was the one case that skipped it: a fast talker in a
+            # 40 minute class can pass the output cap without going anywhere
+            # near the duration limit that triggers a split.
+            text = _transcribe_chunk(audio, provider, work_dir)
             log(f"  done: {len(text.split())} words")
             return text
 

@@ -972,6 +972,47 @@ def infer_course_from_filename(filename: str) -> str:
     return UNKNOWN_COURSE
 
 
+def course_note(path: str | Path) -> Path:
+    """Where a recording's explicitly chosen course is kept.
+
+    Beside the audio rather than inside it: the file moves from .work to
+    inbox and sometimes on to processed, and a sidecar moves with it if we
+    move it. The suffix is outside AUDIO_EXTENSIONS, so the watcher never
+    mistakes one for a recording.
+    """
+    path = Path(path)
+    return path.with_suffix(path.suffix + ".course")
+
+
+def remember_course(path: str | Path, course: str) -> None:
+    """Record that somebody chose this course for this recording.
+
+    Only ever called when the choice was explicit. An inferred course is not
+    written here, because the whole value of this file is that its presence
+    means somebody decided.
+    """
+    try:
+        course_note(path).write_text(safe_course(course))
+    except OSError:
+        # A lecture is not worth losing over a note about it.
+        pass
+
+
+def chosen_course(path: str | Path) -> str:
+    """The course somebody picked for this recording, or "" if nobody did."""
+    try:
+        text = course_note(path).read_text()
+    except OSError:
+        return ""
+    course = safe_course(text)
+    return "" if course == UNKNOWN_COURSE and not text.strip() else course
+
+
+def forget_course(path: str | Path) -> None:
+    """Drop the note, once the recording it belongs to has been dealt with."""
+    course_note(path).unlink(missing_ok=True)
+
+
 def resolve_course(
     path: str | Path,
     file_mtime: float | datetime,
@@ -979,10 +1020,20 @@ def resolve_course(
 ) -> tuple[str, str]:
     """Best guess at the course, plus which signal produced it.
 
-    The schedule wins when it matches. The filename is the fallback, which
-    saves recordings whose mtime is the time they were copied rather than the
-    time they were recorded — a plain `cp` does exactly that.
+    An explicit choice wins, because it is the only signal that is somebody
+    saying what they meant rather than us inferring it. The course picker
+    offered a destination that processing then overruled: a lecture recorded
+    under one course during another's scheduled hour was filed, named and
+    pushed to Notion under the scheduled one.
+
+    Then the schedule, when it matches. The filename is the last fallback,
+    which saves recordings whose mtime is the time they were copied rather
+    than the time they were recorded — a plain `cp` does exactly that.
     """
+    chosen = chosen_course(path)
+    if chosen and chosen != UNKNOWN_COURSE:
+        return chosen, "chosen"
+
     scheduled = infer_course(file_mtime, duration_seconds)
     if scheduled != UNKNOWN_COURSE:
         return scheduled, "schedule"

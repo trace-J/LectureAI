@@ -818,6 +818,35 @@ def t31():
 results.append(run("a course cannot move a finished recording out of the inbox", t31))
 
 
+def t32():
+    """A recording short enough to go up whole is checked for truncation too."""
+    # 470 seconds against a 480 second limit: under the duration that forces a
+    # split, so this went straight to the provider and skipped the only code
+    # that notices a truncated answer. A fast talker in a 40 minute class can
+    # pass the output cap without going near the duration limit.
+    truncating = FakeProvider(max_chunk_seconds=8 * 60, truncation_word_threshold=1700,
+                              words=1800)
+    _, events = drive_transcribe(truncating, seconds=470.0)
+    assert events["splits"], "a short recording was never re-split"
+    assert len(truncating.calls) > 1, \
+        f"the single-file path skipped the truncation check: {truncating.calls}"
+
+    # A provider that cannot truncate still sends a short one in one piece.
+    cannot = FakeProvider(max_chunk_seconds=8 * 60, truncation_word_threshold=None,
+                          words=1800)
+    _, quiet = drive_transcribe(cannot, seconds=470.0)
+    assert quiet["splits"] == [], quiet["splits"]
+    assert len(cannot.calls) == 1, cannot.calls
+
+    # And a short, ordinary-length result is left alone whatever the provider.
+    ordinary = FakeProvider(max_chunk_seconds=8 * 60, truncation_word_threshold=1700,
+                            words=400)
+    _, plain = drive_transcribe(ordinary, seconds=470.0)
+    assert plain["splits"] == [], plain["splits"]
+    assert len(ordinary.calls) == 1, ordinary.calls
+results.append(run("a short recording is checked for truncation as well", t32))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
