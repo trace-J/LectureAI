@@ -222,6 +222,88 @@ NOT_SET_UP = ("This panel is reachable through Cloudflare, but the Mac that runs
               "On that Mac, open the Setup page and choose Sign in to a Syllabus account.")
 
 
+# --- Requests from somewhere else on the web ---------------------------------
+
+# Methods that can change something. GET and HEAD are deliberately not here:
+# a page elsewhere can make a browser issue those whatever we do, and what
+# keeps it from reading the answer is the same-origin policy, not us.
+UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+# What the panel's own pages send on every call. This is the load-bearing
+# check: a browser will only send form-urlencoded, multipart or text/plain to
+# another origin without asking permission first, and the panel answers no
+# such question, so requiring JSON is on its own enough to stop a page on
+# another site from acting here.
+JSON_TYPE = "application/json"
+
+# Names this Mac answers to. Anything else means a browser resolved somebody
+# else's hostname to 127.0.0.1 and now believes their page and this panel are
+# the same origin, which is DNS rebinding.
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]"}
+
+# Set by `intake panel --expose`, which is an explicit decision to serve
+# something other than this Mac. The name the panel is then reached by is
+# whatever the operator put in front of it, so there is nothing here to
+# compare a Host against. The checks that do not depend on Host still run.
+EXPOSED = False
+
+
+def _host_name() -> str:
+    """The host the request was addressed to, without its port."""
+    host = request.headers.get("Host", "")
+    if host.startswith("[") and "]" in host:      # [::1]:5173
+        return host[:host.index("]") + 1]
+    return host.rsplit(":", 1)[0] if ":" in host else host
+
+
+def _our_origins() -> set[str]:
+    """The origins the panel's own pages are served from."""
+    host = request.headers.get("Host", "")
+    if not host:
+        return set()
+    return {f"http://{host}".lower(), f"https://{host}".lower()}
+
+
+def cross_site() -> str:
+    """Why this request looks like it came from another site, or "".
+
+    The panel has no authentication for local requests, by design: anything
+    running as this user could do all of it directly anyway. A web page in a
+    browser is not that. It cannot read the panel's answers, but until now it
+    could still make the panel act — start the microphone, spawn a watcher,
+    SIGTERM one, throw away the Drive token, sign the Mac out — by posting a
+    plain form at it, which needs nobody's permission.
+
+    A client that is not a browser sends no Origin and no Sec-Fetch-Site.
+    That is allowed on purpose: curl and the CLI are not what is being
+    defended against, and they cannot be tricked into acting on behalf of a
+    page somebody else wrote.
+    """
+    if via_relay():
+        # The account service built this request in process. It carries no
+        # browser headers at all, and the service's own gate already decided
+        # who is allowed to reach this panel.
+        return ""
+
+    host = _host_name().lower()
+    if host and not EXPOSED and host not in LOCAL_HOSTS and not via_cloudflare():
+        return (f"this panel answers to localhost on this Mac, and {host} is "
+                f"somebody else's name for it")
+
+    if request.method not in UNSAFE_METHODS:
+        return ""
+    if request.headers.get("Sec-Fetch-Site", "").lower() in ("cross-site", "same-site"):
+        return "that came from another site"
+    origin = request.headers.get("Origin", "")
+    if origin and origin.lower() not in _our_origins():
+        return f"that came from {origin}"
+    kind = (request.content_type or "").split(";")[0].strip().lower()
+    if kind != JSON_TYPE:
+        return (f"this panel only takes {JSON_TYPE}, which a page on another "
+                f"site cannot send here without asking permission first")
+    return ""
+
+
 # --- The gate ----------------------------------------------------------------
 
 def relay_viewer() -> str:
@@ -242,6 +324,12 @@ def gate():
     """Run before every request. None lets it through."""
     g.viewer = ""
     g.relayed = False
+    # Before anything about who is signed in: a request that came from
+    # another site is refused whether it is local, tunnelled or relayed, and
+    # whether or not anybody is signed in here.
+    elsewhere = cross_site()
+    if elsewhere:
+        return refuse(403, f"Refused: {elsewhere}.")
     if via_relay():
         # The account service already decided who may reach this panel's
         # address and named them in the frame; that is the sign-in.

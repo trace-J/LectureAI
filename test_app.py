@@ -131,13 +131,13 @@ def test_show_when_the_app_is_already_running():
     gui.window_hooks.clear()
     client = gui.app.test_client()
     assert client.get("/api/status").get_json()["window"] is False
-    res = client.post("/api/window/show")
+    res = client.post("/api/window/show", json={})
     assert res.status_code == 409, res.get_json()
     shown = []
     gui.window_hooks["show"] = lambda: shown.append(True)
     try:
         assert client.get("/api/status").get_json()["window"] is True
-        assert client.post("/api/window/show").get_json() == {"ok": True}
+        assert client.post("/api/window/show", json={}).get_json() == {"ok": True}
         assert shown == [True]
         # Over a real socket, as the second copy does it.
         server = make_server("127.0.0.1", 0, gui.app, threaded=True)

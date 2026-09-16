@@ -943,8 +943,10 @@ def t32():
     # The panel has no login. Binding it beyond this Mac hands process control
     # and the keys in .env to anyone who can reach the port, so a non-loopback
     # --host is refused unless --expose says that was the intent.
+    from intake import signin
     captured = {}
     real_run, real_open = gui.app.run, gui._open_browser_later
+    was_exposed = signin.EXPOSED
     gui.app.run = lambda **kw: captured.update(kw)
     gui._open_browser_later = lambda url, delay=0: captured.update(opened=url)
     try:
@@ -959,8 +961,13 @@ def t32():
         captured.clear()
         assert gui.main(["--no-browser", "--host", "0.0.0.0", "--expose"]) == 0
         assert captured["host"] == "0.0.0.0", captured
+        # --expose stands the Host check down for the rest of the process,
+        # which is right for a panel behind a proxy and has to be put back
+        # here, or every test after this one runs as though it were exposed.
+        assert signin.EXPOSED is True, "--expose must tell the gate it is proxied"
     finally:
         gui.app.run, gui._open_browser_later = real_run, real_open
+        signin.EXPOSED = was_exposed
 results.append(run("a non-localhost --host is refused unless --expose says so", t32))
 
 def t34():
@@ -1062,7 +1069,7 @@ def t35():
             a = client.get("/api/account").get_json()
             assert a["claim"]["running"] and a["claim"]["user_code"] == "ABCD-EFGH", a
             assert client.post("/api/account/claim", json={}).status_code == 409, "one claim at a time"
-            assert client.post("/api/account/cancel").status_code == 200
+            assert client.post("/api/account/cancel", json={}).status_code == 200
             assert not client.get("/api/account").get_json()["claim"]["running"]
 
             # Signed in: the status poll reads the file only, the card confirms with the service.
@@ -1085,7 +1092,7 @@ def t35():
 
             account.save(account.Account("syd_t", "a1", "me@example.com", "Me", "d1", "Test Mac",
                                          "syllabus", "https://accounts.test", "x"))
-            assert client.post("/api/account/signout").status_code == 200
+            assert client.post("/api/account/signout", json={}).status_code == 200
             assert account.load() is None and calls[-1][1] == "/device/revoke"
     finally:
         account.cancel_claim()
@@ -1285,6 +1292,94 @@ def t38():
         config.FROZEN = False
     assert service.keep_alive() is True
 results.append(run("watcher and agent commands, from a checkout and frozen", t38))
+
+
+# Everything the panel can be made to do, and what a page on another site
+# gets when it tries. The panel has no login for local requests by design,
+# which is fine for a process running as this user and was not fine for a web
+# page: a plain form post needs nobody's permission and the side effect
+# happens whether or not the answer can be read.
+MUTATIONS = ["/api/record/start", "/api/record/stop", "/api/watcher/start",
+             "/api/watcher/stop", "/api/login-item", "/api/drive/login",
+             "/api/drive/disconnect", "/api/account/claim", "/api/account/cancel",
+             "/api/account/signout", "/api/setup", "/api/window/show"]
+
+
+def t39():
+    # The audit's own reproduction, then the same thing against every other
+    # route that changes something. It was one finding about signout; it was
+    # nine routes, including one that turns on the microphone and one that
+    # spawns a detached process.
+    point_config_at(setup_home)
+    for path in MUTATIONS:
+        res = client.post(path, data="x=1",
+                          content_type="application/x-www-form-urlencoded",
+                          headers={"Origin": "https://untrusted.invalid",
+                                   "Sec-Fetch-Site": "cross-site"})
+        assert res.status_code == 403, f"{path} answered {res.status_code}"
+        assert "Refused" in res.get_json()["error"], (path, res.get_json())
+results.append(run("no route can be driven by a form from another site", t39))
+
+
+def t40():
+    # Three checks, each enough on its own, because each fails differently:
+    # a browser that stops sending Origin, one that never sent
+    # Sec-Fetch-Site, and a form post that carries neither.
+    point_config_at(setup_home)
+    alone = [
+        ("a foreign Origin with a JSON body",
+         dict(json={}, headers={"Origin": "https://untrusted.invalid"})),
+        ("a form body with no Origin at all",
+         dict(data="x=1", content_type="application/x-www-form-urlencoded")),
+        ("Sec-Fetch-Site saying cross-site",
+         dict(json={}, headers={"Sec-Fetch-Site": "cross-site"})),
+        ("a text/plain body, which needs no permission either",
+         dict(data="{}", content_type="text/plain")),
+    ]
+    for label, kwargs in alone:
+        res = client.post("/api/account/signout", **kwargs)
+        assert res.status_code == 403, f"{label}: {res.status_code}"
+results.append(run("each cross-site check refuses on its own", t40))
+
+
+def t41():
+    # DNS rebinding: a page whose own hostname resolves to this Mac is
+    # same-origin with the panel as far as the browser is concerned, so it
+    # can read answers as well as send requests. The Host header is what
+    # gives it away, and this one applies to reads too.
+    point_config_at(setup_home)
+    rebound = client.get("/api/status", headers={"Host": "evil.example"})
+    assert rebound.status_code == 403, f"evil.example answered {rebound.status_code}"
+    for ours in ("127.0.0.1:5173", "localhost:5173", "localhost", "[::1]:5173"):
+        res = client.get("/api/status", headers={"Host": ours})
+        assert res.status_code == 200, f"{ours} answered {res.status_code}"
+    # Behind a proxy the name is the operator's, so that one check stands
+    # down. The checks that do not depend on the name must not.
+    from intake import signin
+    signin.EXPOSED = True
+    try:
+        proxied = client.get("/api/status", headers={"Host": "panel.example"})
+        assert proxied.status_code == 200, f"exposed answered {proxied.status_code}"
+        res = client.post("/api/account/signout", data="x=1",
+                          content_type="application/x-www-form-urlencoded",
+                          headers={"Host": "panel.example"})
+        assert res.status_code == 403, "exposing the panel must not unlock form posts"
+    finally:
+        signin.EXPOSED = False
+results.append(run("a request addressed to somebody else's hostname is refused", t41))
+
+
+def t42():
+    # What must keep working: the panel's own pages, and the clients that are
+    # not browsers at all and so cannot be aimed at us by a web page.
+    point_config_at(setup_home)
+    same = client.post("/api/account/signout", json={},
+                       headers={"Origin": "http://localhost",
+                                "Sec-Fetch-Site": "same-origin"})
+    assert same.status_code == 200, same.get_json()
+    assert client.post("/api/account/signout", json={}).status_code == 200
+    assert client.get("/api/status").status_code == 200
+results.append(run("the panel's own page and the CLI are unaffected", t42))
 
 print()
 print(f"{sum(results)}/{len(results)} passed")
