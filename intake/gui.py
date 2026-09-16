@@ -564,7 +564,14 @@ def setup_save():
         given = str(payload.get(field) or "").strip()
         if given:
             values[key] = given
-    if not values.get("OPENAI_API_KEY") or not values.get("ANTHROPIC_API_KEY"):
+    # A signed-in Mac spends the service's keys, so it has none of its own to
+    # offer and the page deliberately hides the fields that would collect
+    # them. Demanding them here is the same mistake _configured() and the
+    # processing preflight already avoid, and it fires before anything is
+    # written: without this branch a managed Mac cannot save a schedule, so it
+    # never becomes configured and the panel reopens this page forever.
+    if not account.managed() and (not values.get("OPENAI_API_KEY")
+                                  or not values.get("ANTHROPIC_API_KEY")):
         return jsonify({"ok": False, "error": "both API keys are needed"}), 400
 
     device = str(payload.get("device") or "").strip()

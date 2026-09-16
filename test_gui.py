@@ -465,6 +465,70 @@ def t22():
 results.append(run("no schedule or a missing key is refused before anything is written", t22))
 
 
+def t22b():
+    # The other half of t22: a signed-in Mac has no keys of its own to give,
+    # and the page hides the fields that would collect them. Demanding them
+    # here was a dead end with no way out of it, because the refusal came
+    # before the schedule was written, so the Mac never became configured and
+    # the panel reopened this same page every time.
+    from intake import account
+    managed_home = tmp / "managed-home"
+    managed_home.mkdir()
+    point_config_at(managed_home)
+    account.save(account.Account(
+        token="syd_m", account_id="a1", email="me@example.com", name="Me",
+        device_id="d1", device_name="This Mac", profile="syllabus",
+        url=config.ACCOUNTS_URL, claimed_at="2026-09-15T00:00:00Z"))
+    try:
+        res = client.post("/api/setup", json={
+            "openai_key": "", "anthropic_key": "", "device": "MacBook Pro Microphone",
+            "schedule": [{"day": "Mon", "start": 9, "course": "ENTR-4306"}],
+            "notion": {"enabled": False},
+        })
+        assert res.status_code == 200, res.get_json()
+        assert (managed_home / "schedule.toml").is_file(), "the schedule was not written"
+        assert gui._configured(), "a signed-in Mac with classes is set up"
+        assert not gui.start_url("127.0.0.1", 5173).endswith("/setup"), \
+            "the panel should stop reopening Setup once the save lands"
+        # Signed out with no keys on file, the demand is right and must stay.
+        account.forget()
+        res = client.post("/api/setup", json={
+            "openai_key": "", "anthropic_key": "",
+            "schedule": [{"day": "Mon", "start": 9, "course": "ENTR-4306"}],
+            "notion": {"enabled": False},
+        })
+        assert res.status_code == 400 and "both API keys" in res.get_json()["error"]
+    finally:
+        account.forget()
+        point_config_at(setup_home)
+results.append(run("a signed-in Mac saves setup without keys of its own", t22b))
+
+
+def t22c():
+    # The CLI wizard is the other door into the same settings, and it was the
+    # only way a managed Mac could get through at all. It must not ask for
+    # keys the account already covers.
+    from intake import account, setup_wizard
+    asked = []
+    wizard = setup_wizard.Wizard(home=tmp / "wizard-home")
+    wizard.ask = lambda prompt: (asked.append(prompt), "")[1]
+    wizard.say = lambda *a, **k: None
+    account.save(account.Account(
+        token="syd_w", account_id="a1", email="me@example.com", name="Me",
+        device_id="d1", device_name="This Mac", profile="syllabus",
+        url=config.ACCOUNTS_URL, claimed_at="2026-09-15T00:00:00Z"))
+    try:
+        values = {}
+        wizard.ask_keys(values)
+        assert asked == [], f"a managed Mac was asked for keys: {asked}"
+        account.forget()
+        wizard.ask_keys(values)
+        assert any("OpenAI" in prompt for prompt in asked), asked
+    finally:
+        account.forget()
+results.append(run("the wizard skips key prompts on a signed-in Mac", t22c))
+
+
 def t23():
     point_config_at(setup_home)
     body = client.get("/api/doctor").get_json()
