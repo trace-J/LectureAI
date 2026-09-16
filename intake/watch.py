@@ -329,7 +329,7 @@ def run_watcher() -> int:
     observer.schedule(InboxHandler(work), str(config.INBOX_DIR), recursive=False)
     observer.start()
     log(f"watching {config.INBOX_DIR} for "
-        f"{', '.join(sorted(config.AUDIO_EXTENSIONS))} — Ctrl-C to stop")
+        f"{', '.join(sorted(config.AUDIO_EXTENSIONS))}; Ctrl-C to stop")
 
     try:
         while True:

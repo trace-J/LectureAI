@@ -1,0 +1,50 @@
+# The lecture prompt lives here AND in syllabus-accounts, and has drifted twice.
+#
+# Deliberately NOT on pull_request. A prompt reword has to land in both repos,
+# and they cannot land at the same instant: whichever PR is open first sees the
+# other repo's main still carrying the old text and goes red. Required on both
+# sides, that is a deadlock with no legal order. So this runs AFTER a change
+# lands, on a schedule to catch the other repo moving underneath us, and by
+# hand. It reports; it does not gate.
+#
+# It is not redundant with the copy in syllabus-accounts. That one only runs
+# when syllabus-accounts is pushed, so it structurally cannot see a reword made
+# here. This covers exactly that case.
+name: Prompt parity
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "intake/schemas.py"
+      - ".github/workflows/prompt-parity.yml"
+      - ".github/workflows/prompt_parity.py"
+  schedule:
+    # Daily, so a change made in the other repo is noticed within a day even
+    # though nothing here was pushed.
+    - cron: "17 13 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: The lecture prompt must match syllabus-accounts
+        run: |
+          set -euo pipefail
+          URL=https://raw.githubusercontent.com/trace-J/syllabus-accounts/main/src/prompts.ts
+          if ! curl -fsSL -o /tmp/prompts.ts "$URL"; then
+            echo "::error::could not fetch $URL. If src/prompts.ts moved or the repo went private,"
+            echo "::error::update this workflow and .github/workflows/prompt_parity.py in both repos."
+            exit 1
+          fi
+          python3 .github/workflows/prompt_parity.py intake/schemas.py /tmp/prompts.ts

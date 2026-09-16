@@ -10,6 +10,11 @@
 # Signing: when the SYLLABUS_CODESIGN_IDENTITY variable and the certificate
 # secrets exist the build is signed and notarized; until then the image is
 # signed ad hoc and the release notes carry the Gatekeeper steps.
+#
+# Nothing is published until the suites pass. The `tests` job below is the
+# same set CI runs on a pull request, repeated here because a tag can point at
+# any commit, including one that never went through a PR, and the app's update
+# notice sends people straight to whatever this publishes.
 name: Release Syllabus.app
 
 on:
@@ -22,7 +27,38 @@ permissions:
   contents: write
 
 jobs:
+  # A gate, not a duplicate of CI: this runs on the macOS runner the app is
+  # actually built on, where ffmpeg and lsof are already present, and it is
+  # what `build` waits for.
+  tests:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Tests
+        run: |
+          set -uo pipefail
+          failed=()
+          for suite in test_*.py; do
+            python "$suite" || failed+=("$suite")
+          done
+          if [ ${#failed[@]} -gt 0 ]; then
+            echo "::error::not publishing: ${#failed[@]} suite(s) failed: ${failed[*]}"
+            exit 1
+          fi
+
   build:
+    needs: tests
     runs-on: macos-15  # Apple silicon
     steps:
       - uses: actions/checkout@v4
