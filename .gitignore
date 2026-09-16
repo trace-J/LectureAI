@@ -27,6 +27,7 @@ pipeline.log
 !README.md
 # the release workflow reads this one out of the checkout
 !packaging/release-notes.md
+!SECURITY.md
 
 # macOS
 .DS_Store
