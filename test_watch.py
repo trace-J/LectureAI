@@ -28,7 +28,7 @@ from _test_home import fresh_home  # noqa: E402
 HOME = fresh_home()  # before config is imported, so nothing touches ~/.intake
 
 from intake import config  # noqa: E402
-from intake import notion_tasks, summarize, transcribe, watch  # noqa: E402
+from intake import notion_tasks, record, summarize, transcribe, watch  # noqa: E402
 from intake import upload as drive  # noqa: E402
 
 # Tuesday. The sample schedule puts ACCT-4321 at 14:00 and ENTR-3306 at 12:00,
@@ -513,6 +513,74 @@ def t19():
     assert watch.sweep_resume() == 1
     assert fresh.is_dir() and not stale.exists()
 results.append(run("checkpoints nobody came back to are swept", t19))
+
+
+# 20. The course picker promised a destination that processing overruled. A
+#     lecture recorded under one course during another's scheduled hour was
+#     filed, named, foldered and pushed to Notion under the scheduled one.
+def t20():
+    clear()
+    # ACCT-4321 owns Tuesday 14:00 in the sample schedule. Record under
+    # ENTR-3306 anyway, the way the picker lets you.
+    staging = config.WORK_DIR / "staged.m4a"
+    staging.parent.mkdir(parents=True, exist_ok=True)
+    staging.write_text("AUDIO")
+    from datetime import datetime as dt
+    audio = record._file_into_inbox(staging, dt(2026, 9, 15, 14, 0), "ENTR-3306")
+    import os
+    stamp = when(TUESDAY_2PM_END)
+    os.utime(audio, (stamp, stamp))
+    with Fakes() as fake:
+        out = watch.process(audio, interactive=False)
+    assert out["course"] == "ENTR-3306", f"the schedule overruled the pick: {out}"
+    assert out["stem"].startswith("ENTR-3306"), out["stem"]
+    assert all(call["course"] == "ENTR-3306" for call in fake.uploads), fake.uploads
+    assert log_lines()[-1][1] == "ENTR-3306", log_lines()[-1]
+results.append(run("a course chosen at record time survives processing", t20))
+
+
+# 21. The other two roads have to keep working: an inferred course leaves no
+#     note behind, so the schedule still decides, and a file copied in with
+#     no note still falls back to its own name.
+def t21():
+    clear()
+    staging = config.WORK_DIR / "staged2.m4a"
+    staging.write_text("AUDIO")
+    from datetime import datetime as dt
+    import os
+    inferred = record._file_into_inbox(staging, dt(2026, 9, 15, 14, 0), None)
+    stamp = when(TUESDAY_2PM_END)
+    os.utime(inferred, (stamp, stamp))
+    assert not config.course_note(inferred).exists(), "an inferred course left a note"
+    with Fakes():
+        out = watch.process(inferred, interactive=False)
+    assert out["course"] == "ACCT-4321", out
+
+    clear()
+    copied = recording("ENTR-3306_2026-09-13_1400.m4a", at=SUNDAY)
+    with Fakes():
+        out = watch.process(copied, interactive=False)
+    assert out["course"] == "ENTR-3306", out
+results.append(run("an inferred course still defers to the schedule", t21))
+
+
+# 22. The note is about one recording and must not outlive it.
+def t22():
+    clear()
+    staging = config.WORK_DIR / "staged3.m4a"
+    staging.write_text("AUDIO")
+    from datetime import datetime as dt
+    import os
+    audio = record._file_into_inbox(staging, dt(2026, 9, 15, 14, 0), "ENTR-3306")
+    stamp = when(TUESDAY_2PM_END)
+    os.utime(audio, (stamp, stamp))
+    assert config.course_note(audio).is_file()
+    with Fakes():
+        watch.process(audio, interactive=False)
+    assert not config.course_note(audio).exists(), "the note outlived the recording"
+    # And it is not audio, so the watcher must never try to process one.
+    assert config.course_note(audio).suffix not in config.AUDIO_EXTENSIONS
+results.append(run("the note is cleared once the recording is filed", t22))
 
 
 print()

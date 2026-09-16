@@ -519,6 +519,11 @@ def _file_into_inbox(staging: Path, started: datetime, course: str | None) -> Pa
     # same second still landed on top of each other.
     destination = config.free_path(config.INBOX_DIR, output_name(started, course))
     shutil.move(str(staging), str(destination))
+    # `course` is set only when somebody picked one. The name already carries
+    # it, but a name cannot say whether the course in it was chosen or
+    # inferred, and processing needs to know the difference.
+    if course:
+        config.remember_course(destination, course)
     return destination
 
 
