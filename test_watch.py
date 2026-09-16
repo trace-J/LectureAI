@@ -18,6 +18,7 @@ returns.
 import json
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -165,12 +166,19 @@ def log_lines():
 
 
 def clear():
-    """Empty the directories process() writes to, between tests."""
+    """Empty the directories process() writes to, between tests.
+
+    The checkpoints go too. They are keyed by the recording, and these tests
+    reuse a handful of timestamps, so a slot one test left behind would let
+    the next one skip the transcription it is trying to count.
+    """
+    import shutil
     for directory in (config.INBOX_DIR, config.PROCESSED_DIR):
         if directory.is_dir():
             for child in directory.iterdir():
                 if child.is_file():
                     child.unlink()
+    shutil.rmtree(config.WORK_DIR / "resume", ignore_errors=True)
     config.LOG_FILE.unlink(missing_ok=True)
 
 
@@ -290,8 +298,9 @@ def t8():
 results.append(run("an upload failure leaves the original recording in place", t8))
 
 
-# 9. The expensive output survives that same failure on disk. (Whether the
-#    retry actually reuses it is a separate question, and today it does not.)
+# 9. The expensive output survives that same failure, in the recording's own
+#    checkpoint rather than in processed/ under a stem another lecture of the
+#    same class on the same day would also claim.
 def t9():
     clear()
     audio = recording()
@@ -300,9 +309,13 @@ def t9():
             watch.process(audio, interactive=False)
         except RuntimeError:
             pass
-    staged = sorted(p.suffix for p in config.PROCESSED_DIR.glob("*"))
-    assert staged == [".md", ".txt"], staged
-results.append(run("a failed upload leaves the transcript and summary staged", t9))
+    slot = watch.Resume(config.recording_key(when(TUESDAY_2PM_END), 3600.0)).dir
+    kept = sorted(p.name for p in slot.glob("*"))
+    assert kept == ["summary.json", "summary.md", "transcript.txt"], kept
+    assert slot.joinpath("transcript.txt").read_text() == "hello there lecture"
+    # And nothing is left lying in processed/ under a shared name.
+    assert sorted(p.name for p in config.PROCESSED_DIR.glob("*")) == []
+results.append(run("a failed upload keeps the paid work in the recording's checkpoint", t9))
 
 
 # 10. With the shipped default the original is deleted once both uploads land.
@@ -385,6 +398,121 @@ def t14():
     assert "uploading" in stages, stages
     assert all(course == "ACCT-4321" for _, course in seen), seen
 results.append(run("progress is reported for each stage with the course", t14))
+
+
+# 15. The finding itself: a Drive failure must not make the next attempt pay
+#     for transcription and summarization all over again.
+def t15():
+    clear()
+    audio = recording()
+    first = Fakes(upload_error=(1, "drive is down"))
+    with first:
+        try:
+            watch.process(audio, interactive=False)
+        except RuntimeError:
+            pass
+    assert first.transcribed == 1 and first.summarized == 1, first.__dict__
+    second = Fakes()
+    with second:
+        out = watch.process(audio, interactive=False)
+    assert second.transcribed == 0, "the retry paid for transcription again"
+    assert second.summarized == 0, "the retry paid for summarization again"
+    assert out["summary_url"].startswith("https://drive.test/"), out
+results.append(run("a retry after a failed upload pays for neither stage again", t15))
+
+
+# 16. The bigger half, which the report did not reach: staging happened after
+#     BOTH stages, so a summary that failed threw away a transcript that had
+#     just been paid for.
+def t16():
+    clear()
+    audio = recording()
+
+    class Boom(Fakes):
+        def install(self):
+            out = super().install()
+            broken = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("the model refused"))
+            self._remember(summarize, "summarize", broken)
+            return out
+
+    first = Boom()
+    with first:
+        try:
+            watch.process(audio, interactive=False)
+        except RuntimeError as exc:
+            assert "refused" in str(exc), exc
+        else:
+            raise AssertionError("the summary failure was swallowed")
+    assert first.transcribed == 1, first.transcribed
+    second = Fakes()
+    with second:
+        watch.process(audio, interactive=False)
+    assert second.transcribed == 0, "the transcript was thrown away with the failed summary"
+    assert second.summarized == 1, "the summary still had to be produced"
+results.append(run("a failed summary keeps the transcript it was given", t16))
+
+
+# 17. Two recordings of one class on one day build the same stem. Staged under
+#     it, the second replaced the first's copy while both were still waiting
+#     on Drive.
+def t17():
+    clear()
+    first = recording("ACCT-4321_2026-09-15_1400.m4a", at=TUESDAY_2PM_END, body="FIRST")
+    with Fakes(transcript="the first lecture", upload_error=(1, "drive is down")):
+        try:
+            watch.process(first, interactive=False)
+        except RuntimeError:
+            pass
+    second = recording("ACCT-4321_2026-09-15_1600.m4a", at="2026-09-15 17:00", body="SECOND")
+    with Fakes(transcript="the second lecture", upload_error=(1, "drive is down")):
+        try:
+            watch.process(second, interactive=False)
+        except RuntimeError:
+            pass
+    one = watch.Resume(config.recording_key(when(TUESDAY_2PM_END), 3600.0)).dir
+    two = watch.Resume(config.recording_key(when("2026-09-15 17:00"), 3600.0)).dir
+    assert one != two, one
+    assert one.joinpath("transcript.txt").read_text() == "the first lecture"
+    assert two.joinpath("transcript.txt").read_text() == "the second lecture"
+results.append(run("two lectures sharing a stem keep their own paid work", t17))
+
+
+# 18. With the archive setting, an original must not land on top of an older
+#     one. A phone hands back the same filename every time.
+def t18():
+    clear()
+    keep = config.DELETE_ORIGINAL_AFTER_UPLOAD
+    config.DELETE_ORIGINAL_AFTER_UPLOAD = False
+    try:
+        config.PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+        older = config.PROCESSED_DIR / "lecture.m4a"
+        older.write_text("OLD RECORDING")
+        audio = recording("lecture.m4a", body="NEW RECORDING")
+        with Fakes():
+            out = watch.process(audio, interactive=False)
+        assert older.read_text() == "OLD RECORDING", "the older original was overwritten"
+        assert Path(out["original"]).read_text() == "NEW RECORDING", out
+        assert Path(out["original"]) != older, out
+    finally:
+        config.DELETE_ORIGINAL_AFTER_UPLOAD = keep
+results.append(run("archiving never lands on top of an older recording", t18))
+
+
+# 19. Work nobody came back for is not kept forever.
+def t19():
+    clear()
+    root = config.WORK_DIR / "resume"
+    fresh = root / "2026-09-15T14-00"
+    stale = root / "2020-01-01T09-00"
+    for slot in (fresh, stale):
+        slot.mkdir(parents=True, exist_ok=True)
+        (slot / "transcript.txt").write_text("words")
+    import os
+    old = time.time() - 30 * 86400
+    os.utime(stale, (old, old))
+    assert watch.sweep_resume() == 1
+    assert fresh.is_dir() and not stale.exists()
+results.append(run("checkpoints nobody came back to are swept", t19))
 
 
 print()
