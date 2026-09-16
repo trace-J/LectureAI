@@ -224,9 +224,16 @@ def _write_state(pid: int, staging: Path, started: datetime,
     config.RECORDING_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     payload = {"pid": pid, "staging": str(staging), "started": started.isoformat(),
                "course": course, "device": device_name}
-    tmp = config.RECORDING_STATE_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload))
-    tmp.replace(config.RECORDING_STATE_FILE)
+    # A name of this writer's own. The fixed ".json.tmp" was shared by every
+    # writer in every process, so two of them arriving together wrote over
+    # each other's half-written file and the rename published whichever mix
+    # of the two landed last.
+    tmp = config.RECORDING_STATE_FILE.with_suffix(f".json.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(json.dumps(payload))
+        tmp.replace(config.RECORDING_STATE_FILE)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _read_state() -> dict | None:

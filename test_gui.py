@@ -1381,6 +1381,62 @@ def t42():
     assert client.get("/api/status").status_code == 200
 results.append(run("the panel's own page and the CLI are unaffected", t42))
 
+
+def t43():
+    # Two clients pressing Record together. The panel serves the local browser
+    # with threaded=True and the relay runs relayed requests against this same
+    # app from a pool of four, so a phone on the web and this Mac's browser
+    # are two genuine clients. Both guards that existed were checks without
+    # mutual exclusion, so both starts passed both of them: with real
+    # subprocesses that was two live captures on one microphone, and the panel
+    # could only ever stop one of them.
+    import os
+    import signal
+    import subprocess
+    import threading
+    point_config_at(setup_home)
+    rec_mod = gui.recording
+    real_cmd = rec_mod._ffmpeg_command
+    started = []
+
+    def stub(device_index, destination, limit):
+        destination.write_text("AUDIO")
+        started.append(destination)
+        return ["sleep", "20"]
+
+    rec_mod._ffmpeg_command = stub
+    gui._recorder = None
+    config.RECORDING_STATE_FILE.unlink(missing_ok=True)
+    codes = []
+    barrier = threading.Barrier(2)
+
+    def fire():
+        barrier.wait()
+        codes.append(client.post("/api/record/start", json={}).status_code)
+
+    try:
+        threads = [threading.Thread(target=fire) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert sorted(codes) == [200, 409], f"both starts were accepted: {codes}"
+        assert len(started) == 1, f"{len(started)} capture processes were opened"
+        live = subprocess.run(["pgrep", "-f", "^sleep 20"],
+                              capture_output=True, text=True).stdout.split()
+        assert len(live) <= 1, f"{len(live)} captures left running: {live}"
+    finally:
+        for pid in subprocess.run(["pgrep", "-f", "^sleep 20"], capture_output=True,
+                                  text=True).stdout.split():
+            try:
+                os.kill(int(pid), signal.SIGKILL)
+            except (OSError, ValueError):
+                pass
+        rec_mod._ffmpeg_command = real_cmd
+        gui._recorder = None
+        config.RECORDING_STATE_FILE.unlink(missing_ok=True)
+results.append(run("two clients pressing Record open one microphone, not two", t43))
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
