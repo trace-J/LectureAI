@@ -42,8 +42,21 @@ from intake import transcribe
 
 app = Flask(__name__)
 
-# One recorder for the process. The GUI is single-user by construction, and a
-# second concurrent recording would fight over the microphone anyway.
+# One recorder for the process, and a lock to make that true.
+#
+# "Single-user by construction" was the old claim here and it has not held for
+# a while: app.run serves the local browser with threaded=True, and the relay
+# runs relayed requests against this same app from a pool of four workers, so
+# a phone on the web and the browser on this Mac are two genuine clients.
+#
+# There were already two guards on starting a second recording, the 409 in
+# record_start and Recorder.adopt()'s refusal. Neither is atomic, so two
+# starts that arrive together both pass both of them: observed, with real
+# subprocesses, as two live captures on one microphone, only one of which the
+# panel could then stop. The missing piece is mutual exclusion, not another
+# check. Re-entrant because the routes call _current_recorder() while holding
+# it, and that takes the lock too.
+_recording_lock = threading.RLock()
 _recorder: recording.Recorder | None = None
 
 # What the desktop app (app.py) registers when this panel runs inside it:
@@ -75,27 +88,33 @@ def _current_recorder() -> recording.Recorder | None:
     recording, or assumes the lecture is lost. The state file record.py keeps
     is how we find and take over that ffmpeg. This is also where a recording
     that ended on its own (ffmpeg's time cap) gets filed into inbox/.
+
+    Under the lock because this reads and then writes the shared recorder,
+    and the dashboard polls it through /api/status once a second: two polls
+    landing together could both see a finished recording and both try to file
+    it.
     """
     global _recorder
-    if _recorder is not None and not _recorder.is_recording:
-        finished, _recorder = _recorder, None
-        try:
-            filed = finished.finish()
-            if filed is None:
-                _say("recording was stopped and filed from elsewhere")
-            else:
-                _say(f"recording ended on its own; filed {filed.name}")
-        except RuntimeError as exc:
-            _say(f"recording ended on its own: {exc}")
-    if _recorder is None:
-        filed = recording.finish_abandoned()
-        if filed is not None:
-            _say(f"filed an earlier recording nobody stopped: {filed.name}")
-        _recorder = recording.Recorder.adopt()
-        if _recorder is not None:
-            _say(f"picking up a recording already running since "
-                 f"{_recorder.started:%H:%M} (pid {_recorder._proc.pid})")
-    return _recorder
+    with _recording_lock:
+        if _recorder is not None and not _recorder.is_recording:
+            finished, _recorder = _recorder, None
+            try:
+                filed = finished.finish()
+                if filed is None:
+                    _say("recording was stopped and filed from elsewhere")
+                else:
+                    _say(f"recording ended on its own; filed {filed.name}")
+            except RuntimeError as exc:
+                _say(f"recording ended on its own: {exc}")
+        if _recorder is None:
+            filed = recording.finish_abandoned()
+            if filed is not None:
+                _say(f"filed an earlier recording nobody stopped: {filed.name}")
+            _recorder = recording.Recorder.adopt()
+            if _recorder is not None:
+                _say(f"picking up a recording already running since "
+                     f"{_recorder.started:%H:%M} (pid {_recorder._proc.pid})")
+        return _recorder
 
 
 def _reap_children() -> None:
@@ -438,37 +457,46 @@ def login_item_set():
 @app.post("/api/record/start")
 def record_start():
     global _recorder
-    if _current_recorder() is not None:
-        return jsonify({"ok": False, "error": "already recording"}), 409
-
+    # Read the body before taking the lock: it can refuse the request, and
+    # there is no reason to hold up a poll while deciding that.
     payload = _body()
     course = _text(payload, "course") or None
     if course and course not in set(_courses()):
         return jsonify({"ok": False, "error": f"unknown course {course}"}), 400
 
-    try:
-        _recorder = recording.Recorder(course=course)
-        _recorder.start()
-    except Exception as exc:
-        _recorder = None
-        return jsonify({"ok": False, "error": str(exc)}), 500
-    return jsonify({"ok": True, "device": _recorder.device_name,
-                    "planned": _recorder.planned_name})
+    # The check and the start are one step. Apart, two clients pressing
+    # Record at the same moment both passed the check and both opened the
+    # microphone.
+    with _recording_lock:
+        if _current_recorder() is not None:
+            return jsonify({"ok": False, "error": "already recording"}), 409
+        try:
+            _recorder = recording.Recorder(course=course)
+            _recorder.start()
+        except Exception as exc:
+            _recorder = None
+            return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": True, "device": _recorder.device_name,
+                        "planned": _recorder.planned_name})
 
 
 @app.post("/api/record/stop")
 def record_stop():
     global _recorder
-    rec = _current_recorder()
-    if rec is None:
-        return jsonify({"ok": False, "error": "not recording"}), 409
-    try:
-        destination = rec.stop()
-    except Exception as exc:
+    # Same reason as starting: two stops arriving together both took the same
+    # recorder and both called stop() on it, and the second found the staging
+    # file already moved into the inbox.
+    with _recording_lock:
+        rec = _current_recorder()
+        if rec is None:
+            return jsonify({"ok": False, "error": "not recording"}), 409
+        try:
+            destination = rec.stop()
+        except Exception as exc:
+            _recorder = None
+            return jsonify({"ok": False, "error": str(exc)}), 500
+        wall = rec.elapsed
         _recorder = None
-        return jsonify({"ok": False, "error": str(exc)}), 500
-    wall = rec.elapsed
-    _recorder = None
 
     # Report the audio the file actually holds, not how long the button was
     # held down. Opening the capture device costs a second or more, and on a

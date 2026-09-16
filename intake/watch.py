@@ -97,9 +97,15 @@ def write_status(stage: str, file: str = "", course: str = "",
             "updated": datetime.now().isoformat(timespec="seconds"),
             "pid": os.getpid(),
         }
-        temp = config.STATUS_FILE.with_suffix(".json.tmp")
-        temp.write_text(json.dumps(payload))
-        temp.replace(config.STATUS_FILE)
+        # Per writer, not a fixed name every writer shares: the watcher is
+        # single-instance today, so this is the same hazard as record.py's
+        # state file rather than a live bug, and it costs nothing to not have.
+        temp = config.STATUS_FILE.with_suffix(f".json.{os.getpid()}.tmp")
+        try:
+            temp.write_text(json.dumps(payload))
+            temp.replace(config.STATUS_FILE)
+        finally:
+            temp.unlink(missing_ok=True)
     except OSError:
         pass
 
