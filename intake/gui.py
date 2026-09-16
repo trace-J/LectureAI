@@ -817,8 +817,11 @@ def account_signout():
 def _is_loopback(host: str) -> bool:
     """Whether a --host value stays on this machine.
 
-    The panel has no authentication of any kind, by design: it is a local
-    control surface. So the only hosts it binds to unasked are loopback ones.
+    The panel has no login, by design: it is a local control surface, and
+    anything running as this user could do all of it directly anyway. So the
+    only hosts it binds to unasked are loopback ones. What it does have is
+    signin.cross_site(), which is a different question: not who is asking,
+    but whether a web page somewhere else is the one doing the asking.
     """
     if host in ("localhost", ""):
         return True
@@ -857,6 +860,15 @@ def main(argv: list[str] | None = None) -> int:
               f"tunnel, or a Cloudflare Tunnel with this Mac signed in to a Syllabus account) and pass --expose "
               f"to say you have.", file=sys.stderr, flush=True)
         return 2
+
+    # The panel refuses a request addressed to a hostname that is not this
+    # Mac's, which is what stops a page elsewhere resolving its own name to
+    # 127.0.0.1 and talking to the panel as though it were the same origin.
+    # Behind a
+    # proxy the name is whatever the operator chose, so there is nothing to
+    # compare against and that one check stands down. The checks that do not
+    # depend on the name keep running.
+    signin.EXPOSED = bool(args.expose)
 
     url = prepare(args.host, args.port)
     if not args.no_browser:
