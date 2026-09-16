@@ -1,0 +1,105 @@
+# Every pull request and every push to main: run the tests, and check the copy
+# rules on text a customer reads.
+#
+# Nothing here needs a secret. The suites are hermetic by construction
+# (_test_home.fresh_home points $INTAKE_HOME at a fresh mkdtemp before config
+# is imported), so no test can reach the real ~/.intake, a key, or the network.
+#
+# The cross-repo prompt check is deliberately NOT here: see prompt-parity.yml
+# for why it must not run on a pull request.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # pyproject declares requires-python ">=3.11" and nothing has ever
+        # checked that floor; release.yml only ever builds on 3.12. 3.11 is
+        # here to make the declared floor true rather than aspirational.
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # Both are shelled out to by code under test and neither is guaranteed on
+      # the runner image. Measured: without ffmpeg, test_gui and test_record
+      # each fail one assertion; without lsof, test_gui fails the watcher-lock
+      # test, because config._watcher_pid reads the lock holder with `lsof -t`.
+      - name: Tools the tests shell out to
+        run: |
+          set -euo pipefail
+          missing=()
+          command -v ffmpeg >/dev/null || missing+=(ffmpeg)
+          command -v lsof   >/dev/null || missing+=(lsof)
+          if [ ${#missing[@]} -gt 0 ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq "${missing[@]}"
+          fi
+          ffmpeg -version | head -1
+          lsof -v 2>&1 | head -1 || true
+
+      # The base install is deliberately enough: the [app] extra pulls
+      # pywebview, which wants a display and is not needed by any suite.
+      # Verified by running all 13 against a venv with only `pip install -e .`.
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      # There is no pytest here. Each test_*.py is a standalone script that
+      # prints its own results and exits non-zero on failure, so the runner
+      # collects them rather than stopping at the first one: one red suite
+      # should not hide three others.
+      - name: Tests
+        run: |
+          set -uo pipefail
+          failed=()
+          for suite in test_*.py; do
+            echo "::group::$suite"
+            if python "$suite"; then
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"
+              echo "::error file=$suite::$suite failed"
+              failed+=("$suite")
+            fi
+          done
+          echo
+          if [ ${#failed[@]} -gt 0 ]; then
+            echo "${#failed[@]} suite(s) failed: ${failed[*]}"
+            exit 1
+          fi
+          echo "all $(ls test_*.py | wc -l | tr -d ' ') suites passed"
+
+  copy-standards:
+    # The rules in CLAUDE.md say a check "fails a PR that reintroduces one".
+    # Until now no such check existed in this repo. This is it.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # Pinned: the checker reads Python through `tokenize`, and 3.12 split
+          # f-strings into FSTRING_* tokens. One version, one behavior.
+          python-version: "3.12"
+      - name: No em dashes, US spellings, US phrasing
+        run: python3 .github/workflows/copy_standards.py

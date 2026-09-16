@@ -344,7 +344,7 @@ def render_action(item: dict | str) -> str:
 def render_markdown(result: dict, course: str, date: str) -> str:
     """Assemble the .md document that gets uploaded to Drive."""
     lines = [
-        f"# {course} — {date}",
+        f"# {course}: {date}",
         "",
         f"**Topic:** {result['topic_slug'].replace('-', ' ')}",
         "",
@@ -355,7 +355,7 @@ def render_markdown(result: dict, course: str, date: str) -> str:
     if result["key_terms"]:
         lines += ["## Key terms", ""]
         for t in result["key_terms"]:
-            lines.append(f"- **{t['term']}** — {t['definition']}" if t["definition"]
+            lines.append(f"- **{t['term']}**: {t['definition']}" if t["definition"]
                          else f"- **{t['term']}**")
         lines.append("")
 
