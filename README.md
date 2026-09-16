@@ -77,10 +77,11 @@ failed upload never costs you the transcription you already paid for.
 **The Mac app.** Download the newest `Syllabus-x.y.z.dmg` from the
 [releases page](https://github.com/trace-J/LectureAI/releases), open it, and
 drag Syllabus to Applications. Open Syllabus and it lands on its Setup page:
-paste your OpenAI and Anthropic keys, pick a microphone, enter your class
-schedule, connect Google Drive, and sign in to a Syllabus account if you have
-one. It runs from the menu bar after that; nothing else to install. Apple
-silicon, macOS 13 or newer.
+sign in to a Syllabus account, pick a microphone, enter your class schedule,
+and connect Google Drive. A signed-in Mac holds no API key of its own; without
+an account, paste one key from OpenAI and one from Anthropic instead. It runs
+from the menu bar after that; nothing else to install. Apple silicon, macOS 13
+or newer.
 
 Until the app is signed with an Apple Developer ID, the first time you open
 it macOS says it could not verify the app and offers only Done or Move to
