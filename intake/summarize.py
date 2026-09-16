@@ -86,8 +86,12 @@ def slugify_topic(raw: str) -> str:
 
 
 def build_filename(course: str, date: str, topic_slug: str) -> str:
-    """{COURSE}_{YYYY-MM-DD}_{Topic-Slug} — course comes from the schedule."""
-    return f"{course}_{date}_{slugify_topic(topic_slug)}"
+    """{COURSE}_{YYYY-MM-DD}_{Topic-Slug} — course comes from the schedule.
+
+    The topic slug was already sanitized and the course was not, even though
+    this name becomes two files in processed/ and two more in Drive.
+    """
+    return f"{config.safe_course(course)}_{date}_{slugify_topic(topic_slug)}"
 
 
 # The lecture kinds; the pipeline asks the profile's schema for the live set.
@@ -157,7 +161,8 @@ def normalize_actions(raw_items, course: str, date: str) -> list[dict]:
 def _save_failed_response(raw: str, course: str, date: str) -> None:
     """Keep the raw response when parsing fails, so it can be diagnosed."""
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    path = config.WORK_DIR / f"summarize-failure_{course}_{date}_{stamp}.txt"
+    path = (config.WORK_DIR /
+            f"summarize-failure_{config.safe_course(course)}_{date}_{stamp}.txt")
     try:
         path.write_text(raw)
         log(f"  raw response saved to {path}")

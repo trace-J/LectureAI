@@ -535,6 +535,109 @@ def t22():
 results.append(run("the CLI refuses to record without a schedule and says what to do", t22))
 
 
+def t23():
+    # The write path refuses. Every one of these was accepted before, saved
+    # with ok: true, and left a schedule.toml that no longer parsed — or a
+    # course that became a path component pointing out of the inbox.
+    breaks_toml = ['HISTORY "A"', "A\\B", "X\nY", 'A"}]\nclasses=[', "X\tY"]
+    breaks_paths = ["../escaped", "/tmp/absolute", "MATH/101", "..", ".", ".hidden"]
+    for bad in breaks_toml + breaks_paths:
+        try:
+            config.normalize_course(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"{bad!r} was accepted as a course")
+    for bad, why in ((None, "text"), (True, "text"), (["X"], "text"),
+                     ("", "empty"), ("   ", "empty"), ("X" * 65, "longer")):
+        try:
+            config.normalize_course(bad)
+        except ValueError as exc:
+            assert why in str(exc), f"{bad!r}: {exc}"
+        else:
+            raise AssertionError(f"{bad!r} was accepted as a course")
+    # And the names people actually have keep working, punctuation included.
+    for good, want in (("acct-4321", "ACCT-4321"), ("ACCT4321", "ACCT-4321"),
+                       ("acct_4321", "ACCT-4321"), ("MATH 101", "MATH 101"),
+                       ("Biology (Lab)", "Biology (Lab)"),
+                       ("St. Thomas Seminar", "St. Thomas Seminar")):
+        assert config.normalize_course(good) == want, good
+results.append(run("a course that would break a file or a path is refused", t23))
+
+
+def t24():
+    # The read path repairs instead. A schedule written before those checks
+    # existed, or edited by hand, still has to load: refusing the file would
+    # take the panel down over one row.
+    text = ('classes = [ { day = "Mon", start = 9, course = "MATH/101" },\n'
+            '            { day = "Tue", start = 14, course = "../escaped" } ]\n'
+            "tolerance_minutes = 45\n")
+    loaded = config.parse_schedule(text)
+    assert set(loaded.by_slot) == {("Mon", 9), ("Tue", 14)}, loaded.by_slot
+    for course in loaded.by_slot.values():
+        assert "/" not in course and not course.startswith("."), course
+    # Nothing left to repair means UNKNOWN rather than a crash.
+    assert config.safe_course("..") == config.UNKNOWN_COURSE
+    assert config.safe_course("") == config.UNKNOWN_COURSE
+    assert config.safe_course(None) == config.UNKNOWN_COURSE
+    # But a row with no course at all is malformed, not repairable: inventing
+    # UNKNOWN would add a meeting that collects every recording at that hour.
+    try:
+        config.parse_schedule('classes = [ { day = "Mon", start = 9, course = "" } ]')
+    except config.ScheduleError as exc:
+        assert "empty" in str(exc), exc
+    else:
+        raise AssertionError("a row with no course should be refused")
+results.append(run("a schedule file with unsafe course text is repaired, not refused", t24))
+
+
+def t25():
+    # A Meeting used to skip normalization on the way out, so one built by
+    # hand could write text no typed course could ever reach.
+    sneaky = config.Meeting.__new__(config.Meeting)
+    object.__setattr__(sneaky, "day", "Mon")
+    object.__setattr__(sneaky, "hour", 9)
+    object.__setattr__(sneaky, "course", 'X" }, { day = "Tue", start = 14, course = "Y')
+    try:
+        config.render_schedule([sneaky])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a hand-built Meeting bypassed the course checks")
+results.append(run("a Meeting is normalized on the way out, not trusted", t25))
+
+
+def t26():
+    # A save that cannot be read back must not replace the one that could.
+    home = Path(tempfile.mkdtemp(prefix="intake-sched-"))
+    target = home / "schedule.toml"
+    config.write_schedule([("Mon", 9, "ENTR-4306")], 45, path=target)
+    before = target.read_text()
+    assert config.parse_schedule(before).by_slot == {("Mon", 9): "ENTR-4306"}
+    try:
+        config.write_schedule([("Mon", 9, 'HISTORY "A"')], 45, path=target)
+    except (ValueError, config.ScheduleError):
+        pass
+    else:
+        raise AssertionError("a corrupting schedule was written")
+    assert target.read_text() == before, "the good schedule was overwritten"
+    # No half-written leftovers from the rename either.
+    strays = [p.name for p in home.iterdir() if p.name != "schedule.toml"]
+    assert strays == [], strays
+results.append(run("a schedule that would not parse never replaces one that does", t26))
+
+
+def t27():
+    # Text that is legal but awkward has to survive the trip to disk and back,
+    # which is what the escaping is for.
+    for course in ("Biology (Lab)", "St. Thomas Seminar", "Intro to Econ II",
+                   "MATH 101", "A'B"):
+        text = config.render_schedule([("Mon", 9, course)], 45)
+        back = config.parse_schedule(text)
+        assert back.by_slot == {("Mon", 9): course}, (course, back.by_slot)
+results.append(run("legal course text round-trips through the schedule file", t27))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

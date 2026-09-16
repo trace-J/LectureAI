@@ -529,6 +529,50 @@ def t22c():
 results.append(run("the wizard skips key prompts on a signed-in Mac", t22c))
 
 
+def t22d():
+    # Saving a course that would break the schedule file used to return
+    # ok: true and leave a schedule.toml nothing could parse, with the working
+    # one already gone. The row is named so the page can point at it.
+    point_config_at(setup_home)
+    good = client.post("/api/setup", json={
+        "openai_key": "", "anthropic_key": "", "device": "",
+        "schedule": [{"day": "Mon", "start": 9, "course": "ENTR-4306"}],
+        "notion": {"enabled": False},
+    })
+    assert good.status_code == 200, good.get_json()
+    before = (setup_home / "schedule.toml").read_text()
+    for bad in ('HISTORY "A"', "A\\B", "../escaped", "MATH/101", "X\nY"):
+        res = client.post("/api/setup", json={
+            "openai_key": "", "anthropic_key": "", "device": "",
+            "schedule": [{"day": "Mon", "start": 9, "course": "ENTR-4306"},
+                         {"day": "Tue", "start": 14, "course": bad}],
+            "notion": {"enabled": False},
+        })
+        body = res.get_json()
+        assert res.status_code == 400, f"{bad!r} was saved: {body}"
+        assert body.get("row") == 2, f"{bad!r} should name row 2: {body}"
+        assert (setup_home / "schedule.toml").read_text() == before, \
+            f"{bad!r} replaced the working schedule"
+    assert config.parse_schedule(before).by_slot, "the kept schedule still parses"
+results.append(run("a course that would corrupt the schedule is refused by the route", t22d))
+
+
+def t22e():
+    # The course picker was the one place on the dashboard that built markup
+    # out of a course without escaping it, while the function right below it
+    # escaped everything. The schedule refuses markup now, so this is the
+    # second of the two layers rather than the only one.
+    #
+    # Asserted against the source text because this repo has no way to run its
+    # templates; a JS harness would check the rendered node instead.
+    html = client.get("/").get_data(as_text=True)
+    start = html.index("function renderCourses(")
+    body = html[start:html.index("\nfunction ", start + 1)]
+    assert "escapeHtml(" in body, "renderCourses does not escape the course"
+    assert "${c}" not in body, f"an unescaped course is still interpolated:\n{body}"
+results.append(run("the course picker escapes the course it renders", t22e))
+
+
 def t23():
     point_config_at(setup_home)
     body = client.get("/api/doctor").get_json()

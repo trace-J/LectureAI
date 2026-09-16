@@ -797,6 +797,27 @@ def t30():
 results.append(run("re-splitting on suspected truncation is per-provider", t30))
 
 
+def t31():
+    # output_name is where a course stops being text and becomes a path.
+    # `../escaped` used to file the recording in the profile directory above
+    # inbox/, and an absolute course threw the inbox away altogether.
+    when = datetime(2026, 9, 15, 14, 0)
+    for course in ("../escaped", "/tmp/absolute", "MATH/101", "..",
+                   "A\\B", "X\nY"):
+        name = record.output_name(when, course=course)
+        assert "/" not in name and "\\" not in name, (course, name)
+        assert "\n" not in name and not name.startswith("."), (course, name)
+        destination = config.INBOX_DIR / name
+        assert destination.resolve().parent == config.INBOX_DIR.resolve(), \
+            f"{course!r} escaped the inbox: {destination}"
+    # It repairs rather than raises on purpose: this runs after the recording
+    # is finalized and its state file cleared, so raising here would strand
+    # audio that nothing ever comes back for.
+    assert record.output_name(when, course="ACCT-4321") == \
+        "ACCT-4321_2026-09-15_1400.m4a"
+results.append(run("a course cannot move a finished recording out of the inbox", t31))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
