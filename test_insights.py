@@ -105,6 +105,22 @@ def t3():
 results.append(run("a seventh field that is not our measurements is ignored, not raised", t3))
 
 
+def t3b():
+    # JSON has no infinity, but json.loads reads 1e999 as one, and int(inf)
+    # raises. The raise came out of parse_log, which /api/status reaches
+    # before anything else it returns, so one bad number in one old line
+    # took down the recording state, the Record button, the watcher, the
+    # inbox and the account card along with the chart.
+    for bad in ('{"seconds":1e999}', '{"seconds":-1e999}',
+                '{"words":1e999}', '{"seconds":1e400,"terms":2e999}'):
+        assert insights.parse_measures(bad) == {}, bad
+    # A bad measurement is dropped; the good ones on the same line survive.
+    assert insights.parse_measures('{"seconds":1e999,"words":12}') == {"words": 12}
+    # And an honest-but-absurd number is out of range rather than crashing.
+    assert insights.parse_measures('{"seconds":1e308}') == {}
+results.append(run("a measurement that is not finite is dropped, not raised", t3b))
+
+
 def t4():
     codes = [c["code"] for c in OUT["courses"]]
     # Schedule order first (sorted), UNKNOWN last with no color slot.
@@ -234,6 +250,27 @@ def t11():
         assert piece in html, f"the page is missing {piece!r}"
     assert 'disabled aria-label="Ask the study assistant' in html, "the assistant box must be inert"
 results.append(run("the status payload carries insights and the page has a place for each", t11))
+
+
+def t12():
+    # The whole point of t3b, at the level the user actually feels it: one
+    # unusable number in the log must not be able to stop the panel.
+    from intake import gui
+    home = config.HOME_DIR
+    config.LOG_FILE = home / "pipeline.log"
+    config.LOG_FILE.write_text(
+        LOG + "2026-09-15T10:00:00\tACCT-4321\tlecture.m4a\tACCT-4321_2026-09-15_Topic"
+        '\thttps://drive.test/x\t\t{"seconds":1e999,"words":12}\n')
+    client = gui.app.test_client()
+    res = client.get("/api/status")
+    assert res.status_code == 200, f"one bad measurement returned {res.status_code}"
+    body = res.get_json()
+    for key in ("recording", "watcher", "inbox", "insights", "recent", "configured"):
+        assert key in body, f"/api/status lost {key}"
+    # The line is still listed, just without the measurement nobody can use.
+    row = next(r for r in body["recent"] if r["name"].endswith("Topic"))
+    assert row.get("seconds") in (None, 0), row
+results.append(run("one unusable measurement does not take the panel down", t12))
 
 print()
 print(f"{sum(results)}/{len(results)} passed")

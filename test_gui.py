@@ -573,6 +573,66 @@ def t22e():
 results.append(run("the course picker escapes the course it renders", t22e))
 
 
+def t22f():
+    # Every one of these used to be a 500 with an HTML body, which the page
+    # cannot show at all: it parses the answer as JSON and gets a parse error
+    # where the explanation should be.
+    point_config_at(setup_home)
+    cases = [
+        ("/api/setup", [1], "JSON object"),
+        ("/api/setup", "x", "JSON object"),
+        ("/api/setup", 42, "JSON object"),
+        ("/api/setup", {"schedule": 42}, "schedule must be a list"),
+        ("/api/setup", {"schedule": [], "notion": [1]}, "notion must be an object"),
+        ("/api/setup", {"schedule": ["Mon 9 X"]}, "class row 1"),
+        ("/api/setup", {"device": 5}, "device must be text"),
+        ("/api/record/start", {"course": 123}, "course must be text"),
+    ]
+    for url, body, expect in cases:
+        res = client.post(url, json=body)
+        assert res.status_code == 400, f"{body!r} -> {res.status_code}"
+        assert res.headers["Content-Type"].startswith("application/json"), \
+            f"{body!r} answered {res.headers['Content-Type']}"
+        got = res.get_json()
+        assert expect in got["error"], f"{body!r}: {got}"
+        assert got["ok"] is False, got
+results.append(run("a malformed request body is a JSON 400, not an HTML 500", t22f))
+
+
+def t22g():
+    # A shape problem must name itself. Reporting a missing API key for a
+    # request whose schedule is the number 42 is true of the body and useless
+    # to whoever sent it.
+    point_config_at(setup_home)
+    res = client.post("/api/setup", json={"schedule": 42})
+    assert "schedule" in res.get_json()["error"], res.get_json()
+results.append(run("a shape error names the field, not the next rule down", t22g))
+
+
+def t22h():
+    # int() accepted 1.8 and True and stored 1, which disagreed with both the
+    # message it would otherwise show and the parser that reads the value back
+    # off disk. The schedule file's rule is the rule.
+    point_config_at(setup_home)
+
+    def save(tolerance):
+        return client.post("/api/setup", json={
+            "openai_key": "", "anthropic_key": "", "device": "",
+            "schedule": [{"day": "Mon", "start": 9, "course": "ENTR-4306"}],
+            "tolerance": tolerance, "notion": {"enabled": False},
+        })
+
+    for bad in (1.8, True, False, "45", -1, None, [45]):
+        res = save(bad)
+        assert res.status_code == 400, f"tolerance {bad!r} was accepted"
+        assert "whole number" in res.get_json()["error"], res.get_json()
+    # Zero is a real setting: only a recording starting on the hour matches.
+    for good in (0, 45, 120):
+        assert save(good).status_code == 200, good
+        assert config.load_schedule().tolerance_minutes == good, good
+results.append(run("tolerance is refused rather than truncated", t22h))
+
+
 def t23():
     point_config_at(setup_home)
     body = client.get("/api/doctor").get_json()

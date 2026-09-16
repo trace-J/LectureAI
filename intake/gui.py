@@ -126,6 +126,85 @@ def _courses() -> list[str]:
         return []
 
 
+class _BadRequest(ValueError):
+    """A request whose shape is wrong, carrying what the page should say.
+
+    Raised by the readers below and turned into a JSON 400 by one error
+    handler, so a route reads the fields it wants and never has to check the
+    body it was handed.
+    """
+
+    def __init__(self, message: str, **extra):
+        super().__init__(message)
+        self.extra = extra
+
+
+@app.errorhandler(_BadRequest)
+def _bad_request(exc: _BadRequest):
+    return jsonify({"ok": False, "error": str(exc), **exc.extra}), 400
+
+
+def _body() -> dict:
+    """The request's JSON object, or a 400 rather than a 500.
+
+    get_json returns whatever the body parsed to, and for `[1]`, `"x"` or
+    `42` that is not a dict. Every route then called .get() on it, Flask
+    turned the AttributeError into a 500 page of HTML, and the panel could
+    not show any of it because it is waiting for JSON.
+    """
+    payload = request.get_json(silent=True)
+    if payload is None:
+        return {}
+    if not isinstance(payload, dict):
+        raise _BadRequest("the request body must be a JSON object")
+    return payload
+
+
+def _text(payload: dict, field: str) -> str:
+    """One text field, stripped. Absent and null both read as empty."""
+    value = payload.get(field)
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise _BadRequest(f"{field} must be text, not {type(value).__name__}")
+    return value.strip()
+
+
+def _mapping(payload: dict, field: str) -> dict:
+    value = payload.get(field)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise _BadRequest(f"{field} must be an object, not {type(value).__name__}")
+    return value
+
+
+def _rows(payload: dict, field: str) -> list[dict]:
+    value = payload.get(field)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise _BadRequest(f"{field} must be a list of class meetings")
+    for n, row in enumerate(value, start=1):
+        if not isinstance(row, dict):
+            raise _BadRequest(
+                f"class row {n} should have a day, a start and a course", row=n)
+    return value
+
+
+def _minutes(payload: dict, field: str, default: int) -> int:
+    """A whole number of minutes, checked the way the schedule file checks it.
+
+    int() took 1.8 and True and stored 1, which contradicted both the message
+    it would have shown on a refusal and the stricter parser that reads the
+    value back off disk. Same rule in both places now.
+    """
+    value = payload.get(field, default)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise _BadRequest(f"{field} must be a whole number of minutes")
+    return value
+
+
 def _current_class() -> str | None:
     """The course scheduled right now, so the button can name it."""
     try:
@@ -200,7 +279,10 @@ def _processing(watcher_pid: int | None) -> dict | None:
     started = data.get("started", "")
     try:
         elapsed = (datetime.now() - datetime.fromisoformat(started)).total_seconds()
-    except ValueError:
+    except (TypeError, ValueError):
+        # TypeError too: the status file is JSON on disk, so `started` can be
+        # a number or null as easily as a bad string, and this runs on every
+        # poll of /api/status.
         elapsed = 0
     return {
         "stage": data.get("stage", ""),
@@ -341,7 +423,7 @@ def _login_item() -> dict:
 
 @app.post("/api/login-item")
 def login_item_set():
-    payload = request.get_json(silent=True) or {}
+    payload = _body()
     said: list[str] = []
     if payload.get("enabled"):
         rc = service.install(say=said.append, wait=0)
@@ -359,8 +441,8 @@ def record_start():
     if _current_recorder() is not None:
         return jsonify({"ok": False, "error": "already recording"}), 409
 
-    payload = request.get_json(silent=True) or {}
-    course = (payload.get("course") or "").strip() or None
+    payload = _body()
+    course = _text(payload, "course") or None
     if course and course not in set(_courses()):
         return jsonify({"ok": False, "error": f"unknown course {course}"}), 400
 
@@ -556,12 +638,20 @@ def setup_save():
     A blank key means "keep the one already on file", so the page never has
     to show a real key to let the user leave it alone.
     """
-    payload = request.get_json(silent=True) or {}
-    values = setup_wizard.read_env(config.ENV_FILE)
+    payload = _body()
+    # Every field is read and shape-checked before any rule is applied to it.
+    # The other way round, a request with `schedule: 42` in it was told it was
+    # missing API keys, which is true of the body but not what is wrong with
+    # it, and the page showed that to the user.
+    rows = _rows(payload, "schedule")
+    tolerance = _minutes(payload, "tolerance", config.DEFAULT_TOLERANCE_MINUTES)
+    notion = _mapping(payload, "notion")
+    device = _text(payload, "device")
 
+    values = setup_wizard.read_env(config.ENV_FILE)
     for field, key in (("openai_key", "OPENAI_API_KEY"),
                        ("anthropic_key", "ANTHROPIC_API_KEY")):
-        given = str(payload.get(field) or "").strip()
+        given = _text(payload, field)
         if given:
             values[key] = given
     # A signed-in Mac spends the service's keys, so it has none of its own to
@@ -574,11 +664,10 @@ def setup_save():
                                   or not values.get("ANTHROPIC_API_KEY")):
         return jsonify({"ok": False, "error": "both API keys are needed"}), 400
 
-    device = str(payload.get("device") or "").strip()
     values["RECORD_DEVICE"] = device or values.get("RECORD_DEVICE") or config.RECORD_DEVICE
 
     meetings = []
-    for n, row in enumerate(payload.get("schedule") or [], start=1):
+    for n, row in enumerate(rows, start=1):
         try:
             meetings.append(config.Meeting(
                 config.normalize_day(row.get("day", "")),
@@ -589,21 +678,14 @@ def setup_save():
             return jsonify({"ok": False, "error": f"class row {n}: {exc}", "row": n}), 400
     if not meetings:
         return jsonify({"ok": False, "error": "add at least one class meeting"}), 400
-    try:
-        tolerance = int(payload.get("tolerance", config.DEFAULT_TOLERANCE_MINUTES))
-        if tolerance < 0:
-            raise ValueError
-    except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "tolerance must be a whole number of minutes"}), 400
 
-    notion = payload.get("notion") or {}
     skipped = not notion.get("enabled")
     if skipped:
         values["NOTION_TOKEN"] = ""
         values["NOTION_DATABASE"] = ""
     else:
-        token = str(notion.get("token") or "").strip()
-        database = str(notion.get("database") or "").strip()
+        token = _text(notion, "token")
+        database = _text(notion, "database")
         if token:
             values["NOTION_TOKEN"] = token
         if database:
@@ -651,7 +733,7 @@ def drive_login():
     (the page opens the account's connect page), else the Desktop OAuth flow
     on this Mac, which opens the user's browser on its own. {"local": true}
     asks for the latter regardless."""
-    payload = request.get_json(silent=True) or {}
+    payload = _body()
     if account.enabled() and account.load() is not None and not payload.get("local"):
         account.forget_drive_token()
         return jsonify({"ok": True, "open": account.url() + "/drive/connect"})
@@ -705,9 +787,9 @@ def account_state():
 
 @app.post("/api/account/claim")
 def account_claim():
-    payload = request.get_json(silent=True) or {}
+    payload = _body()
     try:
-        started = account.start_claim(str(payload.get("name") or ""))
+        started = account.start_claim(_text(payload, "name"))
     except RuntimeError as exc:
         code = 503 if "turned off" in str(exc) else 409
         return jsonify({"ok": False, "error": str(exc)}), code
