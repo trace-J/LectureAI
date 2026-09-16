@@ -404,7 +404,9 @@ the Mac is asleep or offline, or the panel is not running. "The account
 service refused this Mac's token" means the Mac was removed from the account
 page; sign in again from the Setup page.
 
-`maincoursemedia.com/syllabus` is a short way to this author's address.
+`maincoursemedia.com/syllabus` now sends anyone to the newest release, and
+`maincoursemedia.com/syllabus/panel` is the short way to this author's
+address.
 
 ### The older road: a Cloudflare Tunnel, retired 2026-09-15
 
@@ -970,7 +972,7 @@ complexity.
 ### The desktop app, and sign-ins
 
 Syllabus is meant to become a real Mac app that other people can use, with an
-account behind it. The web page at maincoursemedia.com/syllabus is the first
+account behind it. The download at maincoursemedia.com/syllabus is the first
 piece of that, and the rest is planned in this order:
 
 - **Publish the Google Cloud project** (below). Done, 2026-09-14.
