@@ -269,7 +269,10 @@ def _summarize_via_proxy(transcript: str, course: str, date: str) -> dict:
     )
     if status != 200:
         raise providers.ProxyRefused(
-            providers.PROXY_REASONS.get(str(data.get("error", "")), "")
+            # Written from the whole body, not the error code: this path is
+            # where a refusal about tokens used to describe itself as a
+            # transcription allowance.
+            providers.refusal_reason(data)
             or f"the account service refused to summarize: {data.get('error', status)}",
             error=str(data.get("error", "")), status=status, detail=data,
         )

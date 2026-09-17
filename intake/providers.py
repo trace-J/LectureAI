@@ -313,15 +313,45 @@ class ProxyProvider:
 
 
 #: What each proxy refusal means to somebody reading a log or a panel.
+#: `allowance_exhausted` is deliberately absent: it needs the refusal body to
+#: say anything true, and refusal_reason below is what writes it.
 PROXY_REASONS = {
     "not_a_device": "this Mac's sign-in was not accepted; sign in again",
-    "allowance_exhausted": "this account has used its transcription allowance for the month",
     "rate_limited": "too many requests at once; this will retry",
     "provider_busy": "the transcription provider is busy; this will retry",
     "provider_unavailable": "the transcription provider could not be reached",
     "too_large": "the chunk is bigger than the service accepts",
     "too_long": "the chunk is longer than the service accepts",
 }
+
+
+def refusal_reason(payload: dict) -> str:
+    """What a refusal means, said in the units it is actually about.
+
+    The service meters two things and refuses them with one error code:
+    transcription in audio seconds, summaries in tokens. The message used to
+    be looked up from that code alone, so a summary that ran out of tokens
+    told its owner the transcription allowance was gone, and sent them
+    looking at the wrong meter. The numbers in the body were read on the
+    transcribe path only, where dividing by 3600 is right; the same arithmetic
+    on a token count would have reported 123,427 tokens as 34.3 hours.
+
+    The body carries `kind`, so read it and say which allowance ran out.
+    """
+    error = str(payload.get("error", ""))
+    if error != "allowance_exhausted":
+        return PROXY_REASONS.get(error, "")
+    used, allowed = payload.get("used"), payload.get("allowance")
+    known = isinstance(used, (int, float)) and isinstance(allowed, (int, float))
+    if str(payload.get("kind", "")) == "summarize":
+        if known:
+            return (f"this account has used {used:,.0f} of its {allowed:,.0f} "
+                    f"summary tokens for the month")
+        return "this account has used its summary allowance for the month"
+    if known:
+        return (f"this account has used {used / 3600:.1f} of its "
+                f"{allowed / 3600:.1f} transcription hours for the month")
+    return "this account has used its transcription allowance for the month"
 
 
 def _proxy_refusal(response) -> ProxyRefused:
@@ -333,13 +363,7 @@ def _proxy_refusal(response) -> ProxyRefused:
     if not isinstance(payload, dict):
         payload = {}
     error = str(payload.get("error", "")) or f"http_{response.status_code}"
-    reason = PROXY_REASONS.get(error, "")
-    if error == "allowance_exhausted":
-        used, allowed = payload.get("used"), payload.get("allowance")
-        if isinstance(used, (int, float)) and isinstance(allowed, (int, float)):
-            reason = (f"this account has used {used / 3600:.1f} of its "
-                      f"{allowed / 3600:.1f} hours for the month")
-    return ProxyRefused(reason or f"the account service refused: {error}",
+    return ProxyRefused(refusal_reason(payload) or f"the account service refused: {error}",
                         error=error, status=response.status_code, detail=payload)
 
 
