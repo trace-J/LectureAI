@@ -446,6 +446,22 @@ def status():
     })
 
 
+@app.get("/api/allowance")
+def allowance():
+    """What is left on this account this month, for the page to say so.
+
+    Its own route rather than a field on /api/status. The status poll runs
+    every couple of seconds and never talks to the account service; this is
+    asked once when the page loads and again when a recording ends, which is
+    the only moment the numbers can have moved because of this Mac.
+
+    A Mac with no account has no meters, and says so rather than failing.
+    """
+    if not account.managed():
+        return jsonify({"ok": False, "error": "this Mac uses its own keys"})
+    return jsonify(account.allowance())
+
+
 @app.post("/api/window/show")
 def window_show():
     """Bring the desktop app's window forward. A second copy of the app asks

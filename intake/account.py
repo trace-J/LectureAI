@@ -172,6 +172,29 @@ def summary() -> dict:
     return out
 
 
+def allowance() -> dict:
+    """What is left on this account's meters this month, asked of the service.
+
+    This is a network call, so nothing on the status poll's path may reach
+    it: that poll runs every couple of seconds and is deliberately file-only.
+    The panel asks for this on its own, when there is a reason to.
+
+    Returns the service's own answer with `ok` on the front, or `ok` false
+    and a reason. A panel that cannot find out what is left says nothing
+    rather than guessing, so every failure here is one shape.
+    """
+    acct = load()
+    if acct is None:
+        return {"ok": False, "error": "this Mac is not signed in"}
+    try:
+        status, data = call("GET", "/proxy/usage", token=acct.token)
+    except Exception as exc:  # network down, DNS, a 5xx that was not JSON
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    if status != 200:
+        return {"ok": False, "error": f"the account service answered {status}"}
+    return {"ok": True, **data}
+
+
 def whoami() -> tuple[str, str]:
     """Ask the service about this panel's token.
 

@@ -1475,6 +1475,56 @@ def t44():
         point_config_at(setup_home)
 results.append(run("the dashboard names what is missing, not everything", t44))
 
+
+def t45():
+    """The page can find out what is left without the status poll going out.
+
+    The poll runs every couple of seconds and is file-only on purpose, so
+    this is its own route. What it must never do is make a Mac that keeps
+    its own keys wait on a network call it has no account for.
+    """
+    from intake import account
+    home = tmp / "allowance-home"
+    home.mkdir()
+    point_config_at(home)
+    asked = []
+    real = account.transport
+    try:
+        # No account: answered from here, and nothing leaves the Mac.
+        account.transport = lambda *a, **k: asked.append(a) or (200, {})
+        body = client.get("/api/allowance").get_json()
+        assert body["ok"] is False, body
+        assert not asked, "a Mac with no account still called the service"
+
+        account.save(account.Account(
+            token="syd_n", account_id="a1", email="me@example.com", name="Me",
+            device_id="d1", device_name="This Mac", profile="syllabus",
+            url=config.ACCOUNTS_URL, claimed_at="2026-09-15T00:00:00Z"))
+        left = {"period": "2026-09", "source": "trial",
+                "audio_seconds": {"used": 11915, "allowance": 18000, "left": 6085},
+                "summary_tokens": {"used": 123427, "allowance": 150000, "left": 26573},
+                "recordable_seconds": 3524}
+        account.transport = lambda method, url, headers, body, timeout: (
+            asked.append((method, url, headers.get("Authorization"))) or (200, left))
+        body = client.get("/api/allowance").get_json()
+        assert body["ok"] is True, body
+        assert body["recordable_seconds"] == 3524, body
+        assert asked[-1][:2] == ("GET", config.ACCOUNTS_URL + "/proxy/usage"), asked[-1]
+        assert asked[-1][2] == "Bearer syd_n", "the device token is what identifies the Mac"
+
+        # A service that cannot be reached is not an allowance of zero, and
+        # the page is told the difference so it can stay quiet.
+        def boom(*a, **k):
+            raise OSError("connection refused")
+        account.transport = boom
+        body = client.get("/api/allowance").get_json()
+        assert body["ok"] is False and "OSError" in body["error"], body
+    finally:
+        account.transport = real
+        account.forget()
+        point_config_at(setup_home)
+results.append(run("the page can ask what is left, and a failure is not a zero", t45))
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

@@ -94,7 +94,7 @@ def capture(directory: Path) -> None:
 
     routes = {}
     for path in ("/api/status", "/api/setup", "/api/doctor", "/api/account",
-                 "/api/login-item"):
+                 "/api/login-item", "/api/allowance"):
         res = client.get(path)
         if res.status_code == 200 and res.is_json:
             routes[path] = res.get_json()

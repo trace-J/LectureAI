@@ -463,7 +463,10 @@
     background: var(--brand-soft); color: var(--brand-deep); display: none;
   }
   .flash.err { background: rgba(194,47,61,.1); color: var(--err); }
+  .flash.warn { background: rgba(178,92,0,.1); color: var(--warn); }
   .flash a { color: inherit; font-weight: 500; }
+  /* The same banner, sat above the record button instead of the page. */
+  .flash.rec-flash { margin: 0 0 14px; }
 
   /* Phones. Last on purpose: these override the rules above. ------------- */
   @media (max-width: 560px) {
@@ -540,6 +543,7 @@
   <!-- Record + this week -->
   <section class="grid top">
     <div class="card record-card">
+      <div class="flash rec-flash" id="allowanceFlash" style="display:none"></div>
       <div class="record">
         <div class="rec-btn-wrap">
           <button class="rec-btn" id="recBtn" aria-label="Start recording">
@@ -833,6 +837,59 @@ function renderSetupNeeded(s) {
     `Almost there: this Mac still needs ${escapeHtml(list)}. ` +
     `<a href="${escapeHtml(BASE)}/setup">Finish setup</a>.`;
   flash.style.display = "block";
+}
+
+// Allowance ---------------------------------------------------------------
+// The account service meters both paid stages, and a month's worth can run
+// out mid-semester. This is the warning before the button, not after the
+// lecture: a recording made past the line is still kept, it just waits.
+
+//: Below this much lecture left, the page says so. Roughly a long class, so
+//: the warning appears while there is still time to do something about it
+//: and stays quiet for the rest of the month.
+const LOW_ALLOWANCE_SECONDS = 90 * 60;
+
+async function refreshAllowance() {
+  try {
+    renderAllowance(await api("/api/allowance"));
+  } catch (e) {
+    // Not knowing is not the same as being out. Say nothing.
+    renderAllowance(null);
+  }
+}
+
+function renderAllowance(a) {
+  const el = $("allowanceFlash");
+  const hide = () => { el.style.display = "none"; };
+  if (!a || !a.ok) return hide();
+
+  // `recordable_seconds` is the service's own answer to "how much more
+  // lecture can this account take all the way through", which is not the
+  // audio balance: the summary of that audio is metered separately and can
+  // be the one that runs out first.
+  const left = a.recordable_seconds;
+  const audio = a.audio_seconds || {};
+  let tone = "warn", text = "";
+  if (audio.left <= 0) {
+    tone = "err";
+    text = "This month's transcription allowance is used up. Recording still works and "
+      + "the file is kept in the inbox, but nothing is transcribed until the allowance "
+      + "resets next month or you upgrade.";
+  } else if (left <= 0) {
+    tone = "err";
+    text = "This month's summary allowance is used up. Recording and transcription still "
+      + "work, but a lecture will not be written up until the allowance resets next month "
+      + "or you upgrade.";
+  } else if (left < LOW_ALLOWANCE_SECONDS) {
+    text = `About ${Math.round(left / 60)} minutes of lecture left this month. You can `
+      + "still record past that; whatever does not fit waits for next month's allowance "
+      + "or an upgrade.";
+  } else {
+    return hide();
+  }
+  el.textContent = text;
+  el.className = "flash rec-flash " + tone;
+  el.style.display = "block";
 }
 
 function renderRecord(s) {
@@ -1300,6 +1357,9 @@ $("recBtn").onclick = async () => {
   try {
     if (state && state.recording.active) {
       const out = await api("/api/record/stop", {});
+      // The lecture just recorded is about to be charged to the account, so
+      // ask again rather than leave a stale figure above the button.
+      refreshAllowance();
       const next = out.watching
         ? "The watcher will pick it up."
         : "Start the watcher to process it.";
@@ -1369,6 +1429,7 @@ for (const b of document.querySelectorAll("[data-theme-choice]")) {
 markTheme();
 
 poll();
+refreshAllowance();
 </script>
 </body>
 </html>
