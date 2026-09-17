@@ -39,6 +39,21 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
+      # test_panel.py renders the two pages and hands them to node, which runs
+      # their own scripts against a real DOM. Measured: without this step it
+      # skips itself and takes five findings' worth of coverage with it, which
+      # is why SYLLABUS_REQUIRE_JS_TESTS below turns that skip into a failure.
+      # `npm ci` installs the exact lockfile, jsdom and nothing else, into
+      # tests/panel/ only. Nothing here reaches the wheel or the .app.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tests/panel/package-lock.json
+
+      - name: The DOM the page tests run against
+        run: npm ci --prefix tests/panel
+
       # Both are shelled out to by code under test and neither is guaranteed on
       # the runner image. Measured: without ffmpeg, test_gui and test_record
       # each fail one assertion; without lsof, test_gui fails the watcher-lock
@@ -69,6 +84,9 @@ jobs:
       # collects them rather than stopping at the first one: one red suite
       # should not hide three others.
       - name: Tests
+        env:
+          # A harness that quietly skips itself is the thing this one replaces.
+          SYLLABUS_REQUIRE_JS_TESTS: "1"
         run: |
           set -uo pipefail
           failed=()

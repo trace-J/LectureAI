@@ -373,8 +373,12 @@ function hourLabel(h) {
 }
 
 function hourOptions(selected) {
+  // The whole day, because normalize_hour accepts the whole day. When these
+  // two disagreed the select had no option carrying the saved hour, so the
+  // browser fell back to its first one and opening Setup quietly moved a 5am
+  // class to 6am, and saving then wrote that back.
   let out = "";
-  for (let h = 6; h <= 22; h++) {
+  for (let h = 0; h <= 23; h++) {
     out += `<option value="${h}" ${h === selected ? "selected" : ""}>${hourLabel(h)}</option>`;
   }
   return out;
@@ -515,7 +519,14 @@ function renderFix(fix) {
 }
 
 $("addRow").onclick = () => { addRow().querySelector(".course").focus(); };
-$("refreshDevices").onclick = load;
+// Only the device list. This was wired straight to load(), which re-runs the
+// whole render: it emptied the schedule table and rebuilt it from the saved
+// settings, so a button labeled Refresh silently threw away every unsaved
+// edit on the page.
+$("refreshDevices").onclick = async () => {
+  try { renderDevices(await api("/api/setup")); }
+  catch (e) { flash(`Could not list microphones: ${e.message}`, true); }
+};
 $("notionOn").onchange = () => { $("notionFields").hidden = !$("notionOn").checked; };
 
 $("form").onsubmit = async (ev) => {
@@ -646,7 +657,11 @@ function renderAccount(a) {
     accountPoll = setInterval(loadAccount, 3000);
   } else if (!waiting && accountPoll) {
     clearInterval(accountPoll); accountPoll = null;
-    if (a.signed_in) { flash(`Signed in as ${a.email}.`); checkup(); }
+    // Claiming finished. Same reason as signing out: the account now
+    // provides the keys, so the fields asking for this Mac's own must go,
+    // and only render() knows that. Without load() they stayed on screen
+    // until somebody reloaded the page.
+    if (a.signed_in) { flash(`Signed in as ${a.email}.`); load(); checkup(); }
   }
 }
 
@@ -703,7 +718,12 @@ $("accountCancel").onclick = async () => {
 };
 $("accountOff").onclick = async () => {
   if (!confirm("Sign this Mac out of the Syllabus account?")) return;
-  try { await api("/api/account/signout", {}); await loadAccount(); await checkup(); }
+  // load() as well, not just loadAccount(): signing out decides whether this
+  // Mac spends its own keys, and the key fields and the Drive card are drawn
+  // by render() from /api/setup. Refreshing only the account card left the
+  // key inputs hidden and the billing note showing for an account that was
+  // no longer there.
+  try { await api("/api/account/signout", {}); await loadAccount(); await load(); await checkup(); }
   catch (e) { flash(e.message, true); }
 };
 

@@ -34,3 +34,6 @@ pipeline.log
 
 # git worktrees for parallel Claude Code sessions (EnterWorktree puts them here)
 .claude/worktrees/
+
+# The panel page tests install jsdom here; the lockfile is committed.
+tests/panel/node_modules/

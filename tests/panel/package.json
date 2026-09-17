@@ -1,0 +1,9 @@
+{
+  "name": "syllabus-panel-tests",
+  "private": true,
+  "description": "Runs the panel's own page scripts against a real DOM. Nothing here ships.",
+  "type": "module",
+  "dependencies": {
+    "jsdom": "26.1.0"
+  }
+}
