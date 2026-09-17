@@ -345,19 +345,42 @@ def legacy_root(path: Path) -> Path:
     raise ValueError(f"{path} is not inside an older install")
 
 
-def legacy_files() -> list[Path]:
-    """Data files an older install left behind: old home, flat root, checkout.
-
-    Only meaningful when the home directory has no .env yet: once it does, the
-    move has happened (or was declined) and anything left elsewhere is the
-    owner's business.
-    """
-    if ENV_FILE.exists():
-        return []
+def _legacy_found() -> list[Path]:
+    """Every data file an older install left where this one does not look."""
     found: list[Path] = []
     for root, names in legacy_roots():
         found += data_files_in(root, names)
     return found
+
+
+def legacy_files() -> list[Path]:
+    """Leftovers worth *offering* to move.
+
+    Only while the home directory has no .env: once it does, the wizard and
+    the CLI stop interrupting, because a prompt on every run is how a prompt
+    gets ignored.
+    """
+    if ENV_FILE.exists():
+        return []
+    return _legacy_found()
+
+
+def legacy_leftovers() -> list[Path]:
+    """Older data this install does not already have its own copy of.
+
+    Reporting and offering are different questions, and conflating them is how
+    the migration became unreachable: saving Setup writes .env, which silenced
+    the offer, and saving Setup is also the one action that moves nothing.
+    Somebody who set up before migrating kept their recordings in a directory
+    nothing reads, with nothing telling them so.
+
+    A file the home already holds is excluded, because that one was superseded
+    rather than stranded: the migration keeps the newer copy on purpose and
+    leaves the old one be, and repeating that forever is nagging about a
+    decision already taken.
+    """
+    return [path for path in _legacy_found()
+            if not (HOME_DIR / path.relative_to(legacy_root(path))).exists()]
 
 
 # --- Google Drive ---------------------------------------------------------

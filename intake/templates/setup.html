@@ -501,7 +501,7 @@ async function checkup() {
         <div>
           <span class="check-name">${escapeHtml(c.name)}</span>
           <span class="check-detail">${escapeHtml(c.detail)}</span>
-          ${c.ok || !c.fix ? "" : `<div class="check-fix">Fix: ${renderFix(c.fix)}</div>`}
+          ${c.ok || !c.fix ? "" : `<div class="check-fix">Fix: ${renderFix(c.fix, c.fix_is_web)}</div>`}
         </div>
       </div>`).join("");
   } catch (e) {
@@ -509,10 +509,15 @@ async function checkup() {
   }
 }
 
-function renderFix(fix) {
+function renderFix(fix, alreadyForTheWeb) {
   // Anything the page itself can do is phrased for the page; the rest is a
   // command, shown as one.
   const text = escapeHtml(fix);
+  // A check that wrote its own wording for the panel has already answered
+  // this question. Guessing from the command was how "move your old
+  // recordings" became "fill in the section above and save", which does not
+  // move anything and is the only instruction the user was given.
+  if (alreadyForTheWeb) return text.replace(/`([^`]+)`/g, "<code>$1</code>");
   if (/intake setup/.test(fix)) return "fill in the section above and save";
   if (/intake login/.test(fix)) return "click Connect Google Drive above";
   return text.replace(/(brew install \S+)/, "<code>$1</code>");

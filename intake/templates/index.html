@@ -535,9 +535,7 @@
     Your Mac is not connected right now. Wake it, or check that its panel is running; this page picks up on its own.
   </div>
   <div class="flash" id="updateBanner" style="display:none"></div>
-  <div class="flash" id="setupFlash" style="display:none">
-    Nothing is set up yet. <a href="{{ base }}/setup">Finish setup</a> to add your keys and class schedule.
-  </div>
+  <div class="flash" id="setupFlash" style="display:none"></div>
 
   <!-- Record + this week -->
   <section class="grid top">
@@ -816,6 +814,25 @@ function renderCourses(s) {
   // Assigning one that is gone leaves the select empty, which is the honest
   // answer: it is no longer on the schedule.
   sel.value = chosen;
+}
+
+function renderSetupNeeded(s) {
+  // Names what is missing rather than declaring nothing is set up. A Mac
+  // signed in to an account with Drive connected and no schedule was told
+  // "Nothing is set up yet ... to add your keys and class schedule", then
+  // sent to a page that says it needs no keys of its own and hides the
+  // fields. Both halves of that sentence were wrong and the instruction led
+  // nowhere.
+  const flash = $("setupFlash");
+  const needs = s.setup_needs || [];
+  if (!needs.length) { flash.style.display = "none"; return; }
+  const list = needs.length < 3
+    ? needs.join(" and ")
+    : needs.slice(0, -1).join(", ") + " and " + needs[needs.length - 1];
+  flash.innerHTML =
+    `Almost there: this Mac still needs ${escapeHtml(list)}. ` +
+    `<a href="${escapeHtml(BASE)}/setup">Finish setup</a>.`;
+  flash.style.display = "block";
 }
 
 function renderRecord(s) {
@@ -1234,7 +1251,7 @@ function render(s) {
   }
 
   // Setup
-  $("setupFlash").style.display = s.configured ? "none" : "block";
+  renderSetupNeeded(s);
   const labels = { openai: "Transcription", anthropic: "Summaries", drive: "Google Drive", notion: "Notion" };
   $("checks").innerHTML = Object.entries(labels).map(([k, label]) => {
     const on = s.integrations[k];

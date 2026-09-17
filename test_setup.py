@@ -647,6 +647,55 @@ def t27():
 results.append(run("legal course text round-trips through the schedule file", t27))
 
 
+def t28():
+    # Saving Setup writes .env, which used to silence the migration offer in
+    # the doctor, the CLI and the wizard at once. Saving Setup is also the one
+    # action that moves nothing, so a user who set up before migrating kept
+    # their recordings in a directory nothing reads, with nothing saying so.
+    root = Path(tempfile.mkdtemp(prefix="intake-legacy-"))
+    old = root / ".lectureai"
+    (old / "inbox").mkdir(parents=True)
+    (old / "inbox" / "old-lecture.m4a").write_bytes(b"x")
+    (old / "pipeline.log").write_text("a lecture\n")
+    home = root / "syllabus"
+    home.mkdir()
+    saved = (config.HOME_DIR, config.ENV_FILE, config.SCHEDULE_FILE,
+             config.INBOX_DIR, config.PROCESSED_DIR, config.WORK_DIR)
+    real_roots = config.legacy_roots
+    config.HOME_DIR = home
+    config.ENV_FILE = home / ".env"
+    config.legacy_roots = lambda: [(old, config.LEGACY_HOME_FILES)]
+    try:
+        before = doctor.check_legacy()
+        assert before is not None and not before.ok, before
+        assert "intake setup" in before.fix, before.fix
+        assert before.fix_web and "does not" in before.fix_web, before.fix_web
+
+        # What saving the Setup page does, and nothing else.
+        config.ENV_FILE.write_text("OPENAI_API_KEY=x\n")
+        after = doctor.check_legacy()
+        assert after is not None, "the migration went silent after a save"
+        assert "old-lecture.m4a" in after.detail or "pipeline.log" in after.detail, after.detail
+        # It no longer promises an offer that will never come.
+        assert "intake setup" not in after.fix, after.fix
+        assert "yourself" in after.fix, after.fix
+        assert after.fix_web and "Saving this page does not" in after.fix_web, after.fix_web
+
+        # A file the home already holds was superseded, not stranded: the
+        # migration keeps the newer copy on purpose, and saying so forever
+        # would be nagging about a decision already taken.
+        (home / "pipeline.log").write_text("the current one\n")
+        (home / "inbox").mkdir()
+        (home / "inbox" / "old-lecture.m4a").write_bytes(b"x")
+        assert doctor.check_legacy() is None, doctor.check_legacy()
+    finally:
+        config.legacy_roots = real_roots
+        (config.HOME_DIR, config.ENV_FILE, config.SCHEDULE_FILE,
+         config.INBOX_DIR, config.PROCESSED_DIR, config.WORK_DIR) = saved
+        config.reload()
+results.append(run("older data is still reported after setup is saved", t28))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
