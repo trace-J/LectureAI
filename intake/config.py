@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 from dataclasses import dataclass
@@ -193,7 +194,55 @@ def ensure_home() -> Path:
     """Create the home directory and its subfolders. Safe to call repeatedly."""
     for directory in (HOME_DIR, INBOX_DIR, PROCESSED_DIR, WORK_DIR):
         directory.mkdir(parents=True, exist_ok=True)
+    # This tree holds .env, account.json and token.json. 0700 is what the
+    # files inside it already claim to be; a 0755 directory around a 0600 file
+    # is not a hole by itself, but it is the difference between "nobody else
+    # can read this" and "nobody else can read this yet".
+    for directory in (HOME_DIR, WORK_DIR):
+        try:
+            directory.chmod(0o700)
+        except OSError:
+            pass
     return HOME_DIR
+
+
+def write_private(path: Path, text: str) -> None:
+    """Write `text` to `path` as a file only this user can read.
+
+    Private from the first byte, not from a moment later. The ordinary
+    write_text() creates the file with whatever the umask allows, which is
+    0644 for the usual 022, and a chmod on the next line closes it again; a
+    reader in between gets the whole secret, and a write that fails before the
+    chmod leaves it open indefinitely. This was also why refreshing a Drive
+    token left an existing 0644 file at 0644: the chmod was on the
+    authorization path, not the refresh path.
+
+    The write is atomic as well. A crash partway through used to leave a
+    truncated credential where a working one had been, which reads as "signed
+    out" rather than as an error. The temporary file is created 0600 by
+    mkstemp and os.replace carries that mode onto the destination, which also
+    repairs a file that an older version left too open.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.chmod(0o700)
+    except OSError:
+        pass
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as handle:
+            handle.write(text)
+        # Replaces a symlink rather than following one, which is the behavior
+        # wanted here: a link left in place of a credential file is not a
+        # reason to write the credential wherever it points.
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 ensure_home()

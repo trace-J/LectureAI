@@ -152,7 +152,10 @@ def get_credentials(interactive: bool = True):
     if creds and creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
-            config.TOKEN_FILE.write_text(creds.to_json())
+            # Written the same way as the first time it was saved. It used to
+            # be a plain write here, so a token file an older version had left
+            # at 0644 stayed 0644 for as long as it kept refreshing.
+            config.write_private(config.TOKEN_FILE, creds.to_json())
             return creds
         except Exception as exc:
             log(f"  token refresh failed ({exc}); re-authorizing")
@@ -168,8 +171,7 @@ def get_credentials(interactive: bool = True):
         google_client.client_config(), config.DRIVE_SCOPES
     )
     creds = flow.run_local_server(port=0)
-    config.TOKEN_FILE.write_text(creds.to_json())
-    config.TOKEN_FILE.chmod(0o600)
+    config.write_private(config.TOKEN_FILE, creds.to_json())
     log(f"  authorized; token cached to {config.TOKEN_FILE.name}")
     return creds
 

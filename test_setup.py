@@ -757,6 +757,73 @@ def t31():
 results.append(run("ordinary microphone names round-trip exactly", t31))
 
 
+# --- SEC-08: a secret file is private from its first byte ------------------
+
+def t32():
+    """No moment exists when a secret file is readable by anyone else.
+
+    write_text() creates at 0644 under the usual 022 umask and a chmod on the
+    next line narrows it; a reader in between gets the whole file, and a write
+    that dies before the chmod leaves it open for good.
+    """
+    saved_umask = os.umask(0o022)
+    try:
+        home = Path(tempfile.mkdtemp())
+        target = home / "deeper" / "secret.txt"
+        modes = []
+
+        real_replace = os.replace
+
+        def watching_replace(src, dst):
+            # The mode the file carries at the instant it becomes the target.
+            modes.append(stat.S_IMODE(os.stat(src).st_mode))
+            return real_replace(src, dst)
+
+        os.replace = watching_replace
+        try:
+            config.write_private(target, "sk-SYNTHETIC\n")
+        finally:
+            os.replace = real_replace
+
+        assert modes == [0o600], f"created as {[oct(m) for m in modes]}"
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600, oct(target.stat().st_mode)
+        assert stat.S_IMODE(target.parent.stat().st_mode) == 0o700
+        assert target.read_text() == "sk-SYNTHETIC\n"
+
+        # A file an older version left wide open is repaired by the next write.
+        target.chmod(0o644)
+        config.write_private(target, "sk-SYNTHETIC-2\n")
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600, oct(target.stat().st_mode)
+
+        # A failed write leaves the previous contents, not a truncated file.
+        try:
+            config.write_private(target, None)  # type: ignore[arg-type]
+        except TypeError:
+            pass
+        assert target.read_text() == "sk-SYNTHETIC-2\n", target.read_text()
+        leftovers = [f.name for f in target.parent.iterdir() if f.name != target.name]
+        assert leftovers == [], f"a temporary file was left behind: {leftovers}"
+    finally:
+        os.umask(saved_umask)
+results.append(run("a secret file is 0600 from creation, and replaced atomically", t32))
+
+
+def t33():
+    """Every writer of a secret goes through it, not around it."""
+    import inspect
+    from intake import account, signin, upload
+    for module in (setup_wizard, account, signin, upload):
+        source = inspect.getsource(module)
+        for line in source.splitlines():
+            stripped = line.strip()
+            if ".write_text(" not in stripped or stripped.startswith("#"):
+                continue
+            # DRIVE_ROOT_CACHE holds a folder id, which is not a secret.
+            assert "DRIVE_ROOT_CACHE" in stripped, (
+                f"{module.__name__} writes a file without write_private: {stripped}")
+results.append(run("no secret is written with a plain write_text", t33))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

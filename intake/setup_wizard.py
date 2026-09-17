@@ -12,6 +12,7 @@ flow can be driven by a test with scripted answers and a temp home.
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
 import re
 import sys
@@ -143,9 +144,8 @@ def render_env(values: dict[str, str], notion_skipped: bool) -> str:
 
 
 def write_env(path: Path, values: dict[str, str], notion_skipped: bool) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_env(values, notion_skipped))
-    path.chmod(0o600)
+    # Rendered first: an unsafe value raises before anything is created.
+    config.write_private(path, render_env(values, notion_skipped))
     return path
 
 
@@ -177,8 +177,13 @@ def _yes(answer: str, default: bool) -> bool:
 
 class Wizard:
     def __init__(self, ask: Ask = input, say: Say = print,
-                 home: Path | None = None, devices=None, allow_login: bool = True):
+                 home: Path | None = None, devices=None, allow_login: bool = True,
+                 ask_secret: Ask | None = None):
         self.ask = ask
+        # None means "decide when the prompt happens", which matters because
+        # callers replace .ask after construction; deciding here left those
+        # with a secret prompt still wired to the real terminal.
+        self.ask_secret = ask_secret
         self.say = say
         self.home = Path(home) if home is not None else config.HOME_DIR
         self.env_file = self.home / ".env"
@@ -190,11 +195,31 @@ class Wizard:
 
     # --- prompts ------------------------------------------------------------
 
+    def _secret_reader(self):
+        """How to read a value that should not appear on screen.
+
+        Keys are typed at a terminal that is often recorded, shared or simply
+        visible, and a key echoed once stays in the scrollback for the rest of
+        the session. getpass reads without echoing.
+
+        Only the real terminal gets that treatment. A caller that supplied its
+        own `ask`, or replaced it afterwards, is scripting the wizard and has
+        nothing to hide from a screen; sending it to getpass instead would
+        ignore its answers and block on stdin.
+        """
+        if self.ask_secret is not None:
+            return self.ask_secret, False
+        if self.ask is input:
+            return getpass.getpass, True
+        return self.ask, False
+
     def _prompt(self, label: str, current: str = "", secret: bool = False) -> str:
         shown = mask(current) if secret else current
         suffix = f" [{shown}]" if current else ""
+        ask, hidden = self._secret_reader() if secret else (self.ask, False)
+        hint = " (not shown as you type)" if hidden else ""
         try:
-            answer = self.ask(f"{label}{suffix}: ").strip()
+            answer = ask(f"{label}{suffix}{hint}: ").strip()
         except EOFError:
             answer = ""
         return answer or current
