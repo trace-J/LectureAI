@@ -683,6 +683,45 @@ def t19():
 results.append(run("an empty summary is an error, not a blank note filed to Drive", t19))
 
 
+def t20():
+    """A refusal names the meter that ran out, in that meter's own units.
+
+    The morning this was written, a summary refused for want of 1,902 tokens
+    was reported as "this account has used its transcription allowance for
+    the month", and the transcription allowance was two thirds spent. The
+    message came from the error code, and both meters refuse with the same
+    one.
+    """
+    signed_in()
+    refused = {"error": "allowance_exhausted", "kind": "summarize", "unit": "tokens",
+               "used": 123427, "requested": 28475, "allowance": 150000}
+    real = account.transport
+    account.transport = lambda *a, **k: (402, refused)
+    try:
+        summarize.summarize("a real transcript", "ENTR-3306", "2026-09-17")
+    except providers.ProxyRefused as exc:
+        said = str(exc)
+        assert "summary tokens" in said, said
+        assert "123,427" in said and "150,000" in said, said
+        assert "transcription" not in said, said
+        assert "hours" not in said, said
+        assert exc.error == "allowance_exhausted" and exc.status == 402
+    else:
+        raise AssertionError("an exhausted summary allowance must refuse")
+    finally:
+        account.transport = real
+
+    # The transcribe side keeps its own units, and now says which meter too.
+    audio = providers.refusal_reason(
+        {"error": "allowance_exhausted", "kind": "transcribe", "unit": "audio_seconds",
+         "used": 17000, "allowance": 18000})
+    assert "4.7" in audio and "5.0" in audio and "transcription hours" in audio, audio
+    # A body with no numbers still has to say which one, not guess at both.
+    bare = providers.refusal_reason({"error": "allowance_exhausted", "kind": "summarize"})
+    assert bare == "this account has used its summary allowance for the month", bare
+results.append(run("a refusal names the meter that ran out, in that meter's units", t20))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
