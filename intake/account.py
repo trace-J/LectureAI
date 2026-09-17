@@ -21,6 +21,7 @@ off altogether, and the Setup page then does not mention it.
 from __future__ import annotations
 
 import json
+import re
 import socket
 import subprocess
 import sys
@@ -70,6 +71,10 @@ class Account:
 
 
 # --- Settings and the file --------------------------------------------------
+
+#: A service on this machine, for development. Everything else must be https.
+_LOCAL_SERVICE = re.compile(r"^http://(localhost|127\.0\.0\.1)(:\d+)?$")
+
 
 def url() -> str:
     return (config.ACCOUNTS_URL or "").strip().rstrip("/")
@@ -153,12 +158,50 @@ def _http(method: str, full_url: str, headers: dict, body: dict | None,
 transport = _http
 
 
+class ServiceMoved(RuntimeError):
+    """ACCOUNTS_URL no longer names the service this Mac's token belongs to."""
+
+
+def _destination_for_token() -> str:
+    """Where this Mac's credential may be sent, or raise.
+
+    A device token is issued by one service and is worth something only to
+    that one. ACCOUNTS_URL is an ordinary setting in an editable file, and a
+    token followed it wherever it pointed: changing that one line was enough
+    to make this Mac hand its bearer to somebody else's server, which could
+    then spend the account's allowance and collect its Drive access token.
+
+    So the token goes to the origin it was issued for, recorded in
+    account.json when the Mac was claimed, and a setting that disagrees stops
+    the request instead of redirecting it. An account file written before this
+    existed carries no url; those fall back to the setting, because refusing
+    would sign those Macs out rather than protect them.
+    """
+    here = url()
+    acct = load()
+    issued = (acct.url or "").strip().rstrip("/") if acct else ""
+    if issued and issued != here:
+        raise ServiceMoved(
+            f"this Mac is signed in to {issued}, and ACCOUNTS_URL now says "
+            f"{here}. Nothing was sent. Put the setting back, or sign out and "
+            f"sign in again to move this Mac to the new service.")
+    if not here.startswith("https://") and not _LOCAL_SERVICE.match(here):
+        raise ServiceMoved(f"refusing to send this Mac's sign-in to {here}, "
+                           f"which is not an https address")
+    return here
+
+
 def call(method: str, path: str, body: dict | None = None,
          token: str | None = None, timeout: float = TIMEOUT) -> tuple[int, dict]:
     headers = {"Accept": "application/json"}
+    base = url()
     if token:
+        # Only a credential-bearing request is bound: /device/start and
+        # /device/poll carry nothing worth stealing and run before there is an
+        # account to bind to.
+        base = _destination_for_token()
         headers["Authorization"] = "Bearer " + token
-    return transport(method, url() + path, headers, body, timeout)
+    return transport(method, base + path, headers, body, timeout)
 
 
 def summary() -> dict:

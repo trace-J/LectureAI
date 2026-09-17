@@ -180,6 +180,22 @@ def _body() -> dict:
     return payload
 
 
+def _known_device(name: str) -> bool:
+    """Whether `name` is a microphone this Mac actually reports.
+
+    A device already saved stays acceptable even when it is unplugged, so a
+    Mac whose headset is in another room can still save its schedule.
+    """
+    if name == config.RECORD_DEVICE:
+        return True
+    try:
+        return any(name == reported for _, reported in recording.list_devices())
+    except OSError:
+        # ffmpeg could not be asked. Refusing every save because of that would
+        # be worse than accepting a name that is checked again at record time.
+        return True
+
+
 def _text(payload: dict, field: str) -> str:
     """One text field, stripped. Absent and null both read as empty."""
     value = payload.get(field)
@@ -744,6 +760,14 @@ def setup_save():
                                   or not values.get("ANTHROPIC_API_KEY")):
         return jsonify({"ok": False, "error": "both API keys are needed"}), 400
 
+    # A microphone is chosen from a list this Mac produced, so a value that is
+    # not on that list is not a microphone. Checked rather than trusted because
+    # this field is written into the settings file: it was the way in for both
+    # the secret-reference and the newline-injection findings, and neither
+    # needed the value to be plausible.
+    if device and not _known_device(device):
+        return jsonify({"ok": False, "error": "that is not one of this Mac's "
+                        "microphones; press Refresh and choose one"}), 400
     values["RECORD_DEVICE"] = device or values.get("RECORD_DEVICE") or config.RECORD_DEVICE
 
     meetings = []
@@ -775,7 +799,11 @@ def setup_save():
                             "secret and the database URL, or untick it to skip"}), 400
 
     config.ensure_home()
-    setup_wizard.write_env(config.ENV_FILE, values, notion_skipped=skipped)
+    try:
+        setup_wizard.write_env(config.ENV_FILE, values, notion_skipped=skipped)
+    except setup_wizard.UnsafeSetting as exc:
+        # The file is written whole or not at all, so nothing was saved.
+        return jsonify({"ok": False, "error": str(exc)}), 400
     config.write_schedule(meetings, tolerance)
     config.reload()
     # The account's copy follows the file, when this Mac is signed in.

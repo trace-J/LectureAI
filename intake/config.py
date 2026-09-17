@@ -242,10 +242,15 @@ ENV_SETTINGS = env_defaults(PROFILE)
 
 
 def _read_env(path: Path) -> dict[str, str]:
-    """The .env file's values, or nothing when there is no file yet."""
+    """The .env file's values, or nothing when there is no file yet.
+
+    interpolate=False: dotenv resolves ${OTHER_SETTING} inside a value by
+    default, which made every non-secret setting a place to read a secret one
+    from. A settings file holds text, not expressions.
+    """
     if not path.exists():
         return {}
-    return {k: v for k, v in dotenv_values(path).items() if v is not None}
+    return {k: v for k, v in dotenv_values(path, interpolate=False).items() if v is not None}
 
 
 _ENV = _read_env(ENV_FILE)
