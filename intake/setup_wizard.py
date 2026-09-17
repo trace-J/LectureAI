@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Callable
@@ -56,12 +57,47 @@ EXTRA_TEMPLATE = """
 """
 
 
-def _quote(value: str) -> str:
-    """Quote a value for .env when it has anything dotenv would misread."""
-    if value == "" or any(ch in value for ch in " #'\"\\\t"):
-        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-        return f'"{escaped}"'
+class UnsafeSetting(ValueError):
+    """A settings value that cannot be written to .env as one line."""
+
+
+# A settings value is one line of a .env file. A newline in one does not
+# corrupt the file, which would at least be noticed: it ends that setting and
+# starts another, so "MacBook\nACCOUNTS_URL=https://collector.invalid" saved as
+# a microphone silently moved where this Mac sends its account token. Carriage
+# returns and the other control characters are refused with it: none of them
+# belong in any value this program writes, and deciding case by case what each
+# one does to a parser is how the newline was missed in the first place.
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def check_setting(name: str, value: str) -> str:
+    """`value`, or raise UnsafeSetting saying why it cannot be written."""
+    found = _CONTROL.search(value)
+    if found:
+        shown = repr(found.group())[1:-1]
+        raise UnsafeSetting(
+            f"{name} cannot contain {shown}; it is written as one line of a "
+            f"settings file and a line break there would start a new setting")
     return value
+
+
+def _quote(value: str) -> str:
+    """Quote a value for .env.
+
+    Everything is quoted, not only what looks dangerous. Deciding which
+    characters need it means keeping a list of what dotenv treats specially,
+    and that list was wrong: an unquoted ${OPENAI_API_KEY} in the microphone
+    field came back out of the file as the key itself. Quoting unconditionally
+    needs no such list to be right.
+
+    $ is deliberately NOT escaped. What made ${OPENAI_API_KEY} dangerous was
+    interpolation on the way in, which is off in both readers now; escaping it
+    here as well would write a backslash into the value and hand a microphone
+    called "$5 mic" back as "\\$5 mic".
+    """
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"' 
 
 
 def mask(secret: str) -> str:
@@ -74,7 +110,14 @@ def mask(secret: str) -> str:
 
 
 def render_env(values: dict[str, str], notion_skipped: bool) -> str:
-    """The text of .env for these values."""
+    """The text of .env for these values.
+
+    Every value is checked before any of it is rendered, so a bad one cannot
+    produce a half-written file.
+    """
+    for name, value in sorted(values.items()):
+        if value is not None:
+            check_setting(name, value)
     if notion_skipped or not (values.get("NOTION_TOKEN") or values.get("NOTION_DATABASE")):
         notion = (f"{NOTION_SKIP_MARKER}\n"
                   f"# NOTION_TOKEN=ntn_...\n"
@@ -109,7 +152,7 @@ def write_env(path: Path, values: dict[str, str], notion_skipped: bool) -> Path:
 def read_env(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
-    return {k: (v or "") for k, v in dotenv_values(path).items()}
+    return {k: (v or "") for k, v in dotenv_values(path, interpolate=False).items()}
 
 
 def parse_meeting_line(line: str) -> config.Meeting:

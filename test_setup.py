@@ -696,6 +696,67 @@ def t28():
 results.append(run("older data is still reported after setup is saved", t28))
 
 
+# --- SEC-01 and SEC-02: a settings value is text, and nothing else ----------
+
+def t29():
+    """A reference to a secret stays a reference, and never resolves.
+
+    dotenv interpolates ${OTHER} inside a value by default, so saving a
+    microphone called "${OPENAI_API_KEY}" made the next /api/setup hand the
+    whole key back as the device name, beside the masked key field.
+    """
+    home = Path(tempfile.mkdtemp())
+    env = home / ".env"
+    env.write_text(setup_wizard.render_env(
+        {"OPENAI_API_KEY": "sk-SYNTHETIC-KEY-abcdef", "ANTHROPIC_API_KEY": "x",
+         "RECORD_DEVICE": "${OPENAI_API_KEY}"}, notion_skipped=True))
+    back = setup_wizard.read_env(env)
+    assert back["RECORD_DEVICE"] == "${OPENAI_API_KEY}", back["RECORD_DEVICE"]
+    assert "SYNTHETIC" not in back["RECORD_DEVICE"], "the key resolved into the device"
+    # config's own reader is a separate call site and needs the same setting.
+    assert config._read_env(env)["RECORD_DEVICE"] == "${OPENAI_API_KEY}"
+results.append(run("a secret reference in a setting stays literal", t29))
+
+
+def t30():
+    """A newline cannot smuggle a second setting into the file."""
+    values = {"OPENAI_API_KEY": "k", "ANTHROPIC_API_KEY": "x",
+              "RECORD_DEVICE": "MacBook\nACCOUNTS_URL=https://collector.invalid"}
+    try:
+        setup_wizard.render_env(values, notion_skipped=True)
+        raise AssertionError("a newline was written into the settings file")
+    except setup_wizard.UnsafeSetting as exc:
+        assert "RECORD_DEVICE" in str(exc), exc
+    # A carriage return and the other control characters go the same way.
+    for bad in ("a\rb", "a\x00b", "a\x1bb"):
+        values["RECORD_DEVICE"] = bad
+        try:
+            setup_wizard.render_env(values, notion_skipped=True)
+            raise AssertionError(f"{bad!r} was accepted")
+        except setup_wizard.UnsafeSetting:
+            pass
+results.append(run("a newline in a setting is refused, not written", t30))
+
+
+def t31():
+    """Quoting everything did not break the values people really have.
+
+    A guard on the fix rather than a reproduction of the bug: these all
+    round-tripped before too. Quoting unconditionally is the sort of change
+    that works on the dangerous input and quietly mangles the ordinary one.
+    """
+    home = Path(tempfile.mkdtemp())
+    env = home / ".env"
+    for value in ('MacBook Pro Microphone', 'Scarlett 2i2 "USB"', 'mic $5 #1',
+                  "back\\slash", "a'quote", "", "Trace\u2019s AirPods"):
+        env.write_text(setup_wizard.render_env(
+            {"OPENAI_API_KEY": "k", "ANTHROPIC_API_KEY": "x",
+             "RECORD_DEVICE": value}, notion_skipped=True))
+        got = setup_wizard.read_env(env)["RECORD_DEVICE"]
+        assert got == value, f"{value!r} came back as {got!r}"
+results.append(run("ordinary microphone names round-trip exactly", t31))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

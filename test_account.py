@@ -722,6 +722,67 @@ def t20():
 results.append(run("a refusal names the meter that ran out, in that meter's units", t20))
 
 
+# --- SEC-02: a credential goes where it was issued, or nowhere -------------
+
+def t_bound_destination():
+    """ACCOUNTS_URL cannot redirect this Mac's bearer to another service.
+
+    The setting lives in an editable file, and the token used to follow it
+    wherever it pointed, so one line changed by a settings-injection bug was
+    enough to hand the bearer to somebody else's server.
+    """
+    sent = []
+    real = account.transport
+    saved_url = config.ACCOUNTS_URL
+    try:
+        account.transport = lambda m, u, h, b, t: (
+            sent.append((u, h.get("Authorization", ""))), (200, {}))[1]
+        account.save(account.Account(
+            token="syd_SECRET", account_id="a", email="e@x", name="n",
+            device_id="d", device_name="m", profile="syllabus",
+            url="https://real.example", claimed_at="now"))
+
+        config.ACCOUNTS_URL = "https://real.example"
+        account.call("GET", "/me", token="syd_SECRET")
+        assert sent[-1][0] == "https://real.example/me", sent[-1]
+        assert sent[-1][1] == "Bearer syd_SECRET", sent[-1]
+
+        config.ACCOUNTS_URL = "https://collector.invalid"
+        before = len(sent)
+        try:
+            account.call("GET", "/me", token="syd_SECRET")
+            raise AssertionError("the bearer was sent to the new address")
+        except account.ServiceMoved as exc:
+            assert "real.example" in str(exc), exc
+        assert len(sent) == before, "a request was made despite the refusal"
+
+        # A call with nothing to steal still follows the setting: the claim
+        # flow runs before there is an account to bind to.
+        account.call("POST", "/device/start", {"name": "x"})
+        assert sent[-1][0] == "https://collector.invalid/device/start", sent[-1]
+        assert sent[-1][1] == "", sent[-1]
+
+        # Plain http is refused even when it is what the account was claimed at.
+        account.save(account.Account(
+            token="syd_SECRET", account_id="a", email="e@x", name="n",
+            device_id="d", device_name="m", profile="syllabus",
+            url="http://plain.example", claimed_at="now"))
+        config.ACCOUNTS_URL = "http://plain.example"
+        before = len(sent)
+        try:
+            account.call("GET", "/me", token="syd_SECRET")
+            raise AssertionError("the bearer went out over plain http")
+        except account.ServiceMoved as exc:
+            assert "https" in str(exc), exc
+        assert len(sent) == before
+    finally:
+        account.transport = real
+        config.ACCOUNTS_URL = saved_url
+        account.forget()
+results.append(run("a device token only goes to the service that issued it",
+                   t_bound_destination))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
