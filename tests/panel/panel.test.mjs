@@ -23,6 +23,15 @@ function like(route, changes = {}) {
   return { ...structuredClone(REAL[route]), ...changes };
 }
 
+/** The dashboard calls these on load whatever a test is about. */
+function indexRoutes(extra = {}) {
+  return {
+    "/api/status": like("/api/status"),
+    "/api/allowance": like("/api/allowance"),
+    ...extra,
+  };
+}
+
 /** The setup page calls these on load whatever a test is about. */
 function setupRoutes(extra = {}) {
   return {
@@ -76,7 +85,7 @@ await run("an early or late class keeps its hour through setup", async () => {
 
 await run("the course picker follows the schedule when it changes", async () => {
   const first = like("/api/status", { courses: ["ACCT-4321", "ENTR-3306"] });
-  const page = loadPage(DIR, "index.html", { routes: { "/api/status": first } });
+  const page = loadPage(DIR, "index.html", { routes: indexRoutes({ "/api/status": first }) });
   await page.window.poll();
   await page.settle();
   const picker = page.$("courseSel");
@@ -97,7 +106,7 @@ await run("the course picker follows the schedule when it changes", async () => 
 
 await run("a course the user had picked is kept only while it exists", async () => {
   const page = loadPage(DIR, "index.html", {
-    routes: { "/api/status": like("/api/status", { courses: ["ACCT-4321", "ENTR-3306"] }) },
+    routes: indexRoutes({ "/api/status": like("/api/status", { courses: ["ACCT-4321", "ENTR-3306"] }) }),
   });
   await page.window.poll();
   await page.settle();
@@ -130,7 +139,7 @@ await run("a course cannot smuggle an attribute into the picker", async () => {
   // A quote closes value="..." and whatever follows becomes an attribute.
   const nasty = 'X" onmouseover="steal()" data-x="';
   const page = loadPage(DIR, "index.html", {
-    routes: { "/api/status": like("/api/status", { courses: [nasty] }) },
+    routes: indexRoutes({ "/api/status": like("/api/status", { courses: [nasty] }) }),
   });
   await page.window.poll();
   await page.settle();
@@ -209,7 +218,7 @@ await run("the setup banner names what is missing, and nothing else", async () =
   ];
   for (const [needs, expected] of cases) {
     const page = loadPage(DIR, "index.html", {
-      routes: { "/api/status": like("/api/status", { configured: !needs.length, setup_needs: needs }) },
+      routes: indexRoutes({ "/api/status": like("/api/status", { configured: !needs.length, setup_needs: needs }) }),
     });
     await page.window.poll();
     await page.settle();
@@ -234,6 +243,70 @@ await run("the setup banner names what is missing, and nothing else", async () =
 });
 
 // --- R4: the panel does not claim Save can do what Save cannot -------------
+
+// --- The warning that has to arrive before the button is pressed ----------
+
+await run("the dashboard asks what is left before anything is recorded", async () => {
+  const page = loadPage(DIR, "index.html", {
+    routes: indexRoutes({
+      "/api/allowance": {
+        ok: true, period: "2026-09", source: "trial",
+        audio_seconds: { used: 11915, allowance: 18000, left: 6085 },
+        summary_tokens: { used: 123427, allowance: 150000, left: 26573 },
+        recordable_seconds: 3524,
+      },
+    }),
+  });
+  await page.settle();
+  assert(page.calls.some((c) => c.url.endsWith("/api/allowance") && c.method === "GET"),
+    "the page never asked what was left, so nobody is warned until the lecture fails");
+  const flash = page.$("allowanceFlash");
+  assert(flash.style.display !== "none", "the page knew and said nothing");
+  assert(/59 minutes/.test(flash.textContent), flash.textContent);
+  // Recording is never the thing that is blocked.
+  assert(!page.$("recBtn").disabled, "a low allowance must not take the button away");
+  await page.close();
+});
+
+await run("the warning names the meter that is short, and only when one is", async () => {
+  const page = loadPage(DIR, "index.html", { routes: indexRoutes() });
+  await page.settle();
+  const flash = page.$("allowanceFlash");
+  const show = (over) => {
+    page.window.renderAllowance({
+      ok: true, period: "2026-09", source: "trial",
+      audio_seconds: { used: 0, allowance: 18000, left: 18000 },
+      summary_tokens: { used: 0, allowance: 150000, left: 150000 },
+      recordable_seconds: 18000,
+      ...over,
+    });
+    return flash.style.display === "none" ? "" : flash.textContent;
+  };
+
+  equal(show({}), "", "a full allowance still put a banner over the button");
+
+  // Audio gone: the recording is kept, nothing is transcribed.
+  const noAudio = show({
+    audio_seconds: { used: 18000, allowance: 18000, left: 0 }, recordable_seconds: 0,
+  });
+  assert(/transcription allowance is used up/.test(noAudio), noAudio);
+  assert(/file is kept/.test(noAudio), `it must say the recording survives: ${noAudio}`);
+  assert(flash.className.includes("err"), flash.className);
+
+  // The shape of the day this was written: audio to spare, no room to
+  // summarize it. Saying "transcription" here is what sent somebody to the
+  // wrong meter in the first place.
+  const noSummary = show({
+    summary_tokens: { used: 145000, allowance: 150000, left: 5000 }, recordable_seconds: 0,
+  });
+  assert(/summary allowance is used up/.test(noSummary), noSummary);
+  assert(/transcription still/.test(noSummary), noSummary);
+
+  // An answer that never came is not the same as an allowance that ran out.
+  page.window.renderAllowance({ ok: false, error: "the account service answered 503" });
+  equal(flash.style.display, "none", "a service it could not reach became a warning");
+  await page.close();
+});
 
 await run("a fix the form cannot carry out is not rewritten into one it can", async () => {
   const doctorReport = like("/api/doctor");
@@ -260,7 +333,7 @@ await run("a fix the form cannot carry out is not rewritten into one it can", as
 
 await run("a relayed page writes every request under its device path", async () => {
   const page = loadPage(DIR, "index.relayed.html", {
-    routes: { "/api/status": like("/api/status") },
+    routes: indexRoutes(),
   });
   await page.window.poll();
   await page.settle();
