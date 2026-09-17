@@ -796,7 +796,14 @@ function courseStyle(code) {
 // Record -----------------------------------------------------------------
 function renderCourses(s) {
   const sel = $("courseSel");
-  if (sel.dataset.filled) return;
+  // Rebuilt when the schedule changes, not once and never again. The latch
+  // here was unconditional, so a dashboard left open while the schedule was
+  // edited in another window, or synced from the account, kept offering
+  // courses that no longer existed, and starting a recording with one came
+  // back "unknown course".
+  const key = JSON.stringify(s.courses);
+  if (sel.dataset.courses === key) return;
+  const chosen = sel.value;
   // Escaped like every other course on this page. The schedule refuses markup
   // now, but this is the one render that was building HTML out of it raw.
   const opts = ['<option value="">Course from schedule</option>'];
@@ -804,7 +811,11 @@ function renderCourses(s) {
     opts.push(`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`);
   }
   sel.innerHTML = opts.join("");
-  sel.dataset.filled = "1";
+  sel.dataset.courses = key;
+  // Keep what the user had picked, but only while it is still a real course.
+  // Assigning one that is gone leaves the select empty, which is the honest
+  // answer: it is no longer on the schedule.
+  sel.value = chosen;
 }
 
 function renderRecord(s) {
