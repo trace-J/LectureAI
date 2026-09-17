@@ -111,10 +111,7 @@ def load() -> Account | None:
 
 
 def save(account: Account) -> None:
-    path = config.ACCOUNT_FILE
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(account), indent=2) + "\n")
-    path.chmod(0o600)
+    config.write_private(config.ACCOUNT_FILE, json.dumps(asdict(account), indent=2) + "\n")
 
 
 def forget() -> None:
@@ -443,14 +440,12 @@ def _drive_cache_file():
 def _note_drive(connected: bool, email: str = "", detail: str = "") -> None:
     """What the doctor reads: the last thing the service said about the grant."""
     try:
-        path = _drive_cache_file()
-        path.parent.mkdir(parents=True, exist_ok=True)
         data = drive_cached()
         data.update({
             "connected": connected, "google_email": email, "detail": detail,
             "checked_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         })
-        path.write_text(json.dumps(data, indent=2) + "\n")
+        config.write_private(_drive_cache_file(), json.dumps(data, indent=2) + "\n")
     except OSError:
         pass
 
@@ -462,7 +457,7 @@ def note_drive_in_use(in_use: bool, detail: str = "") -> None:
         return
     data.update({"in_use": in_use, "in_use_detail": detail})
     try:
-        _drive_cache_file().write_text(json.dumps(data, indent=2) + "\n")
+        config.write_private(_drive_cache_file(), json.dumps(data, indent=2) + "\n")
     except OSError:
         pass
 

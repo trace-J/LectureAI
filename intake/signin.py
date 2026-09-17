@@ -78,9 +78,7 @@ def secret_key() -> str:
         if key:
             return key
     key = secrets.token_urlsafe(48)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(key + "\n")
-    path.chmod(0o600)
+    config.write_private(path, key + "\n")
     return key
 
 
@@ -422,6 +420,24 @@ def logout():
     return _clear_cookie(resp, FLOW_COOKIE)
 
 
+#: Paths whose answers name the account, describe the settings, or carry a
+#: credential. Nothing here should sit in a cache: not the browser's, and not
+#: whatever is between a phone and this Mac when the panel is reached through
+#: the relay.
+_NO_STORE_PREFIXES = ("/api/setup", "/api/account", "/api/drive", "/api/doctor",
+                      "/setup", "/signin", "/account")
+
+
+def no_store(response):
+    """Mark answers that are about this install rather than about the app."""
+    path = request.path
+    if any(path == p or path.startswith(p + "/") for p in _NO_STORE_PREFIXES):
+        response.headers.setdefault("Cache-Control", "no-store")
+        response.headers.setdefault("Pragma", "no-cache")
+    return response
+
+
 def install(app: Flask) -> None:
     app.register_blueprint(bp)
     app.before_request(gate)
+    app.after_request(no_store)
