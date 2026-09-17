@@ -430,6 +430,95 @@ def t14():
         account.forget()
 results.append(run("the Setup page's account card is told the address and the connection state", t14))
 
+def t15():
+    # An attempt that never opened used to say nothing at all. That is why a
+    # four-minute hole in panel.log read as one long pause rather than the
+    # handful of failed attempts it was, and why the disconnect could not be
+    # diagnosed from the log it was recorded in.
+    import contextlib
+    import io
+
+    class Flaky:
+        """Refuses `fails` times, then opens and is dropped without a close frame."""
+
+        def __init__(self, fails):
+            self.left = fails
+
+        def factory(self, url, headers, on_open, on_message, on_close, on_error):
+            outer = self
+
+            class Sock:
+                def run_forever(self):
+                    if outer.left > 0:
+                        outer.left -= 1
+                        on_error(ConnectionRefusedError("connection refused"))
+                        on_close(None, None)
+                    else:
+                        on_open()
+                        on_close(None, None)
+
+                def send(self, text):
+                    pass
+
+                def close(self):
+                    pass
+
+            return Sock()
+
+    account.save(ME)
+    try:
+        clock = Clock()
+        r = relay.Relay(echo, socket_factory=Flaky(6).factory,
+                        sleep=clock.sleep, now=clock.now)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            r.run(rounds=7)
+        lines = [l.split("relay: ", 1)[-1] for l in err.getvalue().splitlines()]
+
+        failed = [l for l in lines if l.startswith("could not connect")]
+        assert failed, f"a failed attempt logged nothing: {lines}"
+        assert "ConnectionRefusedError" in failed[0], \
+            f"the reason on_error gave was written over: {failed[0]}"
+        assert "Trying again in" in failed[0], failed[0]
+
+        # The gap is accounted for, so a hole in the log is explainable.
+        joined = [l for l in lines if l.startswith("connected after")]
+        assert joined and "6 failed attempts" in joined[0], \
+            f"the run of failures was not summarized: {lines}"
+
+        # Six failures write one line, not six: a Mac asleep overnight must
+        # not fill the log with a line a minute.
+        assert len(failed) == 1, f"one line per attempt is too many: {failed}"
+
+        # A socket that died is told apart from one the service closed.
+        dropped = [l for l in lines if "dropped without closing" in l]
+        assert dropped, f"a socket that died reads the same as a clean close: {lines}"
+    finally:
+        account.forget()
+results.append(run("a failed reconnect says so, once, with its reason", t15))
+
+
+def t16():
+    # The other half of why that log was unreadable: the dashboard asks for
+    # /api/status every second, and every one of them was a line. A real
+    # panel.log was 3.7 MB of them.
+    quiet = gui._QuietPolling()
+
+    class Line:
+        def __init__(self, message):
+            self.message = message
+
+        def getMessage(self):
+            return self.message
+
+    assert not quiet.filter(Line('127.0.0.1 - - [x] "GET /api/status HTTP/1.1" 200 -'))
+    # Anything that is not a healthy poll still gets written.
+    assert quiet.filter(Line('127.0.0.1 - - [x] "GET /api/status HTTP/1.1" 500 -'))
+    assert quiet.filter(Line('127.0.0.1 - - [x] "POST /api/record/start HTTP/1.1" 200 -'))
+    assert quiet.filter(Line('127.0.0.1 - - [x] "GET /setup HTTP/1.1" 200 -'))
+results.append(run("a healthy status poll is not worth a line, anything else is", t16))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

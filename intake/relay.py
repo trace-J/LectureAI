@@ -216,6 +216,13 @@ class Relay:
         self.chunk_bytes = DEFAULT_CHUNK_BYTES
         self._state = {"state": "off", "url": "", "since": "", "error": "", "detail": "",
                        "connected_at": "", "attempts": 0, "requests": 0, "last_request_at": ""}
+        # Attempts in a row that never got a socket open, and when the run
+        # began. Counted so the log can account for a gap without writing a
+        # line a minute through an outage nobody is awake for.
+        self._failures = 0
+        self._failing_since = 0.0
+        # Whether the attempt now in progress ever reached on_open.
+        self._opened = False
 
     # -- what the pages and the doctor read --
 
@@ -308,6 +315,23 @@ class Relay:
                 pause = MAX_BACKOFF  # the token is refused; nothing to gain by hurrying
             self._set(state="reconnecting", error=reason,
                       detail=f"trying again in {round(pause)} s")
+
+            # An attempt that never opened used to say nothing at all, which
+            # is why a four-minute gap in the log read as one pause rather
+            # than the six failed attempts it was. Only some of them are
+            # written: the first, then every tenth, so a Mac that is simply
+            # asleep or off the network does not fill the log overnight.
+            if not self._opened:
+                if not self._failures:
+                    self._failing_since = started
+                self._failures += 1
+                if self._failures == 1 or self._failures % 10 == 0:
+                    since = round(self._now() - self._failing_since)
+                    run = f"; {self._failures} in a row over {since}s" \
+                        if self._failures > 1 else ""
+                    _say(f"could not connect: {reason}{run}. "
+                         f"Trying again in {round(pause)}s")
+
             self._sleep(pause)
             backoff = min(MAX_BACKOFF, backoff * 2)
         self._set(state="stopped" if self._stop.is_set() else self._state["state"])
@@ -315,21 +339,46 @@ class Relay:
     def _connect_once(self, acct: account.Account) -> str:
         """One connection, start to finish. Returns why it ended."""
         outcome = {"reason": "the connection closed"}
+        self._opened = False
 
         def on_open() -> None:
+            self._opened = True
             self._set(state="connected", error="", detail="", connected_at=_iso(self._now()))
-            _say(f"connected; this panel is at {panel_url(acct)}")
+            if self._failures:
+                # What the gap in this log was. Without it, a run of failed
+                # attempts looked like one long unexplained silence.
+                waited = round(self._now() - self._failing_since)
+                tries = "attempt" if self._failures == 1 else "attempts"
+                _say(f"connected after {self._failures} failed {tries} over {waited}s; "
+                     f"this panel is at {panel_url(acct)}")
+            else:
+                _say(f"connected; this panel is at {panel_url(acct)}")
+            self._failures = 0
             self._send({"t": "hello", "name": acct.device_name, "version": __version__})
 
         def on_message(message) -> None:
             self._on_message(message)
 
         def on_close(code, reason) -> None:
-            outcome["reason"] = f"the connection closed ({code}{' ' + reason if reason else ''})" \
-                if code else "the connection closed"
+            if code:
+                outcome["reason"] = \
+                    f"the connection closed ({code}{' ' + reason if reason else ''})"
+            elif outcome.get("explained"):
+                # on_error already said something specific and websocket-client
+                # calls it before this; "refused the token" or "connection
+                # refused" is the answer somebody needs, and a bare close would
+                # write it over with nothing.
+                return
+            else:
+                # No close frame at all. The socket died rather than being
+                # closed, which is what a dropped link, a sleeping Mac or a
+                # ping timeout looks like from this end, and is worth telling
+                # apart from the service closing it on purpose.
+                outcome["reason"] = "the connection dropped without closing"
 
         def on_error(err) -> None:
             status = getattr(err, "status_code", None)
+            outcome["explained"] = True
             if status in (401, 403):
                 outcome["reason"] = "unauthorized"
                 _say("the account service refused this Mac's token")

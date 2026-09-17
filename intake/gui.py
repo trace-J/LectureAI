@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -976,8 +977,27 @@ def prepare(host: str, port: int) -> str:
     return url
 
 
+class _QuietPolling(logging.Filter):
+    """Keeps the once-a-second status poll out of the log.
+
+    The dashboard asks for /api/status every second for as long as it is
+    open, and each one was a line. A panel.log read for this was 3.7 MB and
+    54,000 lines, of which fewer than fifty were about anything: the relay
+    connecting and disconnecting, the events somebody would actually open
+    this file to find, were a rounding error in the noise.
+
+    Only the successful poll is dropped. A status request that failed still
+    says so, because that is the interesting one.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        return not ("GET /api/status" in message and " 200 " in message)
+
+
 def serve(host: str, port: int) -> None:
     """Listen until the process ends."""
+    logging.getLogger("werkzeug").addFilter(_QuietPolling())
     # load_dotenv=False: Flask would otherwise read a .env from the current
     # directory into the environment, so running the panel from a checkout
     # (or any folder with a stray .env) silently overrode the home directory's
