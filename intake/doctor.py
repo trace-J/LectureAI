@@ -223,43 +223,30 @@ def check_microphone() -> Check:
 
 
 RETIRED_SIGNIN_KEYS = ("PANEL_GOOGLE_CLIENT_ID", "PANEL_GOOGLE_CLIENT_SECRET",
-                       "PANEL_ALLOWED_EMAILS")
+                       "PANEL_ALLOWED_EMAILS", "PANEL_PUBLIC_URL",
+                       "PANEL_SECRET_KEY")
 
 
 def _retired_signin_keys() -> list[str]:
-    """Settings from the panel's old Google sign-in still sitting in .env."""
+    """Settings from the panel's old sign-ins still sitting in .env."""
     from intake import setup_wizard
     values = setup_wizard.read_env(config.ENV_FILE)
     return [k for k in RETIRED_SIGNIN_KEYS if values.get(k)]
 
 
 def check_web_signin() -> Check | None:
-    """How the panel on the web lets people in. Nothing when it is not published.
+    """Settings from a sign-in the panel no longer has. Nothing when clean.
 
-    Reported once PANEL_PUBLIC_URL is set or the Mac is signed in to an
-    account, since either says the panel is meant to be reached over the
-    web. A panel that is neither needs no web sign-in, so that is not a
-    finding.
+    The panel has no sign-in of its own any more: the account service's
+    relay is the login, and check_panel_web() reports that. All that is
+    left to say here is that .env still carries keys nothing reads.
     """
-    from intake import account, signin
     leftover = _retired_signin_keys()
-    note = ("; " + ", ".join(leftover) + " in .env belong to the panel's old sign-in, "
-            "which is gone, and can be deleted" if leftover else "")
-    if signin.mode() == "account":
-        acct = account.load()
-        back = (f"the service returns to {config.PANEL_PUBLIC_URL.rstrip('/')}"
-                f"{signin.ACCOUNT_CALLBACK_PATH}" if config.PANEL_PUBLIC_URL else
-                "PANEL_PUBLIC_URL unset, so the return address follows the "
-                "request's Host header; set it if the tunnel rewrites that")
-        return Check("web sign-in", True,
-                     f"through the Syllabus account of {acct.email}; {back}{note}")
-    if not config.PANEL_PUBLIC_URL and not leftover:
+    if not leftover:
         return None
-    return Check("web sign-in", False,
-                 f"this Mac is not signed in to a Syllabus account, so every request "
-                 f"through the tunnel is refused{note}",
-                 "open the Setup page and choose Sign in to a Syllabus account",
-                 required=False)
+    return Check("web sign-in", True,
+                 f"{', '.join(leftover)} in .env belong to the panel's old "
+                 f"sign-ins, which are gone, and can be deleted")
 
 
 def check_panel_web() -> Check | None:

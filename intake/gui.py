@@ -443,11 +443,12 @@ def status():
         # Named rather than rolled up, so the banner can say what is actually
         # missing instead of asking for everything.
         "setup_needs": _setup_needs(),
-        # Who is looking, when the request came through the relay or the tunnel.
+        # Who is looking, when the request came through the relay. Nobody,
+        # always, on this Mac: a local request is never gated.
         "signed_in_as": g.get("viewer", ""),
-        # Through the relay the sign-in is the account service's, so its
-        # sign-out is there; through the tunnel it is this panel's own.
-        "signout_url": (account.url() + "/logout") if g.get("relayed") else "/logout",
+        # The sign-in is the account service's, so the sign-out is there too.
+        # Empty when nobody is signed in, which is when the page hides it.
+        "signout_url": (account.url() + "/logout") if g.get("viewer") else "",
         # The panel's place on the web, and whether the socket to it is up.
         "relay": relay.status(),
         # The Syllabus account this Mac is claimed into, if any. File only;
@@ -968,8 +969,10 @@ def main(argv: list[str] | None = None) -> int:
               f"anyone who can reach it can start and stop processes, read "
               f"pipeline.log, and rewrite the keys in .env. Keep it on this Mac, "
               f"or put something that authenticates in front of it (an SSH "
-              f"tunnel, or a Cloudflare Tunnel with this Mac signed in to a Syllabus account) and pass --expose "
-              f"to say you have.", file=sys.stderr, flush=True)
+              f"tunnel, say) and pass --expose to say you have. To reach the "
+              f"panel from elsewhere, sign this Mac in to a Syllabus account "
+              f"instead: the account service relays it, with its own login in "
+              f"front.", file=sys.stderr, flush=True)
         return 2
 
     # The panel refuses a request addressed to a hostname that is not this

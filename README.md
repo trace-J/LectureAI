@@ -413,16 +413,19 @@ address.
 Before the relay, the only panel on the web was this author's, at
 `syllabus.maincoursemedia.com`, through a Cloudflare Tunnel (`cloudflared`,
 run as its own launch agent) to `127.0.0.1:5173`. Anyone arriving that way
-was sent to the account service to sign in and came back with a one-time
-code that the panel traded for the account using its device token
-(`intake/signin.py`); the account's owner was the one person allowed. That
-panel needed `PANEL_PUBLIC_URL` set, because the tunnel's ingress rewrote
-the Host header on the way in, and kept a session in a signed cookie keyed
-by `.work/panel-secret` (or `PANEL_SECRET_KEY` in `.env`). The tunnel, the
-hostname, and the setting were retired on 2026-09-15 once the relay had
-carried that panel; the code behind that road (the Cf-Ray gate, `/login`,
-`/account/callback`, and the service's `/panel/authorize` and
-`/panel/exchange`) is still present and goes next.
+signed in at the panel itself, which sent them to the account service and
+traded the code it sent back for the account. The tunnel, the hostname, and
+its `PANEL_PUBLIC_URL` and `PANEL_SECRET_KEY` settings were retired on
+2026-09-15 once the relay had carried that panel; the code behind that road
+went on 2026-09-17, so the panel now has no sign-in of its own at all. The
+DNS record is gone too: `syllabus.maincoursemedia.com` no longer resolves,
+and the panel's address is the relay's.
+
+What is left of it is a line in the doctor. `PANEL_PUBLIC_URL`,
+`PANEL_SECRET_KEY`, and the older `PANEL_GOOGLE_CLIENT_ID`,
+`PANEL_GOOGLE_CLIENT_SECRET` and `PANEL_ALLOWED_EMAILS` are read by nothing;
+`intake doctor` says so if any of them are still sitting in `.env`, so they
+can be deleted.
 
 Both the recorder and the watcher are started detached, on purpose, so
 closing the panel abandons neither. A recording keeps going if the panel

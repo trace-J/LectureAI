@@ -96,7 +96,7 @@ def _boom():
 def t1():
     frames = relay.serve(echo, req("/e/x", query="y=1", headers={
         "Accept": "application/json", "Cookie": "session=stolen", "X-Forwarded-For": "1.2.3.4",
-        "Cf-Ray": "abc"}))
+        "X-Request-Id": "abc"}))
     assert len(frames) == 1, frames
     f = frames[0]
     assert f["t"] == "res" and f["id"] == "r1" and f["status"] == 200 and f["more"] is False, f
@@ -197,7 +197,7 @@ def t7():
         res = client.get("/api/status")
         assert res.status_code == 200
         s = res.get_json()
-        assert s["signed_in_as"] == "" and s["signout_url"] == "/logout", s
+        assert s["signed_in_as"] == "" and s["signout_url"] == "", s
         assert s["relay"]["state"] == "off" and s["relay"]["url"] == "", s["relay"]
         html = client.get("/").get_data(as_text=True)
         assert 'const BASE = "";' in html and 'href="/setup"' in html, "local pages are unchanged"

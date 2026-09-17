@@ -1281,9 +1281,8 @@ function render(s) {
   if (s.signed_in_as) {
     viewer.appendChild(document.createTextNode("Signed in as " + s.signed_in_as + " \u00b7 "));
     const out = document.createElement("a");
-    // Through the relay the sign-in is the account service's, so signing
-    // out happens there; through the tunnel it is this panel's own.
-    out.href = s.signout_url || "/logout"; out.textContent = "Sign out";
+    // The sign-in is the account service's, so signing out happens there.
+    out.href = s.signout_url; out.textContent = "Sign out";
     viewer.appendChild(out);
   }
   viewer.hidden = !viewer.textContent;
