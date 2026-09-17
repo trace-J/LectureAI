@@ -233,6 +233,38 @@ def _current_class() -> str | None:
     return None if course == config.UNKNOWN_COURSE else course
 
 
+def _join(parts: list[str]) -> str:
+    """"a", "a and b", "a, b and c"."""
+    if len(parts) < 3:
+        return " and ".join(parts)
+    return ", ".join(parts[:-1]) + f" and {parts[-1]}"
+
+
+def _setup_needs() -> list[str]:
+    """What is actually missing before a lecture can be processed.
+
+    The dashboard used to say "Nothing is set up yet ... to add your keys and
+    class schedule" whenever this was non-empty, which was wrong twice over
+    for a signed-in Mac with Drive connected and no schedule: nothing was the
+    wrong count, and keys were the wrong thing. Worse, it sent that user to a
+    page that tells them "Nothing to do here" about keys and hides the fields,
+    so following the instruction led nowhere.
+
+    Returns the missing pieces in the order the Setup page presents them.
+    """
+    needs = []
+    if not account.managed() and not (config.OPENAI_API_KEY and config.ANTHROPIC_API_KEY):
+        needs.append("API keys")
+    try:
+        if not config.courses():
+            needs.append("a class schedule")
+    except config.ScheduleError:
+        # Not the same as having none, and the old rollup could not tell them
+        # apart: the file is there and unreadable, and saving rewrites it.
+        needs.append("a readable class schedule")
+    return needs
+
+
 def _configured() -> bool:
     """Whether the pipeline can run at all: somewhere to spend, and classes.
 
@@ -391,6 +423,9 @@ def status():
         "courses": _courses(),
         "now_class": _current_class(),
         "configured": _configured(),
+        # Named rather than rolled up, so the banner can say what is actually
+        # missing instead of asking for everything.
+        "setup_needs": _setup_needs(),
         # Who is looking, when the request came through the relay or the tunnel.
         "signed_in_as": g.get("viewer", ""),
         # Through the relay the sign-in is the account service's, so its
@@ -736,8 +771,11 @@ def setup_save():
 def doctor_report():
     checks = doctor.run_checks()
     return jsonify({
+        # fix_web when the check has one: the page cannot work out from a CLI
+        # instruction whether its own form can carry it out.
         "checks": [{"name": c.name, "ok": c.ok, "detail": c.detail,
-                    "fix": c.fix, "required": c.required} for c in checks],
+                    "fix": c.fix_web or c.fix, "required": c.required,
+                    "fix_is_web": bool(c.fix_web)} for c in checks],
         # Not called "ok": the page's fetch helper reads ok=false as a failed
         # request, and a doctor report with a failing check is a good report.
         "healthy": all(c.ok or not c.required for c in checks),
@@ -919,9 +957,10 @@ def prepare(host: str, port: int) -> str:
     """
     url = start_url(host, port)
     print(f"{config.PROFILE.title} control panel:  {url}", file=sys.stderr, flush=True)
-    if not _configured():
-        print("  nothing is set up yet, so the Setup page opens first",
-              file=sys.stderr, flush=True)
+    needs = _setup_needs()
+    if needs:
+        print(f"  the Setup page opens first: this Mac still needs "
+              f"{_join(needs)}", file=sys.stderr, flush=True)
     # Say so now, in the terminal, if a lecture is already being recorded;
     # the page will show it too once it loads.
     _current_recorder()

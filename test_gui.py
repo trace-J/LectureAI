@@ -1437,6 +1437,44 @@ def t43():
         config.RECORDING_STATE_FILE.unlink(missing_ok=True)
 results.append(run("two clients pressing Record open one microphone, not two", t43))
 
+
+def t44():
+    # The dashboard told a signed-in Mac with Drive connected "Nothing is set
+    # up yet ... to add your keys and class schedule", then linked to a page
+    # that says it needs no keys of its own and hides the fields. Both halves
+    # of the sentence were wrong; only the schedule was missing.
+    from intake import account
+    home = tmp / "needs-home"
+    home.mkdir()
+    point_config_at(home)
+    try:
+        assert gui._setup_needs() == ["API keys", "a readable class schedule"], \
+            gui._setup_needs()
+
+        config.SCHEDULE_FILE.write_text(
+            'classes = [ { day = "Mon", start = 9, course = "ENTR-4306" } ]\n'
+            "tolerance_minutes = 45\n")
+        config.reload()
+        assert gui._setup_needs() == ["API keys"], gui._setup_needs()
+
+        # Signed in: the account provides the keys, so nothing is missing.
+        account.save(account.Account(
+            token="syd_n", account_id="a1", email="me@example.com", name="Me",
+            device_id="d1", device_name="This Mac", profile="syllabus",
+            url=config.ACCOUNTS_URL, claimed_at="2026-09-15T00:00:00Z"))
+        assert gui._setup_needs() == [], gui._setup_needs()
+        assert client.get("/api/status").get_json()["setup_needs"] == []
+
+        # A schedule that exists but cannot be read is not the same as none,
+        # and the rolled-up boolean could not tell them apart.
+        config.SCHEDULE_FILE.write_text("this is not toml")
+        config.reload()
+        assert gui._setup_needs() == ["a readable class schedule"], gui._setup_needs()
+    finally:
+        account.forget()
+        point_config_at(setup_home)
+results.append(run("the dashboard names what is missing, not everything", t44))
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

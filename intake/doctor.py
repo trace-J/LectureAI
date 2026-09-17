@@ -26,6 +26,12 @@ class Check:
     detail: str          # what was found
     fix: str = ""        # what to do about it, shown only on failure
     required: bool = True
+    # What to do about it in the panel, when that is not the same thing.
+    # The page used to rewrite any fix mentioning `intake setup` into "fill in
+    # the section above and save", which is right for a missing key and wrong
+    # for anything the Setup form cannot do. A check that knows the difference
+    # says so here instead of being guessed at by a regular expression.
+    fix_web: str = ""
 
 
 def check_python() -> Check:
@@ -308,16 +314,35 @@ def check_account() -> Check | None:
 
 
 def check_legacy() -> Check | None:
-    """Only reported when an older install's data has not been moved yet."""
-    found = config.legacy_files()
+    """An older install's data, for as long as it is still sitting there.
+
+    Reported whether or not this install is set up. It used to go quiet the
+    moment the home had a .env, which meant saving Setup made the whole
+    migration disappear from the doctor, the CLI and the wizard at once —
+    and saving Setup is the one action that moves nothing.
+    """
+    found = config.legacy_leftovers()
     if not found:
         return None
     roots = " and ".join(sorted({str(config.legacy_root(p)) for p in found}))
     names = ", ".join(p.name for p in found[:4]) + (" ..." if len(found) > 4 else "")
-    return Check("older install", False,
-                 f"{len(found)} data file(s) still in {roots}: {names}",
-                 f"intake setup (it offers to move them into {config.HOME_DIR})",
-                 required=False)
+    detail = f"{len(found)} data file(s) still in {roots}: {names}"
+    if config.legacy_files():
+        # Not set up here yet, so the wizard can still offer to do it.
+        return Check("older install", False, detail,
+                     f"intake setup (it offers to move them into {config.HOME_DIR})",
+                     required=False,
+                     fix_web="finish setup in a terminal with `intake setup`, "
+                             "which offers to move them; saving this page does not")
+    # Already set up, so nothing is going to offer any more. Say what to do
+    # rather than say nothing, which is what this did before.
+    return Check("older install", False, detail,
+                 f"move them into {config.HOME_DIR} yourself; this install is "
+                 f"already set up, so nothing will offer to do it for you",
+                 required=False,
+                 fix_web=f"move them into {config.HOME_DIR} yourself. Saving this "
+                         f"page does not move recordings, and this install is "
+                         f"already set up, so nothing will offer to")
 
 
 def check_old_home() -> Check | None:

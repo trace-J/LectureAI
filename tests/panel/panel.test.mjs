@@ -198,6 +198,64 @@ await run("signing out brings back this Mac's own key fields", async () => {
   await page.close();
 });
 
+// --- R3: the banner names what is missing ----------------------------------
+
+await run("the setup banner names what is missing, and nothing else", async () => {
+  const cases = [
+    [[], null],
+    [["API keys"], "API keys"],
+    [["a class schedule"], "a class schedule"],
+    [["API keys", "a class schedule"], "API keys and a class schedule"],
+  ];
+  for (const [needs, expected] of cases) {
+    const page = loadPage(DIR, "index.html", {
+      routes: { "/api/status": like("/api/status", { configured: !needs.length, setup_needs: needs }) },
+    });
+    await page.window.poll();
+    await page.settle();
+    const flash = page.$("setupFlash");
+    if (expected === null) {
+      equal(flash.style.display, "none", "a fully set up Mac was shown the setup banner");
+    } else {
+      equal(flash.style.display, "block", `${needs} showed no banner`);
+      assert(flash.textContent.includes(expected),
+        `the banner does not name what is missing: ${flash.textContent.trim()}`);
+      // The sentence that sent a signed-in user looking for keys they do
+      // not have, and a page that tells them there is nothing to do.
+      assert(!/Nothing is set up yet/i.test(flash.textContent),
+        `the banner still claims nothing is set up: ${flash.textContent.trim()}`);
+      if (!needs.includes("API keys")) {
+        assert(!/key/i.test(flash.textContent),
+          `the banner asks for keys that are not missing: ${flash.textContent.trim()}`);
+      }
+    }
+    await page.close();
+  }
+});
+
+// --- R4: the panel does not claim Save can do what Save cannot -------------
+
+await run("a fix the form cannot carry out is not rewritten into one it can", async () => {
+  const doctorReport = like("/api/doctor");
+  doctorReport.checks = [{
+    name: "older install", ok: false,
+    detail: "3 data file(s) still in /Users/x/.lectureai: pipeline.log ...",
+    fix: "move them into ~/.intake/syllabus yourself. Saving this page does not "
+       + "move recordings, and this install is already set up.",
+    required: false, fix_is_web: true,
+  }];
+  const page = loadPage(DIR, "setup.html", {
+    routes: setupRoutes({ "/api/doctor": doctorReport }),
+  });
+  await page.window.checkup();
+  await page.settle();
+  const shown = page.$("checks").textContent;
+  assert(!/fill in the section above and save/.test(shown),
+    `the page told the user to save, which moves nothing: ${shown.trim()}`);
+  assert(/move them into/.test(shown), `the real instruction was dropped: ${shown.trim()}`);
+  await page.close();
+});
+
 // --- The relay road --------------------------------------------------------
 
 await run("a relayed page writes every request under its device path", async () => {
