@@ -1102,117 +1102,51 @@ results.append(run("the Setup page claims this Mac into an account and signs it 
 
 
 def t36():
-    """Through Cloudflare, a Mac signed in to an account lets in its owner via the
-    account service, and the old allowlist stops counting until it is signed out."""
-    from urllib.parse import parse_qs, urlparse
+    """The panel has no sign-in of its own any more: the tunnel's road is gone.
+
+    What replaced it is the relay (t?? in test_relay.py), where the account
+    service is the sign-in. All that is asserted here is that the old road
+    is really closed and did not leave a hole behind it.
+    """
     from intake import account, signin
-    via = {"Cf-Ray": "8a1b2c3d4e5f-DFW"}
-    calls = []
-    exchange = {"account": {"id": "a1", "email": "Owner@Example.com", "name": "Owner"}}
-
-    def service(method, url, headers, body, timeout):
-        path = url.split("accounts.test", 1)[1]
-        calls.append((method, path, headers.get("Authorization"), body))
-        if path == "/device/public-url":
-            return 200, {"ok": True}
-        if path == "/panel/exchange":
-            return (200, exchange) if body["code"] == "good" else (400, {"error": "invalid_grant"})
-        raise AssertionError(path)
-
-    account.transport = service
     account.cancel_claim()
     config.ACCOUNTS_URL = "https://accounts.test"
-    config.PANEL_PUBLIC_URL = "https://panel.example.com"
-    signin.reset()
     try:
-        # Not signed in to an account: everything through the tunnel is a 503
-        # that says what to do; the Mac itself is never gated.
         account.forget()
-        assert signin.mode() == ""
         with gui.app.test_client() as client:
-            res = client.get("/", headers=via)
-            assert res.status_code == 503 and "Setup page" in res.get_data(as_text=True), res.status_code
-            assert client.get("/login", headers=via).status_code == 503
-            assert client.get("/account/callback?state=x&code=y", headers=via).status_code == 503
-            res = client.get("/api/status", headers=via)
-            assert res.status_code == 503 and "Syllabus account" in res.get_json()["error"], res.get_json()
-            assert client.get("/api/status").status_code == 200, "local requests are never gated"
-            check = doctor.check_web_signin()
-            assert check is not None and not check.ok and not check.required, check
+            # The tunnel's routes are gone, not merely refused.
+            for path in ("/login", "/account/callback?state=x&code=y", "/logout"):
+                assert client.get(path).status_code == 404, (path, client.get(path).status_code)
 
-        account.save(account.Account("syd_t", "a1", "owner@example.com", "Owner", "d1", "Test Mac",
-                                     "syllabus", "https://accounts.test", "x"))
-        with gui.app.test_client() as client:
-            assert signin.mode() == "account"
-            # Nobody yet: the page goes to /login, the API gets 401.
-            assert client.get("/api/status", headers=via).status_code == 401
-            assert client.get("/", headers=via).status_code == 302
-            # A cookie that names no account, as the old allowlist sign-in issued, is nobody.
-            client.set_cookie(signin.SESSION_COOKIE, signin._signer().dumps({"email": "owner@example.com"}))
-            assert client.get("/api/status", headers=via).status_code == 401
-            client.delete_cookie(signin.SESSION_COOKIE)
+            # Cf-Ray used to stand the Host check down, so that the tunnel's
+            # own hostname could reach the panel. Nothing does that now: a
+            # request addressed to a name that is not this Mac's is refused
+            # whoever forwarded it.
+            for headers in ({"Host": "syllabus.maincoursemedia.com"},
+                            {"Host": "syllabus.maincoursemedia.com", "Cf-Ray": "8a1b2c3d4e5f-DFW"}):
+                res = client.get("/api/status", headers=headers)
+                assert res.status_code == 403, (headers, res.status_code)
+                assert "somebody else's name for it" in res.get_json()["error"], res.get_json()
 
-            # /login goes to the account service, naming this device and where to come back.
-            res = client.get("/login?next=/setup", headers=via)
-            assert res.status_code == 302, res.status_code
-            to = urlparse(res.headers["Location"])
-            assert to.scheme + "://" + to.netloc + to.path == "https://accounts.test/panel/authorize", to
-            q = parse_qs(to.query)
-            assert q["device"] == ["d1"] and q["state"], q
-            assert q["redirect_uri"] == ["https://panel.example.com/account/callback"], q
-            assert calls[-1][:3] == ("POST", "/device/public-url", "Bearer syd_t"), calls[-1]
-            assert calls[-1][3] == {"public_url": "https://panel.example.com"}, calls[-1]
-            state = q["state"][0]
-
-            # Wrong state, no code, a refused code: no session.
-            assert client.get("/account/callback?state=nope&code=good", headers=via).status_code == 400
-            assert client.get(f"/account/callback?state={state}", headers=via).status_code == 400
-            assert client.get(f"/account/callback?state={state}&code=bad", headers=via).status_code == 400
-            assert client.get("/api/status", headers=via).status_code == 401
-            # A code that names some other account: refused.
-            exchange["account"] = {"id": "a2", "email": "other@example.com"}
-            assert client.get(f"/account/callback?state={state}&code=good", headers=via).status_code == 403
-            exchange["account"] = {"id": "a1", "email": "Owner@Example.com", "name": "Owner"}
-
-            # The owner: in, and sent on to where they were going.
-            res = client.get(f"/account/callback?state={state}&code=good", headers=via)
-            assert res.status_code == 302 and res.headers["Location"] == "/setup", \
-                (res.status_code, res.headers.get("Location"), res.get_data(as_text=True))
-            assert calls[-1][:3] == ("POST", "/panel/exchange", "Bearer syd_t") and calls[-1][3] == {"code": "good"}
-            res = client.get("/api/status", headers=via)
-            assert res.status_code == 200 and res.get_json()["signed_in_as"] == "owner@example.com", res.get_json()
-            assert client.get("/api/status").get_json()["signed_in_as"] == "", "local requests are never gated"
-
-            # Doctor says how the web sign-in works now, and flags leftovers in .env.
-            check = doctor.check_web_signin()
-            assert check.ok and "owner@example.com" in check.detail and "account" in check.detail, check
-            assert "can be deleted" not in check.detail, check
-            config.ENV_FILE.write_text("OPENAI_API_KEY=x\nPANEL_ALLOWED_EMAILS=old@example.com\n")
-            check = doctor.check_web_signin()
-            assert "PANEL_ALLOWED_EMAILS" in check.detail and "can be deleted" in check.detail, check
-            config.ENV_FILE.unlink()
-
-            # A tampered cookie is nobody; the real one still counts.
-            raw = client.get_cookie(signin.SESSION_COOKIE).value
-            client.set_cookie(signin.SESSION_COOKIE, raw[:-3] + "xyz")
-            assert client.get("/api/status", headers=via).status_code == 401
-            client.set_cookie(signin.SESSION_COOKIE, raw)
-            assert client.get("/api/status", headers=via).status_code == 200
-
-            # Signed out of the account: the session stops counting at once.
-            account.forget()
-            assert signin.mode() == ""
-            assert client.get("/api/status", headers=via).status_code == 503
-            # Signed in to a different account: the old session is nobody there.
-            account.save(account.Account("syd_u", "a2", "other@example.com", "Other", "d2", "Test Mac",
+            # This Mac is never gated, with or without an account.
+            assert client.get("/api/status").status_code == 200
+            assert client.get("/api/status").get_json()["signed_in_as"] == ""
+            account.save(account.Account("syd_t", "a1", "owner@example.com", "Owner", "d1", "Test Mac",
                                          "syllabus", "https://accounts.test", "x"))
-            assert client.get("/api/status", headers=via).status_code == 401
+            assert client.get("/api/status").status_code == 200
+
+            # Nothing to say about a web sign-in that no longer exists, until
+            # .env still carries its settings.
+            assert doctor.check_web_signin() is None
+            config.ENV_FILE.write_text("OPENAI_API_KEY=x\nPANEL_PUBLIC_URL=https://panel.example.com\n")
+            check = doctor.check_web_signin()
+            assert check is not None and "PANEL_PUBLIC_URL" in check.detail, check
+            assert "can be deleted" in check.detail, check
+            config.ENV_FILE.unlink()
     finally:
         account.forget()
-        config.PANEL_PUBLIC_URL = ""
         config.ACCOUNTS_URL = "off"
-        signin.reset()
-results.append(run("through Cloudflare, only the account's owner gets in, via the account service; nothing else does", t36))
+results.append(run("the panel's own web sign-in is gone, and left no hole behind it", t36))
 
 
 def t37():

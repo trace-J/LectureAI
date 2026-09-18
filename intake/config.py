@@ -275,11 +275,6 @@ def env_defaults(profile: Profile) -> dict[str, str]:
         "NOTION_PROP_KIND": "",
         "NOTION_PROP_SOURCE": "",
         "RECORD_DEVICE": "MacBook Pro Microphone",
-        "PANEL_GOOGLE_CLIENT_ID": "",
-        "PANEL_GOOGLE_CLIENT_SECRET": "",
-        "PANEL_ALLOWED_EMAILS": "",
-        "PANEL_PUBLIC_URL": "",
-        "PANEL_SECRET_KEY": "",
         "ACCOUNTS_URL": "https://syllabusaccounts.maincoursemedia.com",
         "DRIVE_SOURCE": "auto",
     }
@@ -547,24 +542,14 @@ RECORD_DEVICE = _setting("RECORD_DEVICE")
 
 # --- The panel on the web (gui.py) ------------------------------------------
 # The panel itself only ever listens on this Mac. To reach it from elsewhere
-# it is published through a Cloudflare Tunnel, and the Syllabus account this
-# Mac is signed in to (account.py, signin.py) is the login in front of it:
-# the account's owner may enter and nobody else. A Mac with no account
-# refuses every request that arrived through Cloudflare, so a tunnel that is
-# up before the Mac is signed in exposes nothing. Requests from this Mac are
-# never gated. (PANEL_GOOGLE_CLIENT_ID, PANEL_GOOGLE_CLIENT_SECRET, and
-# PANEL_ALLOWED_EMAILS, the panel's own Google sign-in with an allowlist,
-# were retired on 2026-09-14 and are no longer read.)
-# The address the panel is published at (https://syllabus.maincoursemedia.com).
-# Google is told to send the browser back here after signing in, so it has
-# to be the address Google knows, whatever hostname the tunnel hands the
-# panel: this tunnel rewrites Host to 127.0.0.1:5173 on the way in. Left
-# empty, the request's own Host header is used, which is right when the
-# tunnel passes it through and in the dev preview.
-PANEL_PUBLIC_URL = _setting("PANEL_PUBLIC_URL")
-# Signs the session cookie. Left empty, the panel generates one into .work
-# the first time it needs it and keeps using it.
-PANEL_SECRET_KEY = _setting("PANEL_SECRET_KEY")
+# it connects out to the account service's relay (relay.py), and the service
+# is the login in front of it: the account's owner may enter and nobody
+# else. A Mac with no account has no address on the web at all. Requests
+# from this Mac are never gated. (The panel's own sign-ins were retired:
+# PANEL_GOOGLE_CLIENT_ID, PANEL_GOOGLE_CLIENT_SECRET and PANEL_ALLOWED_EMAILS
+# with the Google allowlist on 2026-09-14, then PANEL_PUBLIC_URL and
+# PANEL_SECRET_KEY with the Cloudflare Tunnel on 2026-09-15. None are read;
+# the doctor says so if they are still sitting in .env.)
 # The Syllabus account service this panel can be claimed into (account.py).
 # The default is the real one; set it to "off" to hide accounts entirely,
 # or to a dev server's address to test against that.

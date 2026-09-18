@@ -1,114 +1,43 @@
-"""The panel's sign-in, when it is reached over the web.
+"""The gate in front of the panel, when it is reached from somewhere else.
 
-The panel listens on this Mac only. Two roads lead to it from elsewhere:
+The panel listens on this Mac only. One road leads to it from elsewhere:
 the account service's relay (relay.py), where the service itself is the
-sign-in and names the viewer in every request, and a Cloudflare Tunnel,
-where anyone who arrives has to sign in here first. This module is the
-gate for both and the sign-in for the second. Requests from this Mac carry no Cloudflare headers and are
-never gated, so http://127.0.0.1:5173 keeps working whatever the tunnel is
-doing.
+sign-in and names the viewer in every request. This module is the gate.
+Requests from this Mac are never gated, so http://127.0.0.1:5173 keeps
+working whatever the relay is doing.
 
 Who may enter is decided by the Syllabus account this Mac is signed in to
-(account.py): its owner, and nobody else. The sign-in itself happens on the
-account service, which holds the Google login; the panel never talks to
-Google here.
+(account.py): its owner, and nobody else. The service decides that before
+it relays anything, and names the viewer in the frame; the panel checks
+that the name still matches the account this Mac holds, and trusts nothing
+else.
 
-    /login             remembers where you were going, sends you to the
-                       account service's /panel/authorize
-    /account/callback  trades the one-time code the service sent back for
-                       the account, using this panel's device token, and
-                       sets the session cookie
-    /logout            clears the cookie
-
-A Mac that is not signed in to an account refuses every request that came
-through the tunnel with a 503 saying so, so a tunnel that is up before the
-Mac is signed in exposes nothing. (Until 2026-09-14 the panel could also run
-Google's sign-in itself, against an allowlist of addresses in .env; that path
-and its PANEL_GOOGLE_* and PANEL_ALLOWED_EMAILS settings are gone.)
-
-The session is a signed cookie naming the account and the email, good for
-30 days. It is signed with a key the panel generates once and keeps in the
-profile's .work folder, so a restart does not sign everyone out;
-PANEL_SECRET_KEY in .env overrides that, for anyone who wants to manage the
-key themselves. A session stops counting the moment this Mac is signed out
-of the account, or signed in to a different one.
+The panel has no sign-in of its own any more. Until 2026-09-14 it ran
+Google's sign-in itself against an allowlist in .env; until 2026-09-15 it
+ran a sign-in through the account service for anyone arriving over a
+Cloudflare Tunnel, with a session in a signed cookie. The tunnel, its
+hostname, and its PANEL_PUBLIC_URL and PANEL_SECRET_KEY settings were
+retired on 2026-09-15, and that code went with them.
 """
 
 from __future__ import annotations
 
-import secrets
-import sys
-from urllib.parse import urlencode
-
-from flask import Blueprint, Flask, g, jsonify, make_response, redirect, request
-from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from flask import Flask, g, jsonify, request
 
 from intake import account, config, relay
 
-bp = Blueprint("signin", __name__)
 
-ACCOUNT_CALLBACK_PATH = "/account/callback"
-
-SESSION_COOKIE = "syllabus_session"
-SESSION_DAYS = 30
-# The state of each attempt lives in a short-lived cookie between /login and
-# the callback. Ten minutes is plenty to pick an account.
-FLOW_COOKIE = "syllabus_signin"
-FLOW_SECONDS = 600
-
-# Routes that have to be reachable before there is a session.
-OPEN_PATHS = {"/login", ACCOUNT_CALLBACK_PATH, "/logout"}
-
-_serializer: URLSafeTimedSerializer | None = None
+def _page(message: str, code: int = 200):
+    return (f"<!doctype html><title>{config.PROFILE.title}</title>"
+            f"<div style='font: 15px/1.5 system-ui; max-width: 40em; margin: 4em auto'>"
+            f"<p>{message}</p></div>"), code
 
 
-def _say(msg: str) -> None:
-    print(msg, file=sys.stderr, flush=True)
-
-
-# --- The signing key ---------------------------------------------------------
-
-def secret_key() -> str:
-    """PANEL_SECRET_KEY from .env, else a key generated once into .work."""
-    if config.PANEL_SECRET_KEY:
-        return config.PANEL_SECRET_KEY
-    path = config.WORK_DIR / "panel-secret"
-    if path.exists():
-        key = path.read_text().strip()
-        if key:
-            return key
-    key = secrets.token_urlsafe(48)
-    config.write_private(path, key + "\n")
-    return key
-
-
-def _signer() -> URLSafeTimedSerializer:
-    global _serializer
-    if _serializer is None:
-        _serializer = URLSafeTimedSerializer(secret_key(), salt="panel-signin")
-    return _serializer
-
-
-def reset() -> None:
-    """Forget the cached signer, so the next request re-reads the key."""
-    global _serializer
-    _serializer = None
-
-
-# --- What is configured ------------------------------------------------------
-
-def configured() -> bool:
-    """Whether the web sign-in can work: this Mac is signed in to an account."""
-    return account.enabled() and account.load() is not None
-
-
-def mode() -> str:
-    """How the web sign-in works right now: "account", or "" for not at all.
-
-    Kept as a function with a name, because the doctor and the tests read
-    it, and because the answer used to have a second value.
-    """
-    return "account" if configured() else ""
+def refuse(code: int, message: str):
+    """A refusal shaped for the caller: JSON for the API, a page otherwise."""
+    if request.path.startswith("/api/"):
+        return jsonify({"error": message}), code
+    return _page(message, code)
 
 
 # --- The request at hand -----------------------------------------------------
@@ -121,103 +50,6 @@ def via_relay() -> bool:
     nothing else, so the mark cannot be forged from outside.
     """
     return bool(request.environ.get(relay.RELAY_KEY))
-
-
-def via_cloudflare() -> bool:
-    """Whether this request came in through Cloudflare's edge.
-
-    Cloudflare stamps every request it forwards with Cf-Ray, and a client
-    cannot remove it, so its absence means the request never left this Mac.
-    """
-    return "Cf-Ray" in request.headers
-
-
-def _external() -> bool:
-    """Whether the browser is talking to us over https (through the tunnel)."""
-    return via_cloudflare() or via_relay() \
-        or request.headers.get("X-Forwarded-Proto") == "https" or request.is_secure
-
-
-def _public_base() -> str:
-    """The address this panel is published at, as the account service should
-    see it: PANEL_PUBLIC_URL through the tunnel, else the request's own
-    origin.
-
-    PANEL_PUBLIC_URL is needed because this tunnel's ingress rewrites the
-    Host header to 127.0.0.1:5173 on the way in, so the panel cannot learn
-    its public hostname from the request. Left unset, or in the dev
-    preview, the request's own host is used.
-    """
-    if via_cloudflare() and config.PANEL_PUBLIC_URL:
-        return config.PANEL_PUBLIC_URL.strip().rstrip("/")
-    scheme = "https" if _external() else "http"
-    host = request.headers.get("X-Forwarded-Host") or request.host
-    return f"{scheme}://{host}"
-
-
-def _safe_next(value: str | None) -> str:
-    """A path on this panel to return to after signing in, never elsewhere."""
-    if value and value.startswith("/") and not value.startswith("//"):
-        return value
-    return "/"
-
-
-def viewer() -> str:
-    """Who the session cookie says is signed in, or '' when nobody is.
-
-    The session has to name the account this Mac is signed in to: a cookie
-    issued for a previous account, or before this Mac had one, is nobody,
-    and so is a forged or expired one.
-    """
-    raw = request.cookies.get(SESSION_COOKIE)
-    if not raw:
-        return ""
-    try:
-        data = _signer().loads(raw, max_age=SESSION_DAYS * 86400)
-    except (BadSignature, SignatureExpired):
-        return ""
-    email = str(data.get("email", "")).lower()
-    acct = account.load() if account.enabled() else None
-    if not email or acct is None:
-        return ""
-    return email if data.get("account_id") == acct.account_id else ""
-
-
-def _set_cookie(resp, name: str, value: str, max_age: int):
-    resp.set_cookie(name, value, max_age=max_age, httponly=True,
-                    secure=_external(), samesite="Lax", path="/")
-    return resp
-
-
-def _clear_cookie(resp, name: str):
-    resp.delete_cookie(name, path="/")
-    return resp
-
-
-def _page(message: str, code: int = 200, link: tuple[str, str] | None = None):
-    extra = f"<p><a href='{link[0]}'>{link[1]}</a></p>" if link else ""
-    return (f"<!doctype html><title>{config.PROFILE.title}</title>"
-            f"<div style='font: 15px/1.5 system-ui; max-width: 40em; margin: 4em auto'>"
-            f"<p>{message}</p>{extra}</div>"), code
-
-
-def refuse(code: int, message: str, next_path: str | None = None):
-    """A refusal shaped for the caller: JSON for the API, a page otherwise.
-
-    A 401 on a page is a redirect to /login instead, since that is what a
-    person in a browser needs; the API gets the status so the page's polling
-    can notice the session ended.
-    """
-    if request.path.startswith("/api/"):
-        return jsonify({"error": message}), code
-    if code == 401:
-        return redirect("/login?" + urlencode({"next": _safe_next(next_path)}))
-    return _page(message, code)
-
-
-NOT_SET_UP = ("This panel is reachable through Cloudflare, but the Mac that runs it "
-              "is not signed in to a Syllabus account, so nobody can sign in here. "
-              "On that Mac, open the Setup page and choose Sign in to a Syllabus account.")
 
 
 # --- Requests from somewhere else on the web ---------------------------------
@@ -284,7 +116,7 @@ def cross_site() -> str:
         return ""
 
     host = _host_name().lower()
-    if host and not EXPOSED and host not in LOCAL_HOSTS and not via_cloudflare():
+    if host and not EXPOSED and host not in LOCAL_HOSTS:
         return (f"this panel answers to localhost on this Mac, and {host} is "
                 f"somebody else's name for it")
 
@@ -322,9 +154,8 @@ def gate():
     """Run before every request. None lets it through."""
     g.viewer = ""
     g.relayed = False
-    # Before anything about who is signed in: a request that came from
-    # another site is refused whether it is local, tunnelled or relayed, and
-    # whether or not anybody is signed in here.
+    # Before anything about who is looking: a request that came from another
+    # site is refused whether it is local or relayed.
     elsewhere = cross_site()
     if elsewhere:
         return refuse(403, f"Refused: {elsewhere}.")
@@ -336,88 +167,7 @@ def gate():
             return refuse(403, "That account does not own this Syllabus.")
         g.viewer = who
         g.relayed = True
-        return None
-    if not via_cloudflare():
-        return None
-    if not configured():
-        return refuse(503, NOT_SET_UP)
-    if request.path in OPEN_PATHS:
-        return None
-    who = viewer()
-    if not who:
-        return refuse(401, "Sign in first.", request.full_path.rstrip("?"))
-    g.viewer = who
     return None
-
-
-# --- The routes --------------------------------------------------------------
-
-@bp.get("/login")
-def login():
-    """Send the browser to the account service, which knows who owns this Mac."""
-    acct = account.load() if account.enabled() else None
-    if acct is None:
-        return _page(NOT_SET_UP, 503)
-    state = secrets.token_urlsafe(24)
-    base = _public_base()
-    # Registered on every sign-in rather than once, so a panel whose address
-    # changed (a new hostname, a new PANEL_PUBLIC_URL) heals itself. A
-    # failure is logged and the sign-in goes ahead: the service will refuse
-    # the redirect and say why, which is a better message than none.
-    account.register_public_url(base)
-    _say(f"sign-in started through the account service; it will send the "
-         f"browser back to {base}{ACCOUNT_CALLBACK_PATH}")
-    flow = _signer().dumps({"state": state, "next": _safe_next(request.args.get("next"))})
-    params = {"device": acct.device_id, "redirect_uri": base + ACCOUNT_CALLBACK_PATH,
-              "state": state}
-    resp = make_response(redirect(account.url() + "/panel/authorize?" + urlencode(params)))
-    return _set_cookie(resp, FLOW_COOKIE, flow, FLOW_SECONDS)
-
-
-@bp.get(ACCOUNT_CALLBACK_PATH)
-def account_callback():
-    acct = account.load() if account.enabled() else None
-    if acct is None:
-        return _page(NOT_SET_UP, 503)
-    raw = request.cookies.get(FLOW_COOKIE, "")
-    try:
-        flow = _signer().loads(raw, max_age=FLOW_SECONDS) if raw else None
-    except (BadSignature, SignatureExpired):
-        flow = None
-    if not flow or request.args.get("state") != flow.get("state"):
-        return _page("That sign-in took too long or did not start here. "
-                     "Try again.", 400, ("/login", "Sign in"))
-    code = request.args.get("code", "")
-    if not code:
-        return _page("The account service sent no code back.", 400, ("/login", "Try again"))
-    try:
-        who = account.exchange_code(code)
-    except Exception as exc:
-        _say(f"sign-in failed: could not reach the account service: {exc}")
-        return _page("The account service could not be reached to finish the "
-                     "sign-in.", 502, ("/login", "Try again"))
-    if who is None:
-        _say("sign-in failed: the account service refused the code")
-        return _page("That sign-in could not be confirmed. Try again.", 400,
-                     ("/login", "Sign in"))
-    email = str(who.get("email", "")).lower()
-    if str(who.get("id", "")) != acct.account_id or not email:
-        _say(f"refused a sign-in for {email or 'an unknown account'}: not this "
-             f"Mac's account")
-        return _page("That account does not own this Syllabus.", 403,
-                     ("/login", "Try again"))
-    _say(f"signed in through the account: {email}")
-    session = _signer().dumps({"email": email, "account_id": acct.account_id})
-    resp = make_response(redirect(_safe_next(flow.get("next"))))
-    _clear_cookie(resp, FLOW_COOKIE)
-    return _set_cookie(resp, SESSION_COOKIE, session, SESSION_DAYS * 86400)
-
-
-@bp.route("/logout", methods=["GET", "POST"])
-def logout():
-    resp = make_response(_page("You are signed out.", 200, ("/login", "Sign in")))
-    _clear_cookie(resp, SESSION_COOKIE)
-    return _clear_cookie(resp, FLOW_COOKIE)
 
 
 #: Paths whose answers name the account, describe the settings, or carry a
@@ -425,7 +175,7 @@ def logout():
 #: whatever is between a phone and this Mac when the panel is reached through
 #: the relay.
 _NO_STORE_PREFIXES = ("/api/setup", "/api/account", "/api/drive", "/api/doctor",
-                      "/setup", "/signin", "/account")
+                      "/setup", "/account")
 
 
 def no_store(response):
@@ -438,6 +188,5 @@ def no_store(response):
 
 
 def install(app: Flask) -> None:
-    app.register_blueprint(bp)
     app.before_request(gate)
     app.after_request(no_store)

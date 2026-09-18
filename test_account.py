@@ -259,41 +259,6 @@ def t9():
 results.append(run("this Mac has a name to sign in under", t9))
 
 
-def t10():
-    service = reset()
-    assert account.register_public_url("https://panel.example.com") is False, "no account, nothing to register"
-    account.save(account.Account("syd_abc", "a1", "me@example.com", "Me", "d1", "Mac",
-                                 "syllabus", SERVICE, "x"))
-
-    def answers(method, url, headers, body, timeout):
-        service.calls.append((method, url, headers, body))
-        path = url[len(SERVICE):]
-        assert headers.get("Authorization") == "Bearer syd_abc", headers
-        if path == "/device/public-url":
-            return (200, {"ok": True}) if body["public_url"].startswith("https://") else (400, {"error": "invalid_request"})
-        if path == "/panel/exchange":
-            if body["code"] == "good":
-                return 200, {"account": {"id": "a1", "email": "Me@Example.com", "name": "Me"}}
-            return 400, {"error": "invalid_grant"}
-        raise AssertionError(path)
-    account.transport = answers
-    assert account.register_public_url("https://panel.example.com") is True
-    assert account.register_public_url("http://panel.example.com") is False, "the service's refusal is reported"
-    assert account.exchange_code("good") == {"id": "a1", "email": "Me@Example.com", "name": "Me"}
-    assert account.exchange_code("bad") is None
-
-    def down(*a, **k):
-        raise ConnectionError("offline")
-    account.transport = down
-    assert account.register_public_url("https://panel.example.com") is False
-    try:
-        account.exchange_code("good")
-        raise AssertionError("network trouble during the exchange must raise, so the page can say so")
-    except ConnectionError:
-        pass
-results.append(run("the panel registers its address and redeems a sign-in code with its token", t10))
-
-
 def t11():
     service = reset()
     account.forget_drive_token()

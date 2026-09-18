@@ -275,38 +275,6 @@ def sign_out() -> None:
     forget()
 
 
-def register_public_url(public_url: str) -> bool:
-    """Tell the service where this panel is published, so a web sign-in can
-    be sent back here. False when there is no account or it refused."""
-    acct = load()
-    if acct is None or not public_url:
-        return False
-    try:
-        status, _data = call("POST", "/device/public-url", {"public_url": public_url},
-                             token=acct.token)
-    except Exception as exc:
-        _say(f"could not register {public_url} with the account service: {exc}")
-        return False
-    if status != 200:
-        _say(f"the account service refused {public_url} as this panel's address ({status})")
-    return status == 200
-
-
-def exchange_code(code: str) -> dict | None:
-    """Trade a one-time code from /panel/authorize for the account it names.
-
-    Returns the service's account dict ({id, email, name}) or None when the
-    code is refused. Raises on network trouble, which the caller reports.
-    """
-    acct = load()
-    if acct is None:
-        return None
-    status, data = call("POST", "/panel/exchange", {"code": code}, token=acct.token)
-    if status != 200 or not isinstance(data.get("account"), dict):
-        return None
-    return data["account"]
-
-
 # --- Claiming this Mac ------------------------------------------------------
 
 _claim: dict = {"running": False, "user_code": "", "verification_uri": "",
