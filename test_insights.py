@@ -217,6 +217,70 @@ def t9():
 results.append(run("the streak counts consecutive covered classes back from the last one due", t9))
 
 
+# Classes that did not meet -------------------------------------------------
+# Friday Sep 11 held ENTR-4306 at 9 and RELI-3304 at 12. Both went
+# unrecorded in the log above, which is what drops the streak to zero.
+FRIDAY_OFF = {("ENTR-4306", "2026-09-11"), ("RELI-3304", "2026-09-11")}
+
+
+def t9b():
+    off = insights.compute(ROWS, SCHEDULE, NOW, canceled=FRIDAY_OFF)
+    t = off["totals"]
+    # The streak now runs back from Thursday: Thu 14:00 ACCT was recorded,
+    # Thu 12:00 ENTR-3306 was not. Friday is skipped, not counted as a miss.
+    assert t["streak"] == 1, t
+    # Two weeks of eight, less the two that did not meet.
+    assert t["due"] == 14 and t["covered"] == 6, t
+    assert t["canceled"] == 2, t
+    assert t["due_this_week"] == 6 and t["scheduled_this_week"] == 6, t
+    assert t["covered_this_week"] == 3, "excusing a class must not change what was recorded"
+    # The week's target drops with it, so the chart does not keep drawing a
+    # bar the student can no longer reach.
+    current = next(w for w in off["weeks"] if w["current"])
+    assert current["scheduled"] == 6, current
+    before = next(w for w in off["weeks"] if w["start"] == "2026-08-31")
+    assert before["scheduled"] == 8, "an earlier week is untouched"
+results.append(run("a class that did not meet leaves the streak and the target alone", t9b))
+
+
+def t9c():
+    off = insights.compute(ROWS, SCHEDULE, NOW, canceled=FRIDAY_OFF)
+    friday = next(d for d in off["week"]["days"] if d["date"] == "2026-09-11")
+    for c in friday["classes"]:
+        assert c["canceled"] is True, c
+        assert c["missed"] is False, "a class that did not meet is not a missed one"
+    thursday = next(d for d in off["week"]["days"] if d["date"] == "2026-09-10")
+    assert any(c["missed"] for c in thursday["classes"]), "a real miss still reads as one"
+    assert not any(c["canceled"] for c in thursday["classes"]), thursday
+results.append(run("the week grid marks a class that did not meet instead of missing it", t9c))
+
+
+def t9d():
+    # The recording is the answer to whether the class met, so a lecture
+    # filed against a canceled meeting counts for the student anyway.
+    off = insights.compute(ROWS, SCHEDULE, NOW,
+                           canceled={("ACCT-4321", "2026-09-10")})
+    t = off["totals"]
+    assert t["due"] == 16 and t["covered"] == 6, t
+    assert t["canceled"] == 0, t
+    slot = next(c for d in off["week"]["days"] if d["date"] == "2026-09-10"
+                for c in d["classes"] if c["course"] == "ACCT-4321")
+    assert slot["recorded"] is True and slot["canceled"] is False, slot
+results.append(run("a lecture filed against a canceled class still counts", t9d))
+
+
+def t9e():
+    # The notes come back on the slots they belong to, for the chip's tooltip.
+    off = insights.compute(ROWS, SCHEDULE, NOW,
+                           canceled={("RELI-3304", "2026-09-11"): "campus closed"})
+    slot = next(c for d in off["week"]["days"] if d["date"] == "2026-09-11"
+                for c in d["classes"] if c["course"] == "RELI-3304")
+    assert slot["canceled"] is True and slot["note"] == "campus closed", slot
+    # Nothing canceled at all is the same answer as before the feature.
+    assert insights.compute(ROWS, SCHEDULE, NOW, canceled=set()) == OUT
+results.append(run("a cancellation carries its reason, and none changes nothing", t9e))
+
+
 def t10():
     empty = insights.compute([], SCHEDULE, NOW)
     assert empty["totals"]["lectures"] == 0 and empty["totals"]["streak"] == 0, empty["totals"]

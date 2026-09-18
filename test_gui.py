@@ -17,7 +17,7 @@ from _test_home import fresh_home  # noqa: E402
 fresh_home()  # before config is imported, so nothing touches ~/.intake
 
 from intake import config  # noqa: E402
-from intake import doctor, gui  # noqa: E402
+from intake import cancellations, doctor, gui  # noqa: E402
 
 
 def run(label, fn):
@@ -336,6 +336,7 @@ def point_config_at(home):
     config.HOME_DIR = home
     config.ENV_FILE = home / ".env"
     config.SCHEDULE_FILE = home / "schedule.toml"
+    config.CANCELED_FILE = home / "canceled.json"
     config.TOKEN_FILE = home / "token.json"
     config.INBOX_DIR = home / "inbox"
     config.PROCESSED_DIR = home / "processed"
@@ -1458,6 +1459,85 @@ def t45():
         account.forget()
         point_config_at(setup_home)
 results.append(run("the page can ask what is left, and a failure is not a zero", t45))
+
+def t46():
+    # A class the professor called off is not a lapse in the habit the
+    # streak measures, so the panel lets the student say so.
+    from _test_home import SAMPLE_SCHEDULE
+    home = tmp / "canceled-home"
+    home.mkdir()
+    (home / "schedule.toml").write_text(SAMPLE_SCHEDULE)
+    point_config_at(home)
+    log = home / "pipeline.log"
+    log.write_text("\t".join([
+        "2026-09-08T15:36:18", "ACCT-4321", "lecture.m4a",
+        "ACCT-4321_2026-09-08_Job-Order-Costing", "https://drive.test/a"]) + "\n")
+    config.LOG_FILE = log
+    try:
+        before = client.get("/api/status").get_json()["insights"]["totals"]
+        # Tuesday's ACCT-4321 was recorded, so there is nothing to excuse.
+        res = client.post("/api/class/cancel",
+                          json={"course": "ACCT-4321", "date": "2026-09-08"})
+        assert res.status_code == 400, res.get_json()
+        assert "already filed" in res.get_json()["error"], res.get_json()
+
+        # A class that is not on the schedule that day cannot be called off.
+        res = client.post("/api/class/cancel",
+                          json={"course": "ACCT-4321", "date": "2026-09-07"})
+        assert res.status_code == 400 and "does not meet" in res.get_json()["error"], res.get_json()
+        res = client.post("/api/class/cancel",
+                          json={"course": "ACCT-4321", "date": "the 9th"})
+        assert res.status_code == 400 and "not a date" in res.get_json()["error"], res.get_json()
+
+        # Thursday's did not meet. It is written down, and repeating it is
+        # not an error or a second row.
+        for _ in range(2):
+            res = client.post("/api/class/cancel",
+                              json={"course": "ACCT-4321", "date": "2026-09-10",
+                                    "note": "  campus   closed  "})
+            assert res.status_code == 200, res.get_json()
+        rows = cancellations.load()
+        assert len(rows) == 1, rows
+        assert rows[0]["course"] == "ACCT-4321" and rows[0]["date"] == "2026-09-10", rows
+        assert rows[0]["note"] == "campus closed", "the note is stored as one line"
+        assert rows[0]["when"], "a cancellation records when it was made"
+
+        # The dashboard counts it as excused rather than missed: one fewer
+        # class due, and the same number covered. (The week grid always
+        # draws the current week, so what it looks like for a date in the
+        # past is test_insights' business, not this one's.)
+        after = client.get("/api/status").get_json()["insights"]["totals"]
+        assert after["canceled"] == 1, after
+        assert after["due"] == before["due"] - 1, (before, after)
+        assert after["covered"] == before["covered"], (before, after)
+
+        # And it can be taken back, twice over, without an error.
+        for _ in range(2):
+            res = client.post("/api/class/restore",
+                              json={"course": "ACCT-4321", "date": "2026-09-10"})
+            assert res.status_code == 200, res.get_json()
+        assert cancellations.load() == [], cancellations.load()
+    finally:
+        point_config_at(setup_home)
+results.append(run("a class that did not meet can be excused, and un-excused", t46))
+
+
+def t47():
+    # The file behind it is the only stored state the dashboard has. A
+    # damaged one must cost the streak, not the whole panel.
+    home = tmp / "canceled-broken"
+    home.mkdir()
+    point_config_at(home)
+    try:
+        for junk in ("", "not json", "{}", '[1, "two", {"course": "X"}]',
+                     '[{"course": "ACCT-4321", "date": "never"}]'):
+            config.CANCELED_FILE.write_text(junk)
+            assert cancellations.load() == [], junk
+            assert client.get("/api/status").status_code == 200, junk
+    finally:
+        point_config_at(setup_home)
+results.append(run("a damaged cancellations file is read as none, not as a crash", t47))
+
 
 print()
 print(f"{sum(results)}/{len(results)} passed")

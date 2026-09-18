@@ -151,11 +151,20 @@ def _parse_date(text: str) -> date | None:
 
 
 def compute(rows: list[dict], schedule: config.Schedule | None,
-            now: datetime | None = None) -> dict:
+            now: datetime | None = None,
+            canceled: "set[tuple[str, str]] | dict[tuple[str, str], str] | None" = None
+            ) -> dict:
     """Everything the dashboard shows, from the log rows and the schedule.
 
-    Takes both as arguments so it can be tested against a fake log and a
+    Takes them as arguments so it can be tested against a fake log and a
     fake week without touching a home directory or the clock.
+
+    `canceled` holds the (course, class date) pairs that did not meet (see
+    cancellations.py). Those meetings are not expected to have a recording,
+    so they leave the streak, the coverage rate, and the week's target
+    alone. A recording filed against one anyway still counts for the
+    student: the cancellation only ever excuses an absence, it never
+    discards a lecture.
     """
     now = now or datetime.now()
     today = now.date()
@@ -182,6 +191,20 @@ def compute(rows: list[dict], schedule: config.Schedule | None,
 
     def covered(slot: _Slot) -> dict | None:
         return filed.get((slot.course, slot.day.isoformat()))
+
+    # A set of (course, class date) pairs, or a mapping of those to the
+    # note the student left. Both are accepted so a caller with nothing to
+    # say does not have to invent an empty note for every row.
+    note_for = dict(canceled) if isinstance(canceled, dict) else {}
+    off = set(note_for) if note_for else set(canceled or ())
+
+    def called_off(slot: _Slot) -> bool:
+        """Whether this meeting was called off and stayed that way."""
+        return (slot.course, slot.day.isoformat()) in off and covered(slot) is None
+
+    def expected(slot: _Slot) -> bool:
+        """Whether a recording of this meeting is something to count on."""
+        return not called_off(slot)
 
     # --- per course ---------------------------------------------------------
     courses = []
@@ -221,10 +244,12 @@ def compute(rows: list[dict], schedule: config.Schedule | None,
             d = _parse_date(r["date"])
             if d is not None and monday <= d <= sunday:
                 counts[r["course"]] = counts.get(r["course"], 0) + 1
-        expected = len(meetings) if first_monday and monday >= first_monday else 0
+        # What that week asked for: its meetings, less the ones called off.
+        target = (sum(1 for slot in _slots(meetings, monday) if expected(slot))
+                  if first_monday and monday >= first_monday else 0)
         weeks.append({"start": monday.isoformat(), "counts": counts,
                       "total": sum(counts.values()),
-                      "scheduled": expected,
+                      "scheduled": target,
                       "current": monday == this_monday})
 
     # --- this week, as a grid -------------------------------------------------
@@ -249,7 +274,9 @@ def compute(rows: list[dict], schedule: config.Schedule | None,
                 "url": hit["url"] if hit else "",
                 "name": hit["name"] if hit else "",
                 "now": live_from <= now < slot.ends,
-                "missed": hit is None and now >= slot.due,
+                "missed": hit is None and now >= slot.due and expected(slot),
+                "canceled": called_off(slot),
+                "note": note_for.get((slot.course, slot.day.isoformat()), ""),
             })
         days.append({"day": name, "date": the_date.isoformat(),
                      "today": the_date == today, "classes": classes})
@@ -258,12 +285,17 @@ def compute(rows: list[dict], schedule: config.Schedule | None,
     # Every meeting from the week of the first filed lecture up to now that
     # has had time to be filed, in order, and whether it was.
     history: list[bool] = []
+    excused = 0
     if first_monday is not None and meetings:
         monday = first_monday
         while monday <= this_monday:
             for slot in _slots(meetings, monday):
-                if slot.due <= now:
+                if slot.due > now:
+                    continue
+                if expected(slot):
                     history.append(covered(slot) is not None)
+                else:
+                    excused += 1
             monday += timedelta(weeks=1)
     streak = 0
     for hit in reversed(history):
@@ -271,7 +303,8 @@ def compute(rows: list[dict], schedule: config.Schedule | None,
             break
         streak += 1
 
-    due_this_week = [s for s in week_slots if s.due <= now]
+    due_this_week = [s for s in week_slots if s.due <= now and expected(s)]
+    off_this_week = [s for s in week_slots if called_off(s)]
     this_week_rows = [r for r in lectures
                       if (d := _parse_date(r["date"])) is not None
                       and this_monday <= d <= this_monday + timedelta(days=6)]
@@ -289,11 +322,13 @@ def compute(rows: list[dict], schedule: config.Schedule | None,
             "actions": sum(r["actions"] for r in lectures),
             "first": first.isoformat() if first else "",
             "this_week": len(this_week_rows),
-            "scheduled_this_week": len(week_slots),
+            "scheduled_this_week": sum(1 for s in week_slots if expected(s)),
             "due_this_week": len(due_this_week),
             "covered_this_week": sum(1 for s in due_this_week if covered(s)),
+            "canceled_this_week": len(off_this_week),
             "due": len(history),
             "covered": sum(history),
             "streak": streak,
+            "canceled": excused,
         },
     }
