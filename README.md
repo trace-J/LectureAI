@@ -64,7 +64,8 @@ home: `~/.intake/syllabus/` for Syllabus, `~/.intake/sous/` for Sous. Each
 holds that profile's keys in `.env`, its schedule file (`schedule.toml` for
 Syllabus, `calls.toml` for Sous), the `inbox/` and `processed/` folders, the
 Drive token, the Syllabus account this Mac belongs to (`account.json`, if it
-has been signed in), and `pipeline.log`. Set `INTAKE_HOME` to put the whole `~/.intake`
+has been signed in), the classes that did not meet (`canceled.json`, if any
+have been marked), and `pipeline.log`. Set `INTAKE_HOME` to put the whole `~/.intake`
 root somewhere else (`LECTUREAI_HOME`, the variable's old name, still works
 when the new one is unset); the profile folders move with it. The code never
 keeps anything next to itself.
@@ -192,9 +193,9 @@ start and stop the watcher, see what's waiting in the inbox, and open recent
 lectures in Drive. It drives the same modules the CLI does, so a recording
 started here is identical to one started with `intake record`.
 
-The page is a dashboard, drawn entirely from `pipeline.log` and the
-schedule, so nothing on it is stored anywhere else and a line removed from
-the log disappears from it on the next poll:
+The page is a dashboard, drawn from `pipeline.log` and the schedule, so a
+line removed from the log disappears from it on the next poll. The one
+thing it stores of its own is the list of classes that did not meet, below:
 
 - **This week** is the schedule as a grid, one column per day, one chip per
   class. A chip is filled once a recording for that class is filed (click
@@ -202,19 +203,26 @@ the log disappears from it on the next poll:
   the class has ended with nothing filed. The lecture's date comes from the
   filed name (`ACCT-4321_2026-09-10_...`), not from when it was processed,
   so a recording synced from a phone days later still lands on the right
-  day.
+  day. Hovering a chip that has no recording shows a **Didn't meet**
+  button: the professor was out, the campus closed, an exam took the hour.
+  The chip is struck through, that class stops counting as missed, and the
+  streak runs straight through it. **Undo** puts it back. What was marked
+  is kept in `canceled.json` beside the schedule, one row per class
+  meeting; deleting the file puts every meeting back on the books.
 - **Pipeline**, right under the record button so it is never below the
   fold: the watcher as a switch, the five stages as a stepper that lights
   up while a lecture is being processed, and what is waiting in the inbox.
 - **Four tiles** beside it, two by two: recorded this week against the
   classes that have met so far, lectures filed in all, the streak of
-  consecutive classes recorded, and hours of audio filed. That last one is
+  consecutive classes recorded (classes that did not meet are skipped, and
+  the tile says how many), and hours of audio filed. That last one is
   counted from a seventh field the watcher now writes to `pipeline.log`
   (seconds of audio, transcript words, to-dos and key terms, as JSON), so
   it reads as a dash until the next lecture is processed; the older lines
   have nothing to measure.
 - **Lectures per week**, stacked by course for the last eight weeks, with a
-  hairline per week at what the schedule expected; hover a week for the
+  hairline per week at what the schedule expected, less any class that did
+  not meet; hover a week for the
   breakdown. **Recent lectures** beside it, matched to the chart's height
   and scrolling inside the card. Clicking a course in the chart's legend,
   or in the chips over the recent list, filters the list to that course.

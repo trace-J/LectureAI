@@ -156,6 +156,11 @@ def paths_for(profile: Profile, root: Path | None = None) -> dict[str, Path]:
         # it belongs to (see account.py). Absent for a panel with no account.
         "ACCOUNT_FILE": home / "account.json",
         "SCHEDULE_FILE": home / profile.schedule_filename,
+        # Classes that did not meet: the schedule says a class was expected,
+        # this file says it was called off. Kept beside the schedule because
+        # it is read the same way, as a correction to it (see
+        # cancellations.py).
+        "CANCELED_FILE": home / "canceled.json",
         # The id of the app's Drive root folder, cached so renaming or moving
         # the folder in Drive doesn't matter.
         "DRIVE_ROOT_CACHE": home / ".drive_root",
@@ -186,6 +191,7 @@ CREDENTIALS_FILE: Path
 TOKEN_FILE: Path
 ACCOUNT_FILE: Path
 SCHEDULE_FILE: Path
+CANCELED_FILE: Path
 DRIVE_ROOT_CACHE: Path
 _install_paths(PROFILE)
 

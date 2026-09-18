@@ -329,6 +329,75 @@ await run("a fix the form cannot carry out is not rewritten into one it can", as
   await page.close();
 });
 
+// --- Excusing a class that did not meet ------------------------------------
+
+/** A status payload whose week holds one missed class and one called off. */
+function weekWith(classes) {
+  const status = like("/api/status");
+  status.insights = structuredClone(status.insights);
+  status.insights.week = {
+    start: "2026-09-14",
+    days: [{ day: "Tue", date: "2026-09-15", today: false, classes }],
+  };
+  return status;
+}
+
+const MISSED = {
+  course: "ACCT-4321", hour: 14, recorded: false, url: "", name: "",
+  now: false, missed: true, canceled: false, note: "",
+};
+const OFF = { ...MISSED, missed: false, canceled: true, note: "campus closed" };
+
+await run("a class that did not meet reads as excused, not as a miss", async () => {
+  const page = loadPage(DIR, "index.html", {
+    routes: indexRoutes({ "/api/status": weekWith([OFF]) }),
+  });
+  await page.window.poll();
+  await page.settle();
+  const slot = page.$("week").querySelector(".slot");
+  assert(slot.classList.contains("canceled"), `the chip is not marked: ${slot.className}`);
+  assert(!slot.classList.contains("missed"), "a class that did not meet still reads as missed");
+  assert(/did not meet/.test(slot.textContent), `the chip does not say so: ${slot.textContent}`);
+  assert(/campus closed/.test(slot.getAttribute("title")), slot.getAttribute("title"));
+  equal(slot.querySelector(".slot-act").textContent, "Undo",
+    "an excused class offers no way back");
+  await page.close();
+});
+
+await run("the button excuses the class it sits on, and takes it back", async () => {
+  // The route answers, and the poll that follows is fed the same week, so
+  // the assertion is about what was asked for, not about a redraw.
+  const posted = [];
+  const page = loadPage(DIR, "index.html", {
+    routes: indexRoutes({
+      "/api/status": weekWith([MISSED]),
+      "/api/class/cancel": (body) => posted.push(body) && { ok: true },
+      "/api/class/restore": (body) => posted.push(body) && { ok: true },
+    }),
+  });
+  await page.window.poll();
+  await page.settle();
+  const btn = page.$("week").querySelector(".slot-act");
+  equal(btn.textContent, "Didn't meet", "a missed class offers no way to excuse it");
+
+  btn.click();
+  await page.settle();
+  equal(posted, [{ course: "ACCT-4321", date: "2026-09-15" }],
+    "the button did not send the class it belongs to");
+  const asked = page.calls.filter((c) => String(c.url).endsWith("/api/class/cancel"));
+  equal(asked.length, 1, "the cancel was sent more than once, or not at all");
+  equal(asked[0].method, "POST", "the cancel went out as a GET");
+
+  // And the other way, from a chip the route has since marked canceled.
+  page.window.renderWeek(weekWith([OFF]).insights);
+  page.$("week").querySelector(".slot-act").click();
+  await page.settle();
+  equal(posted.length, 2, "the undo sent nothing");
+  assert(page.calls.some((c) => String(c.url).endsWith("/api/class/restore")),
+    "the undo did not reach the restore route");
+  await page.close();
+});
+
 // --- The relay road --------------------------------------------------------
 
 await run("a relayed page writes every request under its device path", async () => {

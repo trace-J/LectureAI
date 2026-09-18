@@ -252,6 +252,28 @@
   .slot.now .time { color: var(--course); font-weight: 600; }
   .slot.missed { border-style: dashed; color: var(--muted); }
   .slot.missed .sw { opacity: .45; }
+  /* A class that was called off. Struck through rather than dimmed away:
+     it was on the schedule, it just did not happen, and the student needs
+     to see that the panel knows. */
+  .slot.canceled { border-style: dashed; color: var(--faint); background: var(--card); }
+  .slot.canceled .code { text-decoration: line-through; }
+  .slot.canceled .sw { opacity: .3; }
+  /* The button gets its own row inside the chip rather than floating over
+     the corner: a day column is narrow enough that an overlay covered the
+     course code, and a control nobody can find is no control at all. Quiet
+     until the chip is hovered, and always reachable by keyboard and touch. */
+  .slot-act {
+    display: block; width: 100%; margin-top: 3px;
+    font: inherit; font-size: 10px; font-weight: 500; line-height: 1;
+    padding: 3px 4px; border-radius: 6px; cursor: pointer; text-align: center;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    border: 1px solid var(--line); background: transparent; color: var(--muted);
+    opacity: .55; transition: opacity .12s ease;
+  }
+  .slot:hover .slot-act, .slot-act:focus-visible { opacity: 1; }
+  .slot-act:hover { background: var(--bg); color: var(--ink); }
+  .slot.canceled .slot-act { opacity: 1; }
+  .slot-act[disabled] { cursor: progress; opacity: .4; }
   /* Idle bars would read as a decorative dotted line; keep the space, hide the bars. */
   .levels:not(.live):not(.flat) { visibility: hidden; }
   .week-foot { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 14px; font-size: 11px; color: var(--muted); font-weight: 300; }
@@ -260,6 +282,7 @@
   .key.filled { background: var(--brand-soft); border-color: var(--brand); }
   .key.now { border-color: var(--brand); box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 25%, transparent); }
   .key.missed { border-style: dashed; }
+  .key.canceled { border-style: dashed; background: repeating-linear-gradient(135deg, var(--line) 0 2px, var(--card) 2px 4px); }
 
   /* Tiles -------------------------------------------------------------- */
   .tile { padding: 18px 20px 16px; }
@@ -576,6 +599,7 @@
         <span><i class="key now"></i>in session</span>
         <span><i class="key"></i>upcoming</span>
         <span><i class="key missed"></i>no recording</span>
+        <span><i class="key canceled"></i>class did not meet</span>
       </div>
     </div>
   </section>
@@ -953,6 +977,41 @@ function nextClassText(s) {
 // This week ----------------------------------------------------------------
 const TICK = '<svg class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
 
+// Saying a class did not meet, and taking it back. A class the professor
+// called off is not a lapse in the habit the streak is there to show, so
+// the panel lets the student excuse it and counts the week without it.
+function slotAction(c, day) {
+  const label = c.canceled ? "Undo" : "Didn't meet";
+  const hint = c.canceled
+    ? `Put ${c.course} on ${day} back on the schedule`
+    : `${c.course} did not meet on ${day}: do not count it as missed`;
+  return `<button type="button" class="slot-act" data-course="${escapeHtml(c.course)}"`
+    + ` data-date="${escapeHtml(day)}" data-canceled="${c.canceled ? "1" : ""}"`
+    + ` title="${escapeHtml(hint)}">${escapeHtml(label)}</button>`;
+}
+
+// One handler for the whole grid, bound once: the chips themselves are
+// rewritten on every poll, and a listener per chip would be rebound with
+// them several times a second.
+$("week").addEventListener("click", async (e) => {
+  const btn = e.target.closest(".slot-act");
+  if (!btn || btn.disabled) return;
+  const { course, date } = btn.dataset;
+  const undo = btn.dataset.canceled === "1";
+  btn.disabled = true;
+  try {
+    await api(undo ? "/api/class/restore" : "/api/class/cancel", { course, date });
+    flash(undo
+      ? `${course} on ${date} counts again.`
+      : `${course} on ${date} did not meet. It will not break your streak.`);
+  } catch (err) {
+    flash(err.message, true);
+  } finally {
+    btn.disabled = false;
+    poll();
+  }
+});
+
 function renderWeek(ins) {
   const t = ins.totals;
   const box = $("week");
@@ -962,23 +1021,35 @@ function renderWeek(ins) {
     $("weekSub").textContent = "";
     return;
   }
-  $("weekSub").textContent = t.scheduled_this_week
-    ? `${t.covered_this_week} of ${plural(t.due_this_week, "class", "classes")} so far recorded`
+  const excused = t.canceled_this_week
+    ? `, ${plural(t.canceled_this_week, "class", "classes")} did not meet`
+    : "";
+  $("weekSub").textContent = t.scheduled_this_week || t.canceled_this_week
+    ? `${t.covered_this_week} of ${plural(t.due_this_week, "class", "classes")} so far recorded${excused}`
     : "";
   box.innerHTML = days.map(d => {
     const date = localDate(d.date);
     const slots = d.classes.length ? d.classes.map(c => {
-      const cls = ["slot", c.recorded && "recorded", c.now && "now", c.missed && "missed"].filter(Boolean).join(" ");
-      const under = c.recorded ? TICK + "recorded" : c.now ? "in session" : c.missed ? "no recording" : hour12(c.hour);
+      const cls = ["slot", c.recorded && "recorded", c.canceled && "canceled",
+                   c.now && !c.canceled && "now", c.missed && "missed"].filter(Boolean).join(" ");
+      const under = c.canceled ? "did not meet"
+        : c.recorded ? TICK + "recorded"
+        : c.now ? "in session"
+        : c.missed ? "no recording" : hour12(c.hour);
       const inner = `<span class="line"><span class="sw"></span><span class="code">${escapeHtml(c.course)}</span></span>`
         + `<span class="time">${under}</span>`;
-      const title = c.recorded ? `Open ${escapeHtml(c.name)} in Drive`
+      const why = c.canceled && c.note ? `: ${escapeHtml(c.note)}` : "";
+      const title = c.canceled ? `${escapeHtml(c.course)} on ${escapeHtml(d.date)} did not meet${why}. It is not counted against the streak.`
+        : c.recorded ? `Open ${escapeHtml(c.name)} in Drive`
         : c.now ? `${escapeHtml(c.course)} is in session`
         : c.missed ? `${escapeHtml(c.course)} at ${hour12(c.hour)}: no recording was filed`
         : `${escapeHtml(c.course)} at ${hour12(c.hour)}`;
+      // A recorded class needs no excuse, so only the others carry the
+      // button: one to say the class was called off, one to take it back.
+      const act = c.recorded ? "" : slotAction(c, d.date);
       return c.recorded
         ? `<a class="${cls}" style="${courseStyle(c.course)}" href="${escapeHtml(c.url)}" target="_blank" rel="noopener" title="${title}">${inner}</a>`
-        : `<div class="${cls}" style="${courseStyle(c.course)}" title="${title}">${inner}</div>`;
+        : `<div class="${cls}" style="${courseStyle(c.course)}" title="${title}">${inner}${act}</div>`;
     }).join("") : '<div class="day-empty"></div>';
     return `<div class="day${d.today ? " today" : ""}">
       <div class="day-head"><div class="day-name">${d.day}</div><div class="day-num">${date.getDate()}</div></div>
@@ -1015,10 +1086,16 @@ function renderTiles(ins) {
       : "the first one lands here"));
 
   const rate = t.due ? Math.round(100 * t.covered / t.due) : null;
+  // Classes that did not meet are excused, not counted: the streak runs
+  // straight through them, and the tile says how many it skipped so the
+  // number is never a mystery.
+  const skipped = t.canceled ? ` · ${plural(t.canceled, "class", "classes")} did not meet` : "";
   tiles.push(tile("Class streak", t.streak, "",
     t.due
-      ? `${plural(t.streak, "class", "classes")} in a row recorded · ${rate}% of ${t.due} overall`
-      : "classes in a row recorded"));
+      ? `${plural(t.streak, "class", "classes")} in a row recorded · ${rate}% of ${t.due} overall${skipped}`
+      : t.canceled
+        ? `${plural(t.canceled, "class", "classes")} did not meet, none counted against you`
+        : "classes in a row recorded"));
 
   if (t.minutes) {
     const hours = t.minutes / 60;

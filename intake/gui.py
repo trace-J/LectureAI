@@ -30,12 +30,13 @@ import subprocess
 import sys
 import threading
 import webbrowser
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from flask import Flask, g, jsonify, render_template, request
 
-from intake import account, config, doctor, insights, relay, service, setup_wizard, signin, sync
+from intake import account, cancellations, config, doctor, insights, relay, service, setup_wizard
+from intake import signin, sync
 from intake import updates
 from intake import notion_tasks
 from intake import record as recording
@@ -325,7 +326,10 @@ def _insights() -> dict:
         schedule = config.schedule()
     except config.ScheduleError:
         schedule = None
-    return insights.compute(_log_rows(), schedule)
+    # Classes that were called off are not misses, so the streak and the
+    # coverage rate are counted without them (see cancellations.py).
+    off = {(r["course"], r["date"]): r["note"] for r in cancellations.load()}
+    return insights.compute(_log_rows(), schedule, canceled=off)
 
 
 def _processing(watcher_pid: int | None) -> dict | None:
@@ -664,6 +668,67 @@ def _schedule_rows() -> tuple[list[dict], int, str]:
             for m in sorted(loaded.meetings,
                             key=lambda m: (config.DAYS.index(m.day), m.hour))]
     return rows, loaded.tolerance_minutes, ""
+
+
+def _meeting_on(course: str, day: str) -> bool:
+    """Whether the schedule has `course` meeting on that date at all.
+
+    A cancellation has to name a real meeting. Without this, a typo writes
+    a row that excuses nothing and sits in the file forever, and the page
+    has no way to show that it did not take.
+    """
+    try:
+        meetings = config.schedule().meetings
+    except config.ScheduleError:
+        return False
+    weekday = date.fromisoformat(day).strftime("%a")
+    return any(m.course == course and m.day == weekday for m in meetings)
+
+
+def _filed_on(course: str, day: str) -> bool:
+    """Whether a lecture is already filed for that class meeting."""
+    return any(r["course"] == course and r["date"] == day for r in _log_rows())
+
+
+@app.post("/api/class/cancel")
+def class_cancel():
+    """Mark a class as one that did not meet, so it is not counted as missed.
+
+    The streak exists to show a habit, and a class the professor called off
+    is not a lapse in it. Everything about the meeting is still on the
+    schedule; this only says that this one date was not held, and
+    /api/class/restore takes it back.
+    """
+    payload = _body()
+    course = config.safe_course(_text(payload, "course"))
+    note = _text(payload, "note")
+    try:
+        day = cancellations.clean_date(payload.get("date"))
+    except cancellations.CancelError as exc:
+        raise _BadRequest(str(exc)) from None
+    if course == config.UNKNOWN_COURSE:
+        raise _BadRequest("say which course did not meet")
+    if not _meeting_on(course, day):
+        raise _BadRequest(f"{course} does not meet on {day}")
+    # A lecture that was filed is the answer to whether the class met, and
+    # it outranks anything typed afterward.
+    if _filed_on(course, day):
+        raise _BadRequest(f"a lecture is already filed for {course} on {day}")
+    cancellations.cancel(course, day, note, when=datetime.now().isoformat(timespec="seconds"))
+    return jsonify({"ok": True, "course": course, "date": day, "note": note})
+
+
+@app.post("/api/class/restore")
+def class_restore():
+    """Put a canceled meeting back on the books: it counts again."""
+    payload = _body()
+    course = config.safe_course(_text(payload, "course"))
+    try:
+        day = cancellations.clean_date(payload.get("date"))
+    except cancellations.CancelError as exc:
+        raise _BadRequest(str(exc)) from None
+    cancellations.restore(course, day)
+    return jsonify({"ok": True, "course": course, "date": day})
 
 
 @app.get("/api/setup")
