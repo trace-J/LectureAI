@@ -686,6 +686,12 @@ def t25():
     assert groq.api_key_setting == "GROQ_API_KEY"
     assert groq.max_bytes == 100 * MB
 
+    # Turbo is the same endpoint and key, a different model and price.
+    turbo = providers.get("groq/whisper-large-v3-turbo")
+    assert turbo.model == "whisper-large-v3-turbo"
+    assert turbo.base_url == groq.base_url and turbo.api_key_setting == "GROQ_API_KEY"
+    assert turbo.truncation_word_threshold is None, "no output cap to guard"
+
     deepgram = providers.get("deepgram/nova-3")
     # watch.preflight asks the provider which key it needs, so a non-OpenAI
     # provider must not be gated on an OpenAI key that is never used.
@@ -702,7 +708,7 @@ def t25():
     assert isinstance(other, providers.OpenAIProvider)
     assert other.max_chunk_seconds == config.CHUNK_SECONDS
     # Every provider satisfies the protocol it claims to.
-    for prov in (default, whisper, groq, deepgram):
+    for prov in (default, whisper, groq, turbo, deepgram):
         assert isinstance(prov, providers.TranscriptionProvider), prov.name
 results.append(run("each provider carries its own limits, defaulting to config's", t25))
 

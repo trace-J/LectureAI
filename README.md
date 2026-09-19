@@ -798,6 +798,7 @@ belong to the model, not to the audio, so they live with it in
 | `gpt-4o-transcribe` | 25MB | 8 min | yes | no |
 | `whisper-1` | 25MB | 20 min | no | no |
 | `groq/whisper-large-v3` | 100MB | 20 min | no | no |
+| `groq/whisper-large-v3-turbo` | 100MB | 20 min | no | no |
 | `deepgram/nova-3` | 2GB | never | no | yes |
 
 The gpt-4o models are the only ones that cap their output, so they are the
@@ -805,6 +806,13 @@ only ones that need 8 minute chunks and the re-split guard behind them. A
 39 minute lecture is five requests on the default, two on Whisper, and one on
 Deepgram. Anything not in the table is treated as an OpenAI model on the
 default limits.
+
+Price is why the Groq rows are there. An hour of lecture costs about $0.18 to
+transcribe on the default and $0.111 on `groq/whisper-large-v3`, for the same
+request shape; turbo is $0.04 again, at 12% WER against large-v3's 10.3% on
+Groq's own figures. A Mac signed in to a Syllabus account does not choose:
+the account service transcribes on Groq and falls back to OpenAI, and the
+100MB cap above is Groq's developer tier, not its free tier's 25MB.
 
 The non-OpenAI providers need their own key in `.env`, `DEEPGRAM_API_KEY` or
 `GROQ_API_KEY`. Nothing prompts for them; `intake setup` only asks for the two

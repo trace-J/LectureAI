@@ -269,9 +269,11 @@ class ProxyProvider:
         # Comfortably under the cap, so a chunk that encodes fatter than
         # expected is compressed here rather than refused there.
         self.compress_threshold_bytes = 10 * 1024 * 1024
-        # The proxy would meter a 30 minute chunk, but its upstream today is
-        # gpt-4o-mini-transcribe, which truncates past about 8 minutes. The
-        # binding limit is the model's, so that is the one used.
+        # The proxy would meter a 30 minute chunk, but it transcribes on Groq
+        # with OpenAI behind it, and gpt-4o-mini-transcribe truncates past
+        # about 8 minutes. Any chunk may end up on the fallback leg without
+        # this Mac being told, so the binding limit is the one that holds for
+        # EITHER upstream, not the one Groq alone would allow.
         self.max_chunk_seconds = config.CHUNK_SECONDS
         self.truncation_word_threshold = config.TRUNCATION_WORD_THRESHOLD
         self.diarization = False
@@ -386,6 +388,20 @@ PROVIDERS: dict[str, callable] = {
     "groq/whisper-large-v3": lambda: OpenAIProvider(
         "whisper-large-v3",
         name="groq/whisper-large-v3",
+        base_url="https://api.groq.com/openai/v1",
+        api_key_setting="GROQ_API_KEY",
+        max_bytes=100 * 1024 * 1024,
+        compress_threshold_bytes=99 * 1024 * 1024,
+        max_chunk_seconds=20 * 60,
+        truncation_word_threshold=None,
+    ),
+    # Turbo: 2.8x cheaper again ($0.04 an hour against $0.111), at 12% WER
+    # against large-v3's 10.3% on Groq's own figures. Registered so a real
+    # lecture can settle whether that trade is worth taking; the managed
+    # proxy runs large-v3 until it is.
+    "groq/whisper-large-v3-turbo": lambda: OpenAIProvider(
+        "whisper-large-v3-turbo",
+        name="groq/whisper-large-v3-turbo",
         base_url="https://api.groq.com/openai/v1",
         api_key_setting="GROQ_API_KEY",
         max_bytes=100 * 1024 * 1024,
