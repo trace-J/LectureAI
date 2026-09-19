@@ -28,8 +28,9 @@ permissions:
 
 jobs:
   # A gate, not a duplicate of CI: this runs on the macOS runner the app is
-  # actually built on, where ffmpeg and lsof are already present, and it is
-  # what `build` waits for.
+  # actually built on, and it is what `build` waits for. macOS ships lsof at
+  # /usr/sbin/lsof, but the runner image does not ship ffmpeg, so the step
+  # below fetches it.
   tests:
     runs-on: macos-15
     timeout-minutes: 15
@@ -39,6 +40,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      # `transcribe.duration_seconds` shells out to ffprobe, which the runner
+      # image does not carry: on 2026-09-19 that failed three assertions across
+      # test_gui and test_record and held back the 0.3.0 release, while the same
+      # suites passed on a Mac. Take the build the .app itself bundles, pinned
+      # and checksummed in packaging/ffmpeg/release, rather than brew: it is the
+      # binary users actually get, so the gate cannot pass against a different
+      # ffmpeg than the one it is guarding.
+      - name: ffmpeg and ffprobe, the build the app bundles
+        run: |
+          set -euo pipefail
+          eval "$(sed 's/^/PIN_/' packaging/ffmpeg/release)"
+          DIR="$RUNNER_TEMP/ffmpeg"
+          mkdir -p "$DIR"
+          curl -sfL -o "$DIR/$PIN_asset" \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/$PIN_tag/$PIN_asset"
+          echo "$PIN_sha256  $DIR/$PIN_asset" | shasum -a 256 -c -
+          tar -xzf "$DIR/$PIN_asset" -C "$DIR"
+          echo "$DIR" >> "$GITHUB_PATH"
+          "$DIR/ffprobe" -version | head -1
 
       - name: Install
         run: |
