@@ -35,7 +35,7 @@ from pathlib import Path
 
 from flask import Flask, g, jsonify, render_template, request
 
-from intake import account, cancellations, config, doctor, insights, relay, service, setup_wizard
+from intake import account, assistant, cancellations, config, doctor, insights, relay, service, setup_wizard
 from intake import signin, sync
 from intake import updates
 from intake import notion_tasks
@@ -989,6 +989,63 @@ def account_signout():
     # The socket belonged to the device that just signed out.
     relay.reconnect()
     return jsonify({"ok": True})
+
+
+# --- Study assistant ----------------------------------------------------------
+
+@app.get("/api/assistant")
+def assistant_state():
+    """Whether the assistant can run here, and what it can be asked about.
+
+    The panel asks this once on load to decide whether to enable the box. It
+    needs a key of its own: this path talks to Anthropic directly rather than
+    through the account service, so a managed Mac still has to have one set.
+    """
+    return jsonify({
+        "ok": True,
+        "ready": bool(config.ANTHROPIC_API_KEY),
+        "reason": "" if config.ANTHROPIC_API_KEY else
+                  "Add an Anthropic API key in Setup to use the study assistant.",
+        "model": config.ASSISTANT_MODEL,
+        "courses": assistant.courses(),
+        "escalation": assistant.escalation_rate(),
+    })
+
+
+@app.post("/api/assistant/ask")
+def assistant_ask():
+    """Ask a question about one course. Streams the answer back as SSE.
+
+    Streamed rather than returned whole because a study guide across a term
+    takes the better part of a minute to write, and a minute of nothing is
+    indistinguishable from a hang. Each event is one JSON object on a data:
+    line, in the shape assistant.ask() yields.
+    """
+    # No cross-site check here: signin.install(app) gates every request
+    # already, and this route is not special enough to second-guess it.
+    if not config.ANTHROPIC_API_KEY:
+        return jsonify({"ok": False, "error": "no Anthropic API key is set"}), 409
+
+    body = request.get_json(silent=True) or {}
+    question = str(body.get("question", ""))
+    course = str(body.get("course", ""))
+    if not course:
+        return jsonify({"ok": False, "error": "no course chosen"}), 400
+
+    def events():
+        # Generated outside the request context, so anything raised here has
+        # to arrive as an error event; the status line has already been sent.
+        try:
+            for event in assistant.ask(question, course):
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as exc:              # noqa: BLE001 - shown, not swallowed
+            app.logger.warning("assistant failed: %s", exc)
+            yield "data: " + json.dumps({"type": "error", "text": str(exc)}) + "\n\n"
+
+    return app.response_class(events(), mimetype="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    })
 
 
 def _is_loopback(host: str) -> bool:

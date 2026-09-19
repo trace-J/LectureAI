@@ -28,6 +28,7 @@ function indexRoutes(extra = {}) {
   return {
     "/api/status": like("/api/status"),
     "/api/allowance": like("/api/allowance"),
+    "/api/assistant": like("/api/assistant"),
     ...extra,
   };
 }

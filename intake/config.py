@@ -467,6 +467,18 @@ DRIVE_PARENT_FOLDER_ID = _setting("DRIVE_PARENT_FOLDER_ID")
 TRANSCRIBE_MODEL = "gpt-4o-mini-transcribe"
 CLAUDE_MODEL = "claude-sonnet-5"
 
+# The study assistant's model, kept separate from the summarizer's so the two
+# can move independently: a summary is one constrained call per lecture, an
+# assistant session is many turns over a much larger context, and they will
+# not always want the same model.
+#
+# Sonnet 5 rather than Opus 5, and that is a costing decision. HOME-STRETCH.md
+# prices Pro at $25 on a Sonnet assistant, netting $13.22 at a 53% margin; the
+# same tier on an Opus assistant nets $7.27 at 29%, which is the thin margin
+# the plan was written to avoid. Opus is roughly 2.5x the input price and 2.5x
+# the output. Changing this line changes the published price.
+ASSISTANT_MODEL = "claude-sonnet-5"
+
 # --- Audio handling -------------------------------------------------------
 
 AUDIO_EXTENSIONS = {".m4a", ".mp3", ".wav"}
