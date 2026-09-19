@@ -486,7 +486,9 @@ def t14():
     assert prov.max_bytes == prov.MAX_AUDIO_BYTES
     assert prov.compress_threshold_bytes < prov.max_bytes, "compress before it is refused"
     # The binding limit is the upstream model's, not the proxy's: the proxy
-    # would meter 30 minutes, but its upstream truncates well before that.
+    # would meter 30 minutes, but it transcribes on Groq with OpenAI behind
+    # it, and any chunk may land on that fallback leg without this Mac being
+    # told. So the limit has to hold for the upstream that truncates.
     assert prov.max_chunk_seconds == config.CHUNK_SECONDS
     assert prov.max_chunk_seconds < prov.MAX_CHUNK_SECONDS
     assert prov.truncation_word_threshold == config.TRUNCATION_WORD_THRESHOLD
