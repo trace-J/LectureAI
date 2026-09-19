@@ -1,0 +1,544 @@
+"""Ask questions across the lectures already filed in Drive.
+
+The pipeline deletes a recording once its summary and transcript are safely
+uploaded, so everything the assistant can draw on lives in Drive and nowhere
+on this Mac. pipeline.log is the index: one line per filed lecture, carrying
+the course, the class date, the topic slug and the Doc's URL. This module
+turns that index into context, asks Claude, and streams the answer back.
+
+Two stages, because the whole cost model rests on them:
+
+  Stage 1  Every summary for the course, as cached document blocks. A summary
+           is a couple of pages; a whole course of them is still small, and
+           after the first question of a session the cache serves them for a
+           tenth of the price. Most questions never need more than this.
+
+  Stage 2  Full transcripts, and only for the lectures the model actually
+           names. Claude asks for them by calling the fetch_transcripts tool
+           rather than us guessing, so an escalation is a decision with a
+           stated reason instead of a heuristic. A transcript runs 6,000 to
+           9,000 words, which is why this is not simply always on.
+
+How often stage 2 fires is the escalation rate, modeled at 15% in
+HOME-STRETCH.md and never measured. Every session writes a line to
+assistant.log saying whether it escalated and what it cost, because that
+number is what Pro's margin moves with and a guess is not good enough to
+price on.
+
+The model is Sonnet 5 (config.ASSISTANT_MODEL), not Opus. That is a costing
+decision, not a shrug: see the note on the constant.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import sys
+import time
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+
+from intake import config, insights
+
+# A Doc URL as upload.py files it: .../document/d/<id>/edit?usp=drivesdk
+DOC_ID_RE = re.compile(r"/d/([A-Za-z0-9_-]{16,})")
+
+# Transcripts are filed one level down from the summary, by upload.py.
+TRANSCRIPT_SUBFOLDER = "Transcripts"
+
+# Guards on a single escalation. There is no entitlement to wire a cap to yet
+# (P6 is unbuilt), and this path spends a personal key, so the ceiling is here
+# instead: enough transcripts to answer a real exam question, not enough to
+# turn one careless request into a bill worth noticing.
+MAX_ESCALATION_LECTURES = 6
+MAX_TRANSCRIPT_CHARS = 120_000
+
+# Room for a study guide across several lectures without truncating mid-answer.
+MAX_OUTPUT_TOKENS = 8_000
+
+# One round of tool use is all the flow needs: ask, escalate, answer. A second
+# would mean the model is fishing, and fishing through transcripts is the
+# expensive failure this cap exists to prevent.
+MAX_TOOL_ROUNDS = 1
+
+SYSTEM_PROMPT = """You are the study assistant inside Syllabus, a tool that \
+records a student's lectures, transcribes them, and files a summary of each one.
+
+You are given the summaries of the lectures in one course. Answer the student's \
+question from them. These are the student's own classes, so be specific: name \
+the lecture and the date a point came from rather than speaking generally.
+
+The summaries are condensed. When the question needs something a summary does \
+not carry, the exact wording of a definition, an example worked in class, what \
+the instructor said about an exam, call the fetch_transcripts tool with the \
+lectures you need and say why. Do not call it when the summaries already \
+answer the question; a transcript is thirty times the length of a summary and \
+the student pays for it either way.
+
+Cite the lecture you are drawing on. Write plainly, in the second person, and \
+never pad. If the lectures do not cover what was asked, say so rather than \
+filling the gap from general knowledge, and say what they do cover instead."""
+
+FETCH_TOOL = {
+    "name": "fetch_transcripts",
+    "description": (
+        "Fetch the full verbatim transcript of specific lectures, when their "
+        "summaries are not enough to answer. Ask only for the lectures you "
+        "actually need."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "lectures": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Lecture names exactly as given in the document titles, "
+                    f"at most {MAX_ESCALATION_LECTURES}."
+                ),
+            },
+            "reason": {
+                "type": "string",
+                "description": "Why the summaries are not sufficient here.",
+            },
+        },
+        "required": ["lectures", "reason"],
+    },
+}
+
+
+def log(msg: str) -> None:
+    print(msg, file=sys.stderr, flush=True)
+
+
+@dataclass(frozen=True)
+class Lecture:
+    """One filed lecture, as pipeline.log knows it."""
+    course: str
+    date: str
+    name: str          # ACCT-4321_2026-09-17_Process-Costing-And-CVP
+    url: str
+    terms: int = 0
+    actions: int = 0
+
+    @property
+    def doc_id(self) -> str:
+        found = DOC_ID_RE.search(self.url)
+        return found.group(1) if found else ""
+
+    @property
+    def topic(self) -> str:
+        """Process Costing And CVP, from the stem's third part."""
+        parts = self.name.split("_", 2)
+        return parts[2].replace("-", " ") if len(parts) > 2 else self.name
+
+    @property
+    def title(self) -> str:
+        """How the model is asked to refer to it, and how it cites it back."""
+        return f"{self.course} {self.date}: {self.topic}"
+
+
+def library() -> list[Lecture]:
+    """Every lecture filed so far, newest first.
+
+    Read from pipeline.log rather than from Drive, because the log is local
+    and instant and Drive is neither. A lecture the student deleted in Drive
+    is still listed here; it fails when fetched, which is handled where the
+    fetching happens.
+    """
+    path = config.LOG_FILE
+    if not path.exists():
+        return []
+    rows = insights.parse_log(path.read_text(errors="replace"))
+    out: list[Lecture] = []
+    seen: set[str] = set()
+    for row in rows:
+        if row.get("error") or not row.get("url") or not row.get("name"):
+            continue
+        if row["name"] in seen:      # a re-run filed the same lecture twice
+            continue
+        seen.add(row["name"])
+        out.append(Lecture(
+            course=row["course"], date=row["date"], name=row["name"],
+            url=row["url"], terms=row.get("terms", 0),
+            actions=row.get("actions", 0),
+        ))
+    out.sort(key=lambda l: l.date, reverse=True)
+    return out
+
+
+def courses() -> list[dict]:
+    """Courses that have at least one filed lecture, most lectures first."""
+    counts: dict[str, list[Lecture]] = {}
+    for lec in library():
+        counts.setdefault(lec.course, []).append(lec)
+    out = [{"course": code, "lectures": len(lecs), "latest": lecs[0].date}
+           for code, lecs in counts.items()]
+    out.sort(key=lambda c: (-c["lectures"], c["course"]))
+    return out
+
+
+# --- Drive ------------------------------------------------------------------
+#
+# Everything here reads files this app created, which is all the drive.file
+# scope grants and all it needs. Nothing new is asked of the student's Google
+# account, so the assistant works the moment it ships.
+
+
+def cache_dir() -> Path:
+    path = config.BASE_DIR / ".assistant"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _cached(key: str) -> str | None:
+    path = cache_dir() / f"{key}.txt"
+    try:
+        return path.read_text()
+    except OSError:
+        return None
+
+
+def _cache(key: str, text: str) -> None:
+    try:
+        (cache_dir() / f"{key}.txt").write_text(text)
+    except OSError:
+        pass      # a cache that cannot be written is slow, not broken
+
+
+# Native Google formats are exported; anything else is downloaded as it is.
+GOOGLE_NATIVE = "application/vnd.google-apps."
+
+
+def _decode(raw) -> str:
+    return raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+
+
+def summary_text(service, lec: Lecture) -> str:
+    """One lecture's summary as plain text, whatever Drive is holding it as.
+
+    Cached on disk under the file's id. A summary is rewritten only when the
+    lecture is processed again, which files a new line in the log, so a stale
+    cache entry is not a case that arises in practice; the id changes with the
+    document.
+
+    Not every filed summary is a Doc. Lectures from before the pipeline
+    started converting on upload are still sitting in Drive as text/markdown,
+    and export() refuses anything that is not a Docs Editors file. So the
+    file's type decides which call to make, rather than the age of the
+    lecture deciding whether the assistant can read it at all.
+    """
+    if not lec.doc_id:
+        return ""
+    hit = _cached(lec.doc_id)
+    if hit is not None:
+        return hit
+    meta = service.files().get(fileId=lec.doc_id, fields="mimeType").execute()
+    if str(meta.get("mimeType", "")).startswith(GOOGLE_NATIVE):
+        raw = service.files().export(fileId=lec.doc_id, mimeType="text/plain").execute()
+    else:
+        raw = service.files().get_media(fileId=lec.doc_id).execute()
+    text = _decode(raw)
+    _cache(lec.doc_id, text)
+    return text
+
+
+def _find_transcript(service, lec: Lecture) -> str | None:
+    """The file id of a lecture's transcript, searched by name.
+
+    The summary and the transcript share a stem; they are told apart by type,
+    because the summary was converted to a native Doc on upload and only the
+    transcript is still text/plain. That makes the mimeType filter the whole
+    of the disambiguation, and the Transcripts subfolder need not be walked.
+    """
+    from intake import upload
+    query = (
+        f"name contains '{upload._escape(lec.name)}' and "
+        f"mimeType = 'text/plain' and trashed = false"
+    )
+    found = service.files().list(
+        q=query, fields="files(id, name)", pageSize=5,
+        spaces="drive", supportsAllDrives=True,
+    ).execute().get("files", [])
+    return found[0]["id"] if found else None
+
+
+def transcript_text(service, lec: Lecture) -> str:
+    """One lecture's verbatim transcript, or "" when it cannot be found."""
+    key = f"{lec.name}.transcript"
+    hit = _cached(key)
+    if hit is not None:
+        return hit
+    file_id = _find_transcript(service, lec)
+    if not file_id:
+        return ""
+    text = _decode(service.files().get_media(fileId=file_id).execute())
+    _cache(key, text)
+    return text
+
+
+# --- Context ----------------------------------------------------------------
+
+
+def document_block(title: str, body: str, context: str, cache: bool = False) -> dict:
+    """One source document, quotable with a citation back to this title."""
+    block = {
+        "type": "document",
+        "title": title,
+        "context": context,
+        "source": {"type": "text", "media_type": "text/plain", "data": body},
+        "citations": {"enabled": True},
+    }
+    if cache:
+        block["cache_control"] = {"type": "ephemeral"}
+    return block
+
+
+def stage_one(service, lectures: list[Lecture]) -> list[dict]:
+    """The summaries, as document blocks, with the last one marking the cache.
+
+    The breakpoint goes on the final block so everything above it, the system
+    prompt included, is served from cache on every later turn of the session.
+    That is what makes a follow-up question cost a fraction of the first.
+    """
+    blocks = []
+    for lec in lectures:
+        # One unreadable lecture must not cost the student the other twenty.
+        # A summary deleted in Drive, or filed in a format that will not come
+        # back as text, is dropped with a note in the log rather than raised.
+        try:
+            body = summary_text(service, lec).strip()
+        except Exception as exc:              # noqa: BLE001 - skipped, not fatal
+            log(f"  skipping {lec.name}: {exc}")
+            continue
+        if not body:
+            continue
+        blocks.append(document_block(
+            lec.title, body,
+            context=f"Summary of the {lec.course} lecture on {lec.date}.",
+        ))
+    if blocks:
+        blocks[-1]["cache_control"] = {"type": "ephemeral"}
+    return blocks
+
+
+def stage_two(service, lectures: list[Lecture], wanted: list[str]) -> tuple[list[dict], list[str]]:
+    """Transcripts for the lectures the model named. Returns blocks and names.
+
+    Matched loosely, because the model is quoting a title back to us rather
+    than echoing an id, and a near miss should still find the lecture. Capped
+    on both count and total size: this is the expensive path.
+    """
+    by_name = {lec.title.lower(): lec for lec in lectures}
+    picked: list[Lecture] = []
+    for want in wanted[:MAX_ESCALATION_LECTURES]:
+        needle = want.strip().lower()
+        match = by_name.get(needle)
+        if match is None:
+            for title, lec in by_name.items():
+                if needle in title or lec.name.lower() in needle:
+                    match = lec
+                    break
+        if match is not None and match not in picked:
+            picked.append(match)
+
+    blocks, used, total = [], [], 0
+    for lec in picked:
+        body = transcript_text(service, lec).strip()
+        if not body:
+            continue
+        if total + len(body) > MAX_TRANSCRIPT_CHARS:
+            break
+        total += len(body)
+        used.append(lec.title)
+        blocks.append(document_block(
+            f"{lec.title} (full transcript)", body,
+            context=f"Verbatim transcript of the {lec.course} lecture on {lec.date}.",
+        ))
+    return blocks, used
+
+
+# --- Instrumentation --------------------------------------------------------
+
+
+def record_session(course: str, question: str, escalated: bool,
+                   lectures: list[str], usage: dict) -> None:
+    """One line per session in assistant.log: the escalation rate, measured.
+
+    HOME-STRETCH.md prices Pro on a 15% escalation rate that has never been
+    observed. This is the observation. Written as JSON so the rate can be read
+    straight off the file rather than parsed out of prose.
+    """
+    line = json.dumps({
+        "when": datetime.now().isoformat(timespec="seconds"),
+        "course": course,
+        "question_chars": len(question),
+        "escalated": escalated,
+        "escalated_to": lectures,
+        **usage,
+    })
+    try:
+        with (config.BASE_DIR / "assistant.log").open("a") as handle:
+            handle.write(line + "\n")
+    except OSError:
+        pass      # never let bookkeeping take down an answer
+
+
+def escalation_rate() -> dict:
+    """What assistant.log says the rate actually is, for comparing to 15%."""
+    path = config.BASE_DIR / "assistant.log"
+    if not path.exists():
+        return {"sessions": 0, "escalated": 0, "rate": None}
+    total = hits = 0
+    for line in path.read_text(errors="replace").splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        total += 1
+        hits += 1 if row.get("escalated") else 0
+    return {"sessions": total, "escalated": hits,
+            "rate": round(hits / total, 3) if total else None}
+
+
+def _usage(totals: dict, usage) -> dict:
+    """Accumulate a response's token counts, cache lines included."""
+    for key, attr in (
+        ("input_tokens", "input_tokens"),
+        ("output_tokens", "output_tokens"),
+        ("cache_read_tokens", "cache_read_input_tokens"),
+        ("cache_write_tokens", "cache_creation_input_tokens"),
+    ):
+        totals[key] = totals.get(key, 0) + (getattr(usage, attr, 0) or 0)
+    return totals
+
+
+# --- Asking -----------------------------------------------------------------
+
+
+def ask(question: str, course: str, *, service=None, client=None):
+    """Answer a question about one course, streaming as it is written.
+
+    Yields dicts the panel turns into SSE events:
+        {"type": "status",   "text": ...}   what it is doing right now
+        {"type": "text",     "text": ...}   a fragment of the answer
+        {"type": "citation", "title": ...}  a lecture the answer drew on
+        {"type": "done",     ...}           usage, escalation, timing
+        {"type": "error",    "text": ...}   readable, and the end of the stream
+    """
+    import anthropic
+
+    question = question.strip()
+    if not question:
+        yield {"type": "error", "text": "Ask a question first."}
+        return
+
+    lectures = [l for l in library() if l.course == course]
+    if not lectures:
+        yield {"type": "error",
+               "text": f"No lectures filed for {course} yet. "
+                       f"Record one and it will be here when it finishes."}
+        return
+
+    started = time.time()
+    if client is None:
+        client = anthropic.Anthropic(api_key=config.require("ANTHROPIC_API_KEY"))
+    if service is None:
+        from intake import upload
+        service = upload.get_service(interactive=False)
+
+    yield {"type": "status",
+           "text": f"Reading {len(lectures)} "
+                   f"{'summary' if len(lectures) == 1 else 'summaries'}"}
+
+    try:
+        blocks = stage_one(service, lectures)
+    except Exception as exc:
+        yield {"type": "error", "text": f"Could not read your notes from Drive: {exc}"}
+        return
+    if not blocks:
+        yield {"type": "error",
+               "text": f"The {course} lectures are filed, but their summaries "
+                       f"could not be read from Drive."}
+        return
+
+    content = blocks + [{"type": "text", "text": question}]
+    messages = [{"role": "user", "content": content}]
+    totals: dict = {}
+    escalated_to: list[str] = []
+    cited: set[str] = set()
+
+    for round_no in range(MAX_TOOL_ROUNDS + 1):
+        tools = [FETCH_TOOL] if round_no < MAX_TOOL_ROUNDS else []
+        reply: list[dict] = []
+        tool_use = None
+        try:
+            with client.messages.stream(
+                model=config.ASSISTANT_MODEL,
+                max_tokens=MAX_OUTPUT_TOKENS,
+                system=SYSTEM_PROMPT,
+                messages=messages,
+                **({"tools": tools} if tools else {}),
+            ) as stream:
+                for event in stream.text_stream:
+                    yield {"type": "text", "text": event}
+                answer = stream.get_final_message()
+        except Exception as exc:
+            yield {"type": "error", "text": f"The assistant could not finish: {exc}"}
+            return
+
+        _usage(totals, answer.usage)
+        for block in answer.content:
+            # Rebuilt field by field rather than dumped wholesale. The SDK
+            # hangs its own attributes on a parsed block (parsed_output among
+            # them) and the API rejects the message when they are handed back,
+            # which is a 400 that only ever shows up on an escalation.
+            if block.type == "tool_use":
+                tool_use = block
+                reply.append({"type": "tool_use", "id": block.id,
+                              "name": block.name, "input": block.input})
+            elif block.type == "text":
+                reply.append({"type": "text", "text": block.text})
+            if block.type == "text":
+                for cite in (getattr(block, "citations", None) or []):
+                    title = getattr(cite, "document_title", "")
+                    if title and title not in cited:
+                        cited.add(title)
+                        yield {"type": "citation", "title": title}
+
+        if tool_use is None:
+            break
+
+        wanted = list(tool_use.input.get("lectures", []))
+        reason = str(tool_use.input.get("reason", "")).strip()
+        yield {"type": "status",
+               "text": f"Going to the full transcripts: {reason}" if reason
+                       else "Going to the full transcripts"}
+
+        try:
+            docs, used = stage_two(service, lectures, wanted)
+        except Exception as exc:
+            docs, used = [], []
+            log(f"  transcript fetch failed: {exc}")
+        escalated_to.extend(used)
+
+        result: list[dict] = docs or [{
+            "type": "text",
+            "text": ("Those transcripts could not be retrieved. Answer from "
+                     "the summaries you already have, and say that the "
+                     "verbatim wording was not available."),
+        }]
+        messages.append({"role": "assistant", "content": reply})
+        messages.append({"role": "user", "content": [{
+            "type": "tool_result",
+            "tool_use_id": tool_use.id,
+            "content": result,
+        }]})
+
+    record_session(course, question, bool(escalated_to), escalated_to, totals)
+    yield {"type": "done",
+           "escalated": bool(escalated_to),
+           "escalated_to": escalated_to,
+           "seconds": round(time.time() - started, 1),
+           **totals}

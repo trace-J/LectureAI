@@ -267,6 +267,42 @@ to the account service, which puts your account's sign-in in front and
 carries your requests down that connection. That is "The panel on the web"
 below.
 
+## The study assistant
+
+The panel's assistant answers questions about the lectures you have already
+filed, one course at a time. Ask it in plain words, or press one of the
+starters: build me a study guide, quiz me on this week's key terms, what is
+due next week.
+
+It reads in two stages, and the second one is why it can quote a class back
+to you:
+
+1. Every **summary** filed for the course, handed over as documents Claude can
+   cite. A summary is a couple of pages, so a whole term of them is still
+   small, and after the first question they are served from cache: a follow-up
+   costs a fraction of what the first question cost.
+2. The **full transcript** of particular lectures, fetched only when the model
+   asks for them by name and says why. That happens when you want something a
+   summary does not carry, the exact wording of a definition, an example worked
+   on the board, what the instructor said would be on the exam. The answer says
+   when it went and read one.
+
+Answers carry the lecture each point came from, and the assistant says so when
+your lectures do not cover what you asked rather than filling the gap from
+general knowledge.
+
+It runs on Sonnet 5 and on this Mac's own `ANTHROPIC_API_KEY`, the one in
+`.env`, even when the Mac is signed in to a Syllabus account and everything
+else goes through the account service. There is no metering on this path yet,
+so the guard is a cap: at most six transcripts in one escalation, and a size
+ceiling above that. Nothing new is asked of your Google account, because it
+reads only the files the pipeline itself created.
+
+Every session appends a line to `assistant.log` in the profile's home: the
+course, whether it escalated to transcripts, and what it cost in tokens. That
+file is the measured escalation rate, which is the number the paid tiers are
+priced on and which had only ever been guessed at.
+
 ## Keeping the panel running
 
 ```bash

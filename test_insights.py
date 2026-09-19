@@ -309,10 +309,18 @@ def t11():
     assert body["recent"][0]["name"].endswith("Untitled"), body["recent"][0]
     assert body["recent"][1]["seconds"] == 4200, "recent rows must carry the measurements"
     html = client.get("/").get_data(as_text=True)
+    # "Coming in v3" was the assistant's placeholder badge and went when the
+    # assistant shipped; the course picker and the ask box are what stand in
+    # that part of the page now.
     for piece in ("Lectures per week", "Recent lectures", "This week", "Study assistant", "Pipeline",
-                  "Coming in v3", 'id="tiles"', 'id="weeksChart"'):
+                  'id="askCourse"', 'id="askInput"', 'id="tiles"', 'id="weeksChart"'):
         assert piece in html, f"the page is missing {piece!r}"
-    assert 'disabled aria-label="Ask the study assistant' in html, "the assistant box must be inert"
+    # This assertion used to be its opposite: the box shipped disabled while
+    # the assistant was a mockup, and the test held it that way so a stray
+    # edit could not imply a feature that did not exist. The assistant exists
+    # now, so what needs guarding is the reverse, that the box is reachable.
+    assert 'disabled' not in html.split('id="askInput"')[1].split(">")[0], \
+        "the ask box must not ship disabled now that the assistant is wired up"
 results.append(run("the status payload carries insights and the page has a place for each", t11))
 
 
