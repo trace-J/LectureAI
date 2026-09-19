@@ -69,83 +69,133 @@
     font-weight: 400; line-height: 1.5;
     -webkit-font-smoothing: antialiased;
   }
-  .wrap { max-width: 1120px; margin: 0 auto; padding: 28px 24px 64px; }
-  /* Phones rarely have a hover, and a long email in the header used to be
+  /* Phones rarely have a hover, and a long email in the sidebar used to be
      the one thing that could push the page wider than the screen. */
   .viewer, .row-sub, .rec-meta { overflow-wrap: anywhere; }
   a { color: var(--brand); }
 
-  /* Header ------------------------------------------------------------- */
-  header { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
-  header > div:first-of-type { flex: 1 1 auto; min-width: 0; }
-  header img { width: 44px; height: 44px; border-radius: 11px; display: block; }
-  .brandname { font-size: 25px; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; }
-  .brandname .ai { color: var(--brand); }
-  .tagline { font-size: 13px; color: var(--muted); font-weight: 300; }
-  .viewer { font-size: 12px; margin-top: 2px; }
-  .today {
-    margin-left: auto; text-align: right; font-size: 13px; color: var(--muted);
-    font-weight: 300; line-height: 1.35;
+  /* Shell: a fixed rail and one scrolling column, the shape the product
+     page shows visitors before they install. ---------------------------- */
+  .shell { display: grid; grid-template-columns: 228px minmax(0, 1fr); min-height: 100vh; }
+  .side {
+    background: var(--card-2); border-right: 1px solid var(--line);
+    padding: 20px 14px; display: flex; flex-direction: column; gap: 3px;
+    position: sticky; top: 0; height: 100vh; overflow-y: auto;
   }
-  .today strong { display: block; color: var(--ink); font-weight: 500; font-size: 14px; }
+  .sidebrand { display: flex; align-items: center; gap: 10px; padding: 0 6px; margin-bottom: 4px; }
+  .sidebrand img { width: 28px; height: 28px; border-radius: 9px; display: block; flex: 0 0 auto; }
+  .brandname { font-size: 17px; font-weight: 600; letter-spacing: -.02em; line-height: 1.15; min-width: 0; }
+  .tagline { font-size: 11.5px; color: var(--muted); font-weight: 300; padding: 0 6px; margin-bottom: 14px; line-height: 1.4; }
+  .nav {
+    display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--muted);
+    padding: 8px 10px; border-radius: 9px; text-decoration: none;
+    transition: background .15s ease, color .15s ease;
+  }
+  .nav:hover { color: var(--ink); background: var(--card); }
+  .nav.on { background: var(--brand-soft); color: var(--brand-deep); font-weight: 500; }
+  .nav svg { width: 15px; height: 15px; flex: 0 0 auto; }
+  .side h2 {
+    font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--faint); margin: 20px 0 8px; padding: 0 10px;
+  }
+  /* The course rail doubles as the page's filter: the same choice the chart
+     legend and the chips over the recent list carry. */
+  .sidecourse {
+    font: inherit; font-size: 12px; color: var(--muted); cursor: pointer; text-align: left;
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 5px 10px; border: 1px solid transparent; border-radius: 8px; background: none;
+  }
+  .sidecourse:hover { background: var(--card); color: var(--ink); }
+  .sidecourse[aria-pressed="true"] { background: var(--card); border-color: var(--line); color: var(--ink); font-weight: 500; }
+  .sidecourse .sw { width: 8px; height: 8px; border-radius: 3px; flex: 0 0 auto; }
+  .sidecourse .code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .sidecourse em { margin-left: auto; font-style: normal; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .sidefoot { margin-top: auto; padding-top: 16px; border-top: 1px solid var(--line); }
+  .checks { display: grid; gap: 7px; font-size: 11.5px; color: var(--muted); }
+  .check { display: flex; align-items: center; gap: 8px; padding: 0 10px; }
+  .checks .foot-link { padding: 2px 10px; color: var(--brand-deep); text-decoration: none; font-weight: 500; }
+  .checks .foot-link:hover { text-decoration: underline; }
+  .viewer { font-size: 11px; color: var(--muted); padding: 10px 10px 0; line-height: 1.45; }
+  .viewer a { color: var(--brand-deep); font-weight: 500; text-decoration: none; }
+  .viewer a:hover { text-decoration: underline; }
+
+  .main { padding: 22px 26px 56px; max-width: 1240px; }
+
+  /* Top bar ------------------------------------------------------------ */
+  .top { display: flex; align-items: center; gap: 16px; margin-bottom: 18px; }
+  .top h1 { margin: 0; font-size: 21px; font-weight: 600; letter-spacing: -.025em; }
+  .top-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .today { text-align: right; font-size: 12px; color: var(--muted); font-weight: 300; line-height: 1.35; }
+  .today strong { display: block; color: var(--ink); font-weight: 500; font-size: 13px; }
 
   .theme {
     display: flex; gap: 2px; padding: 3px;
     border: 1px solid var(--line); border-radius: 999px; background: var(--card);
   }
   .theme button {
-    display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
+    display: grid; place-items: center; width: 27px; height: 27px; padding: 0;
     border: none; border-radius: 999px; background: none; cursor: pointer;
     color: var(--muted); transition: background .15s ease, color .15s ease;
   }
   .theme button:hover { color: var(--ink); }
   .theme button[aria-pressed="true"] { background: var(--brand); color: #fff; }
-  .theme svg { width: 15px; height: 15px; display: block; }
-  .gear {
-    display: grid; place-items: center; width: 36px; height: 36px;
-    border: 1px solid var(--line); border-radius: 999px; background: var(--card);
-    color: var(--muted); text-decoration: none; transition: color .15s ease, border-color .15s ease;
-  }
-  .gear:hover { color: var(--brand); border-color: var(--brand); }
-  .gear svg { width: 16px; height: 16px; display: block; }
+  .theme svg { width: 14px; height: 14px; display: block; }
 
   /* Layout ------------------------------------------------------------- */
   /* Three rows of two cards. The pipeline sits in the second row, right
      under the record button, with the four tiles two-by-two beside it, so
      the watcher is never below the fold. */
-  .grid { display: grid; gap: 18px; margin-bottom: 18px; }
-  .grid.top     { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
+  .grid { display: grid; gap: 16px; margin-bottom: 16px; }
+  .grid.top-row { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
   .grid.status  { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
   .grid.charts  { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
-  .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; min-width: 0; }
+  .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; min-width: 0; }
+  @media (max-width: 1080px) {
+    .grid.top-row, .grid.status, .grid.charts { grid-template-columns: 1fr; }
+  }
+  /* The rail folds into a strip above the page before the columns get too
+     thin to hold a course code. */
   @media (max-width: 900px) {
-    .grid.top, .grid.status, .grid.charts { grid-template-columns: 1fr; }
+    .shell { grid-template-columns: 1fr; }
+    .side {
+      position: static; height: auto; flex-direction: row; flex-wrap: wrap;
+      align-items: center; gap: 6px; padding: 12px 16px;
+      border-right: none; border-bottom: 1px solid var(--line);
+    }
+    .side h2 { display: none; }
+    .tagline { display: none; }
+    .sidebrand { margin: 0 10px 0 0; }
+    /* The course rail keeps its counts here, laid out as pills rather than a
+       column that would push the dashboard a screen down the page. */
+    #sideCourses { display: flex; flex-wrap: wrap; gap: 4px; flex: 1 1 260px; }
+    .sidecourse { width: auto; border-color: var(--line); background: var(--card); border-radius: 999px; padding: 4px 10px; }
+    .sidecourse em { margin-left: 2px; }
+    .sidefoot { margin: 0 0 0 auto; padding: 0; border-top: none; }
+    .checks { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+    .viewer { padding: 0 0 0 10px; }
     .today { display: none; }
   }
 
   /* Cards -------------------------------------------------------------- */
   .card {
     background: var(--card); border: 1px solid var(--line);
-    border-radius: 18px; box-shadow: var(--shadow); padding: 22px;
+    border-radius: 16px; box-shadow: var(--shadow); padding: 18px 20px;
     min-width: 0;
   }
   .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
   .card-head h2 { margin: 0; }
-  h2 {
-    font-size: 12px; font-weight: 600; letter-spacing: .09em;
+  .card h2 {
+    font-size: 11px; font-weight: 600; letter-spacing: .09em;
     text-transform: uppercase; color: var(--muted);
     margin: 0 0 14px;
   }
   .card-sub { font-size: 12px; color: var(--muted); font-weight: 300; }
-  .card-foot { font-size: 12px; color: var(--muted); font-weight: 300; margin-top: 12px; }
-  .card-foot a { color: var(--brand); text-decoration: none; }
-  .card-foot a:hover { text-decoration: underline; }
 
   /* Record ------------------------------------------------------------- */
   .record-card { display: flex; flex-direction: column; }
-  .record { display: flex; align-items: center; gap: 20px; }
+  .record { display: flex; align-items: center; gap: 18px; }
   .rec-btn {
-    flex: 0 0 auto; width: 92px; height: 92px; border-radius: 50%;
+    flex: 0 0 auto; width: 84px; height: 84px; border-radius: 50%;
     border: none; cursor: pointer; background: var(--brand);
     display: grid; place-items: center;
     transition: transform .12s ease, box-shadow .2s ease, background .2s ease;
@@ -154,11 +204,11 @@
   .rec-btn:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(140,82,255,.42); }
   .rec-btn:active { transform: translateY(0) scale(.97); }
   .rec-btn:disabled { opacity: .55; cursor: default; transform: none; box-shadow: none; }
-  .rec-btn .glyph { width: 28px; height: 28px; border-radius: 50%; background: #fff; transition: border-radius .2s ease; }
+  .rec-btn .glyph { width: 26px; height: 26px; border-radius: 50%; background: #fff; transition: border-radius .2s ease; }
   .rec-btn.is-recording { background: var(--err); box-shadow: 0 6px 20px rgba(194,47,61,.3); }
-  .rec-btn.is-recording .glyph { border-radius: 6px; width: 26px; height: 26px; }
+  .rec-btn.is-recording .glyph { border-radius: 6px; width: 24px; height: 24px; }
   .rec-btn.is-recording::after {
-    content: ""; position: absolute; width: 92px; height: 92px; border-radius: 50%;
+    content: ""; position: absolute; width: 84px; height: 84px; border-radius: 50%;
     border: 2px solid var(--err); animation: pulse 1.8s ease-out infinite;
   }
   @keyframes pulse {
@@ -169,20 +219,20 @@
 
   .rec-info { min-width: 0; flex: 1; }
   .timer {
-    font-size: 40px; font-weight: 300; letter-spacing: -.01em;
+    font-size: 38px; font-weight: 300; letter-spacing: -.01em;
     font-variant-numeric: tabular-nums; line-height: 1.1;
   }
-  .timer.idle { color: var(--ink); font-weight: 400; font-size: 26px; letter-spacing: -.02em; }
+  .timer.idle { color: var(--ink); font-weight: 400; font-size: 24px; letter-spacing: -.02em; }
   .timer.stalled { color: var(--err); }
   .rec-meta { font-size: 13px; color: var(--muted); margin-top: 4px; }
   .rec-meta strong { color: var(--ink); font-weight: 500; }
-  .rec-note { font-size: 12px; color: var(--muted); margin-top: 10px; font-weight: 300; }
+  .rec-note { font-size: 12px; color: var(--muted); margin-top: 12px; font-weight: 300; }
   /* The mic is open but nothing is arriving. Red, because the ticking timer
      above it says everything is fine. */
   .rec-warn { font-size: 12px; color: var(--err); margin-top: 6px; font-weight: 400; }
 
   select {
-    font: inherit; font-size: 13px; padding: 7px 11px; border-radius: 9px;
+    font: inherit; font-size: 13px; padding: 7px 13px; border-radius: 999px;
     border: 1px solid var(--line); background: var(--card); color: var(--ink);
     margin-top: 10px; cursor: pointer; max-width: 100%;
   }
@@ -190,7 +240,7 @@
   /* Audio arriving. Seven bars that move while the file on disk is growing
      and drop flat and red when it is not, so a blocked microphone is
      visible from across the room. */
-  .levels { display: flex; align-items: flex-end; gap: 3px; height: 22px; margin-top: 12px; }
+  .levels { display: flex; align-items: flex-end; gap: 3px; height: 20px; margin-top: 12px; }
   .levels span {
     width: 4px; height: 3px; border-radius: 2px; background: var(--line);
     transition: background .3s ease, height .3s ease;
@@ -206,66 +256,75 @@
   .levels.flat span { background: var(--err); height: 3px; }
   @keyframes level {
     0%, 100% { height: 4px; }
-    50%      { height: 22px; }
+    50%      { height: 20px; }
   }
+  /* Idle bars would read as a decorative dotted line; keep the space, hide the bars. */
+  .levels:not(.live):not(.flat) { visibility: hidden; }
   .levels-label { font-size: 11px; color: var(--muted); margin-top: 4px; font-weight: 300; }
 
   /* This week ---------------------------------------------------------- */
+  /* Day cards, as the product page draws them: the day keeps its own
+     surface, and the chips sit inside it rather than floating on the card. */
   .week { display: grid; gap: 8px; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
-  .day { min-width: 0; border-radius: 12px; padding: 8px 4px; }
-  .day.today { background: var(--brand-soft); }
+  .day {
+    min-width: 0; border-radius: 11px; padding: 9px 7px;
+    background: var(--card-2); border: 1px solid var(--line);
+  }
+  .day.today { background: var(--brand-soft); border-color: color-mix(in srgb, var(--brand) 35%, var(--line)); }
   .day-head { text-align: center; margin-bottom: 8px; line-height: 1.2; }
-  .day-name { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .day-name { font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
   .day.today .day-name { color: var(--brand-deep); }
-  .day-num { font-size: 18px; font-weight: 500; }
-  .day-slots { display: grid; gap: 5px; }
+  .day-num { font-size: 16px; font-weight: 500; }
+  .day-slots { display: grid; gap: 6px; }
   .day-empty { height: 6px; }
   /* Narrow screens: one row per day, chips flowing across it, instead of
      five columns too thin to hold a course code. */
   @media (max-width: 560px) {
-    .week { grid-auto-flow: row; gap: 4px; }
-    .day { display: flex; align-items: flex-start; gap: 10px; padding: 6px 8px; }
+    .week { grid-auto-flow: row; gap: 5px; }
+    .day { display: flex; align-items: flex-start; gap: 10px; padding: 7px 9px; }
     .day-head { flex: 0 0 40px; margin: 0; }
     .day-slots { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; }
     .day-slots .slot { width: auto; flex: 1 1 130px; }
     .day-empty { height: auto; align-self: center; font-size: 11px; color: var(--faint); }
     .day-empty::before { content: "no class"; }
-    .timer.idle { font-size: 22px; }
+    .timer.idle { font-size: 21px; }
   }
+  /* The chip carries the course color as a mark beside the code, not as a
+     fill behind it: identity never rests on color alone. */
   .slot {
     display: block; width: 100%;
-    font: inherit; font-size: 11px; font-weight: 500; text-align: left; line-height: 1.3;
-    padding: 5px 6px 5px 9px; border-radius: 9px; cursor: default;
-    border: 1px solid var(--line); background: var(--card); color: var(--ink);
-    text-decoration: none; position: relative; min-width: 0;
+    font: inherit; font-size: 11px; font-weight: 400; text-align: left; line-height: 1.3;
+    padding: 7px 8px; border-radius: 9px; cursor: default;
+    border: 1px dashed var(--line); background: var(--card); color: var(--muted);
+    text-decoration: none; min-width: 0;
   }
-  /* The course color is the chip's left edge, so the code keeps every pixel
-     of a narrow day column for itself. */
-  .slot .sw { position: absolute; left: -1px; top: 6px; bottom: 6px; width: 3px; border-radius: 0 2px 2px 0; background: var(--course); }
   .slot .line { display: flex; align-items: center; gap: 6px; min-width: 0; }
-  .slot .code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .slot .time { display: flex; align-items: center; gap: 3px; color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; margin-top: 1px; }
+  .slot .sw { width: 7px; height: 7px; border-radius: 2px; background: var(--course); flex: 0 0 auto; }
+  .slot .code { font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .slot .time { display: flex; align-items: center; gap: 4px; font-size: 10.5px; font-variant-numeric: tabular-nums; margin-top: 3px; }
   .slot .tick { width: 10px; height: 10px; flex: 0 0 auto; color: var(--course); }
-  .slot.recorded { background: color-mix(in srgb, var(--course) 14%, var(--card)); border-color: color-mix(in srgb, var(--course) 30%, var(--line)); cursor: pointer; }
+  .slot.recorded {
+    border: 1px solid transparent; cursor: pointer;
+    background: color-mix(in srgb, var(--course) 13%, var(--card));
+  }
   .slot.recorded:hover { border-color: var(--course); }
-  .slot.now { border-color: var(--course); box-shadow: 0 0 0 3px color-mix(in srgb, var(--course) 25%, transparent); }
+  .slot.now { border: 2px solid var(--course); padding: 6px 7px; background: var(--card); }
   .slot.now .time { color: var(--course); font-weight: 600; }
-  .slot.missed { border-style: dashed; color: var(--muted); }
-  .slot.missed .sw { opacity: .45; }
+  .slot.missed .code { color: var(--muted); }
   /* A class that was called off. Struck through rather than dimmed away:
      it was on the schedule, it just did not happen, and the student needs
      to see that the panel knows. */
-  .slot.canceled { border-style: dashed; color: var(--faint); background: var(--card); }
-  .slot.canceled .code { text-decoration: line-through; }
+  .slot.canceled .code { text-decoration: line-through; color: var(--faint); }
   .slot.canceled .sw { opacity: .3; }
+  .slot:not(.recorded):not(.now):not(.missed):not(.canceled) .sw { opacity: .4; }
   /* The button gets its own row inside the chip rather than floating over
      the corner: a day column is narrow enough that an overlay covered the
      course code, and a control nobody can find is no control at all. Quiet
      until the chip is hovered, and always reachable by keyboard and touch. */
   .slot-act {
-    display: block; width: 100%; margin-top: 3px;
+    display: block; width: 100%; margin-top: 5px;
     font: inherit; font-size: 10px; font-weight: 500; line-height: 1;
-    padding: 3px 4px; border-radius: 6px; cursor: pointer; text-align: center;
+    padding: 4px 4px; border-radius: 999px; cursor: pointer; text-align: center;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     border: 1px solid var(--line); background: transparent; color: var(--muted);
     opacity: .55; transition: opacity .12s ease;
@@ -274,8 +333,6 @@
   .slot-act:hover { background: var(--bg); color: var(--ink); }
   .slot.canceled .slot-act { opacity: 1; }
   .slot-act[disabled] { cursor: progress; opacity: .4; }
-  /* Idle bars would read as a decorative dotted line; keep the space, hide the bars. */
-  .levels:not(.live):not(.flat) { visibility: hidden; }
   .week-foot { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 14px; font-size: 11px; color: var(--muted); font-weight: 300; }
   .week-foot span { display: inline-flex; align-items: center; gap: 5px; }
   .key { width: 10px; height: 10px; border-radius: 3px; border: 1px solid var(--line); background: var(--card); }
@@ -285,12 +342,12 @@
   .key.canceled { border-style: dashed; background: repeating-linear-gradient(135deg, var(--line) 0 2px, var(--card) 2px 4px); }
 
   /* Tiles -------------------------------------------------------------- */
-  .tile { padding: 18px 20px 16px; }
-  .tile-label { font-size: 12px; color: var(--muted); font-weight: 400; }
-  .tile-value { font-size: 34px; font-weight: 600; letter-spacing: -.03em; line-height: 1.15; margin-top: 4px; }
-  .tile-value small { font-size: 16px; font-weight: 500; color: var(--muted); letter-spacing: 0; margin-left: 3px; }
-  .tile-sub { font-size: 12px; color: var(--muted); font-weight: 300; margin-top: 4px; min-height: 18px; }
-  .meter { height: 6px; border-radius: 3px; background: var(--brand-soft); margin-top: 12px; overflow: hidden; }
+  .tile { padding: 15px 18px 14px; }
+  .tile-label { font-size: 11.5px; color: var(--muted); font-weight: 400; }
+  .tile-value { font-size: 30px; font-weight: 600; letter-spacing: -.03em; line-height: 1.15; margin-top: 2px; }
+  .tile-value small { font-size: 15px; font-weight: 500; color: var(--muted); letter-spacing: 0; margin-left: 3px; }
+  .tile-sub { font-size: 11.5px; color: var(--muted); font-weight: 300; margin-top: 4px; min-height: 17px; line-height: 1.4; }
+  .meter { height: 5px; border-radius: 3px; background: var(--brand-soft); margin-top: 11px; overflow: hidden; }
   .meter i { display: block; height: 100%; border-radius: 3px; background: var(--brand); transition: width .6s ease; }
 
   /* Charts ------------------------------------------------------------- */
@@ -313,15 +370,15 @@
   .tip .tl { display: flex; align-items: center; gap: 6px; }
   .tip .tl i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .tip .tl span:last-child { margin-left: auto; padding-left: 12px; font-variant-numeric: tabular-nums; }
-  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 12px; font-size: 12px; color: var(--muted); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 12px; font-size: 12px; color: var(--muted); }
   .legend button {
     font: inherit; font-size: 12px; color: var(--muted); cursor: pointer;
-    display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px 3px 4px;
+    display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 6px;
     border: 1px solid transparent; border-radius: 999px; background: none;
   }
   .legend button:hover { color: var(--ink); }
   .legend button[aria-pressed="true"] { border-color: var(--line); color: var(--ink); background: var(--card-2); }
-  .legend .sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .legend .sw { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
   .legend .tg { width: 12px; height: 0; border-top: 2px solid var(--faint); display: inline-block; }
 
   .empty { font-size: 13px; color: var(--muted); font-weight: 300; padding: 4px 0; }
@@ -332,28 +389,25 @@
   }
 
   /* Pipeline ----------------------------------------------------------- */
-  .row {
+  .watchline {
     display: flex; align-items: center; justify-content: space-between;
-    gap: 12px; padding: 13px 0; border-top: 1px solid var(--line);
+    gap: 12px; padding-bottom: 13px; border-bottom: 1px solid var(--line);
   }
-  .row:first-of-type { border-top: none; }
   .row-main { min-width: 0; flex: 1; }
   .row-title {
-    font-size: 14px; font-weight: 500; white-space: nowrap;
+    font-size: 13.5px; font-weight: 500; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis;
   }
   .row-sub { font-size: 12px; color: var(--muted); font-weight: 300; margin-top: 2px; }
-  a.row-title { display: block; color: var(--ink); text-decoration: none; }
-  a.row-title:hover { color: var(--brand); }
-  .row-warn { font-size: 12px; color: var(--warn); font-weight: 400; margin-top: 4px; line-height: 1.4; }
+  .row-warn { font-size: 11.5px; color: var(--warn); font-weight: 400; margin-top: 3px; line-height: 1.4; }
 
   .switch {
-    position: relative; width: 44px; height: 26px; border-radius: 999px; border: none;
+    position: relative; width: 42px; height: 24px; border-radius: 999px; border: none;
     background: var(--line); cursor: pointer; flex: 0 0 auto; padding: 0;
     transition: background .2s ease;
   }
   .switch::after {
-    content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px;
+    content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
     border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25);
     transition: transform .2s ease;
   }
@@ -361,34 +415,24 @@
   .switch[aria-checked="true"]::after { transform: translateX(18px); }
   .switch:disabled { opacity: .5; cursor: default; }
 
-  .steps { display: flex; align-items: flex-start; margin: 14px 0 4px; }
-  .step { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; position: relative; min-width: 0; }
-  .step::before {
-    content: ""; position: absolute; top: 7px; left: -50%; right: 50%; height: 2px;
-    background: var(--line); z-index: 0;
+  /* The five stages as pills, the way the product page shows them: what is
+     done, what is running, and what is still to come, in one line. */
+  .steps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; margin: 14px 0 0; }
+  .step {
+    text-align: center; font-size: 10.5px; font-weight: 500; letter-spacing: .01em;
+    padding: 7px 4px; border-radius: 999px; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    background: var(--card-2); color: var(--muted);
   }
-  .step:first-child::before { display: none; }
-  .step.done::before, .step.active::before { background: var(--brand); }
-  .step-dot {
-    width: 16px; height: 16px; border-radius: 50%; background: var(--card);
-    border: 2px solid var(--line); z-index: 1; display: grid; place-items: center;
-  }
-  .step.done .step-dot { background: var(--brand); border-color: var(--brand); }
-  .step.done .step-dot::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #fff; }
-  .step.active .step-dot { border-color: var(--brand); }
-  .step.active .step-dot::after {
-    content: ""; width: 8px; height: 8px; border-radius: 50%;
-    border: 2px solid var(--brand); border-right-color: transparent; animation: spin .75s linear infinite;
-  }
-  .step-label { font-size: 9.5px; letter-spacing: .03em; text-transform: uppercase; color: var(--muted); font-weight: 500; text-align: center; padding: 0 2px; }
-  .step.active .step-label { color: var(--brand-deep); }
+  .step.done { background: var(--brand-soft); color: var(--brand-deep); }
+  .step.active { background: var(--brand-deep); color: #fff; }
   .steps.idle { opacity: .5; }
-  .proc-detail { font-size: 12px; color: var(--muted); margin-top: 10px; font-weight: 300; display: flex; align-items: center; gap: 8px; }
+  .proc-detail { font-size: 12px; color: var(--muted); margin-top: 12px; font-weight: 300; display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
   .proc-detail strong { color: var(--ink); font-weight: 500; }
 
   .tag {
-    flex: 0 0 auto; font-size: 11px; font-weight: 500; letter-spacing: .03em;
-    padding: 3px 9px; border-radius: 999px;
+    flex: 0 0 auto; font-size: 10.5px; font-weight: 500; letter-spacing: .03em;
+    padding: 3px 10px; border-radius: 999px;
     background: var(--brand-soft); color: var(--brand-deep);
   }
   .tag.err { background: rgba(194,47,61,.12); color: var(--err); }
@@ -396,8 +440,12 @@
   .tag.course { display: inline-flex; align-items: center; gap: 6px; background: color-mix(in srgb, var(--course) 14%, var(--card)); color: var(--ink); }
   .tag.course .sw { width: 7px; height: 7px; border-radius: 50%; background: var(--course); }
 
-  .inbox-list { display: grid; gap: 6px; margin-top: 8px; }
-  .inbox-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .inbox { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
+  .inbox-list { display: grid; gap: 5px; margin-top: 8px; }
+  .inbox-item {
+    display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted);
+    background: var(--card-2); border-radius: 8px; padding: 6px 10px;
+  }
   .inbox-item i { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); flex: 0 0 auto; }
 
   .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; display: inline-block; }
@@ -412,7 +460,7 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) {
-    .spinner, .step.active .step-dot::after { animation-duration: 2.5s; }
+    .spinner { animation-duration: 2.5s; }
     .rec-btn.is-recording::after { animation: none; }
     .levels.live span { animation: none; height: 12px; }
   }
@@ -421,7 +469,7 @@
   .chips { display: flex; gap: 6px; flex-wrap: wrap; }
   .chip {
     font: inherit; font-size: 11px; font-weight: 500; cursor: pointer;
-    padding: 4px 10px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 11px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px;
     border: 1px solid var(--line); background: var(--card); color: var(--muted);
   }
   .chip:hover { color: var(--ink); }
@@ -433,84 +481,88 @@
      row. In one column there is nothing beside it, so it flows normally. */
   .recent-card { display: flex; flex-direction: column; }
   .recent-fill { flex: 1; min-height: 200px; position: relative; }
-  .recent-list { position: absolute; inset: 0; overflow-y: auto; margin-right: -8px; padding-right: 8px; }
-  @media (max-width: 900px) {
+  .recent-list { position: absolute; inset: 0; overflow-y: auto; display: grid; gap: 6px; align-content: start; margin-right: -8px; padding-right: 8px; }
+  @media (max-width: 1080px) {
     .recent-fill { min-height: 0; }
     .recent-list { position: static; max-height: 420px; }
   }
-  .row .sw-l { width: 4px; align-self: stretch; border-radius: 2px; flex: 0 0 auto; background: var(--course, var(--line)); }
-  .row .measures { font-size: 11px; color: var(--muted); font-weight: 300; margin-top: 2px; }
+  .rec-row {
+    display: flex; align-items: center; gap: 10px; min-width: 0;
+    background: var(--card-2); border-radius: 10px; padding: 9px 12px;
+  }
+  .rec-row .sw-l { width: 4px; align-self: stretch; border-radius: 2px; flex: 0 0 auto; background: var(--course, var(--line)); }
+  a.row-title { display: block; color: var(--ink); text-decoration: none; }
+  a.row-title:hover { color: var(--brand-deep); }
+  .rec-row .measures { font-size: 11px; color: var(--muted); font-weight: 300; margin-top: 2px; }
 
   /* Study assistant, v3 ------------------------------------------------ */
-  .assistant { border-style: dashed; box-shadow: none; background: var(--card-2); margin-bottom: 18px; }
+  .assistant { border-style: dashed; box-shadow: none; background: var(--card-2); margin-bottom: 16px; }
   .soon {
-    font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+    font-size: 10px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
     padding: 3px 9px; border-radius: 999px; background: var(--brand); color: #fff;
   }
-  .assistant-body { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 22px; align-items: start; }
-  @media (max-width: 900px) { .assistant-body { grid-template-columns: 1fr; } }
-  .convo { display: grid; gap: 10px; }
-  .bubble { max-width: 78%; padding: 10px 14px; border-radius: 14px; font-size: 13px; line-height: 1.5; }
+  .assistant-body { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 24px; align-items: start; }
+  @media (max-width: 1080px) { .assistant-body { grid-template-columns: 1fr; } }
+  .convo { display: grid; gap: 9px; }
+  .bubble { max-width: 78%; padding: 10px 14px; border-radius: 14px; font-size: 12.5px; line-height: 1.5; }
   .bubble.me { justify-self: end; background: var(--brand); color: #fff; border-bottom-right-radius: 4px; }
   .bubble.ai { justify-self: start; background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 4px; color: var(--muted); }
   .bubble.ai .cite { display: inline-block; margin-top: 6px; font-size: 11px; color: var(--brand-deep); font-weight: 500; }
   .ask {
     display: flex; gap: 8px; align-items: center; margin-top: 14px;
-    border: 1px solid var(--line); border-radius: 12px; padding: 6px 6px 6px 14px; background: var(--card);
+    border: 1px solid var(--line); border-radius: 999px; padding: 5px 5px 5px 16px; background: var(--card);
   }
-  .ask input { flex: 1; min-width: 0; font: inherit; font-size: 13px; border: none; background: none; color: var(--ink); outline: none; }
+  .ask input { flex: 1; min-width: 0; font: inherit; font-size: 12.5px; border: none; background: none; color: var(--ink); outline: none; }
   .ask input::placeholder { color: var(--muted); opacity: .8; }
   .ask button {
-    font: inherit; font-size: 13px; font-weight: 500; border: none; border-radius: 9px; padding: 8px 14px;
+    font: inherit; font-size: 12.5px; font-weight: 500; border: none; border-radius: 999px; padding: 8px 16px;
     background: var(--brand); color: #fff; opacity: .45; cursor: not-allowed;
   }
-  .plans { font-size: 13px; color: var(--muted); font-weight: 300; }
-  .plans h3 { font-size: 13px; font-weight: 600; color: var(--ink); margin: 0 0 8px; }
+  .plans { font-size: 12.5px; color: var(--muted); font-weight: 300; }
+  .plans h3 { font-size: 12.5px; font-weight: 600; color: var(--ink); margin: 0 0 8px; }
   .plans ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
   .plans li { display: flex; gap: 8px; align-items: flex-start; }
   .plans li::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--brand); flex: 0 0 auto; margin-top: 7px; }
   .starters { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
   .starters span {
-    font-size: 12px; padding: 5px 10px; border-radius: 999px; border: 1px dashed var(--line);
+    font-size: 11.5px; padding: 5px 11px; border-radius: 999px; border: 1px dashed var(--line);
     color: var(--muted); background: var(--card);
   }
 
-  /* Footer ------------------------------------------------------------- */
-  .checks { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; font-size: 12px; color: var(--muted); }
-  .check { display: flex; align-items: center; gap: 7px; }
-  .checks .foot-link { margin-left: auto; color: var(--brand); text-decoration: none; font-weight: 500; }
-  .checks .foot-link:hover { text-decoration: underline; }
-
+  /* Banners ------------------------------------------------------------ */
   .flash {
-    font-size: 13px; padding: 11px 14px; border-radius: 11px; margin-bottom: 18px;
+    font-size: 13px; padding: 10px 16px; border-radius: 999px; margin-bottom: 10px;
     background: var(--brand-soft); color: var(--brand-deep); display: none;
   }
   .flash.err { background: rgba(194,47,61,.1); color: var(--err); }
   .flash.warn { background: rgba(178,92,0,.1); color: var(--warn); }
   .flash a { color: inherit; font-weight: 500; }
+  .flash code { font-size: 12px; }
   /* The same banner, sat above the record button instead of the page. */
-  .flash.rec-flash { margin: 0 0 14px; }
+  .flash.rec-flash { margin: 0 0 14px; border-radius: 12px; }
 
   /* Phones. Last on purpose: these override the rules above. ------------- */
   @media (max-width: 560px) {
-    .wrap { padding: 18px 16px 40px; }
+    .main { padding: 16px 14px 40px; }
+    .side { padding: 10px 14px; }
+    /* A phone has no room for the rail's course list, and loses nothing by
+       dropping it: the chips over the recent list carry the same filter. */
+    #sideCourses { display: none; }
     .grid, .tiles { gap: 12px; }
     .grid { margin-bottom: 12px; }
-    header { gap: 10px; margin-bottom: 16px; }
-    header img { width: 38px; height: 38px; border-radius: 10px; }
-    .brandname { font-size: 21px; }
-    .gear { width: 32px; height: 32px; }
-    .theme button { width: 26px; height: 26px; }
-    .card { padding: 16px; border-radius: 14px; }
+    .sidebrand img { width: 24px; height: 24px; border-radius: 8px; }
+    .brandname { font-size: 15px; }
+    .nav { padding: 6px 9px; font-size: 12.5px; }
+    .card { padding: 15px; border-radius: 14px; }
     .card-head { flex-wrap: wrap; row-gap: 4px; }
-    .tile { padding: 14px 16px 12px; }
-    .tile-value { font-size: 28px; }
+    .tile { padding: 13px 15px 12px; }
+    .tile-value { font-size: 26px; }
     .tile-sub { min-height: 0; }
     .record { gap: 14px; }
-    .rec-btn, .rec-btn.is-recording::after { width: 72px; height: 72px; }
-    .rec-btn .glyph { width: 22px; height: 22px; }
-    .timer { font-size: 30px; }
-    .step-label { font-size: 7.5px; letter-spacing: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .rec-btn, .rec-btn.is-recording::after { width: 68px; height: 68px; }
+    .rec-btn .glyph { width: 21px; height: 21px; }
+    .timer { font-size: 28px; }
+    .step { font-size: 8.5px; letter-spacing: 0; padding: 6px 2px; }
     /* SVG text scales with the viewBox; at phone width 11 units is
        unreadable, so the labels grow to stay about 9px on screen. */
     .chart text { font-size: 15px; }
@@ -520,177 +572,206 @@
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="shell">
 
-  <header>
-    <img src="{{ base }}/static/icon.png" alt="">
-    <div>
-      <div class="brandname"><span class="ai">{{ profile.title }}</span></div>
-      <div class="tagline">{{ profile.tagline }}</div>
-      <div class="tagline viewer" id="viewer" hidden></div>
+  <!-- The rail: who this is, where to go, which courses, what is connected.
+       Everything that used to sit in the page header or its footer. -->
+  <aside class="side">
+    <div class="sidebrand">
+      <img src="{{ base }}/static/icon.png" alt="">
+      <div class="brandname">{{ profile.title }}</div>
     </div>
-    <div class="today" id="todayLine"></div>
-    <a class="gear" href="{{ base }}/setup" title="Setup" aria-label="Setup">
+    <div class="tagline">{{ profile.tagline }}</div>
+
+    <a class="nav on" href="{{ base }}/" aria-current="page">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/>
+        <rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>
+      </svg>
+      Dashboard
+    </a>
+    <!-- There is no second page to send anyone to: the lectures are on this
+         one, so this scrolls to them rather than promising a view that does
+         not exist. -->
+    <a class="nav" href="#recentCard">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19v16H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M8 8h7M8 12h7"/>
+      </svg>
+      Lectures
+    </a>
+    <a class="nav" href="{{ base }}/setup">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="3"/>
         <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>
       </svg>
+      Setup
     </a>
-    <div class="theme" role="group" aria-label="Color theme">
-      <button type="button" data-theme-choice="system" title="Match system" aria-label="Match system theme">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>
-        </svg>
-      </button>
-      <button type="button" data-theme-choice="light" title="Light" aria-label="Light theme">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <circle cx="12" cy="12" r="4.2"/>
-          <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4"/>
-        </svg>
-      </button>
-      <button type="button" data-theme-choice="dark" title="Dark" aria-label="Dark theme">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M20.5 14.6A8.5 8.5 0 1 1 9.4 3.5a6.8 6.8 0 0 0 11.1 11.1z"/>
-        </svg>
-      </button>
+
+    <h2 id="coursesHead" hidden>Courses</h2>
+    <div id="sideCourses"></div>
+
+    <div class="sidefoot">
+      <div class="checks" id="checks"></div>
+      <div class="viewer" id="viewer" hidden></div>
     </div>
-  </header>
+  </aside>
 
-  <div class="flash" id="flash"></div>
-  <div class="flash err" id="relayBanner" hidden>
-    Your Mac is not connected right now. Wake it, or check that its panel is running; this page picks up on its own.
-  </div>
-  <div class="flash" id="updateBanner" style="display:none"></div>
-  <div class="flash" id="setupFlash" style="display:none"></div>
+  <main class="main">
 
-  <!-- Record + this week -->
-  <section class="grid top">
-    <div class="card record-card">
-      <div class="flash rec-flash" id="allowanceFlash" style="display:none"></div>
-      <div class="record">
-        <div class="rec-btn-wrap">
-          <button class="rec-btn" id="recBtn" aria-label="Start recording">
-            <span class="glyph"></span>
+    <div class="top">
+      <h1>Dashboard</h1>
+      <div class="top-right">
+        <div class="today" id="todayLine"></div>
+        <div class="theme" role="group" aria-label="Color theme">
+          <button type="button" data-theme-choice="system" title="Match system" aria-label="Match system theme">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>
+            </svg>
+          </button>
+          <button type="button" data-theme-choice="light" title="Light" aria-label="Light theme">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <circle cx="12" cy="12" r="4.2"/>
+              <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4"/>
+            </svg>
+          </button>
+          <button type="button" data-theme-choice="dark" title="Dark" aria-label="Dark theme">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20.5 14.6A8.5 8.5 0 1 1 9.4 3.5a6.8 6.8 0 0 0 11.1 11.1z"/>
+            </svg>
           </button>
         </div>
-        <div class="rec-info">
-          <div class="timer idle" id="timer">Ready to record</div>
-          <div class="rec-meta" id="recMeta">Not recording</div>
-          <select id="courseSel" aria-label="Course to file under"></select>
-          <div class="levels" id="levels" aria-hidden="true">
-            <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
-          </div>
-          <div class="levels-label" id="levelsLabel"></div>
-        </div>
-      </div>
-      <div class="rec-note" id="recNote">
-        The mic takes a moment to open, so start before the lecture does.
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-head">
-        <h2>This week</h2>
-        <span class="card-sub" id="weekSub"></span>
-      </div>
-      <div class="week" id="week"></div>
-      <div class="week-foot">
-        <span><i class="key filled"></i>recorded, click to open</span>
-        <span><i class="key now"></i>in session</span>
-        <span><i class="key"></i>upcoming</span>
-        <span><i class="key missed"></i>no recording</span>
-        <span><i class="key canceled"></i>class did not meet</span>
-      </div>
+    <div class="flash" id="flash"></div>
+    <div class="flash err" id="relayBanner" hidden>
+      Your Mac is not connected right now. Wake it, or check that its panel is running; this page picks up on its own.
     </div>
-  </section>
+    <div class="flash" id="updateBanner" style="display:none"></div>
+    <div class="flash" id="setupFlash" style="display:none"></div>
 
-  <!-- Pipeline + tiles -->
-  <section class="grid status">
-    <div class="card">
-      <h2>Pipeline</h2>
-      <div class="row">
-        <div class="row-main">
-          <div class="status-line">
-            <span class="dot off" id="watchDot"></span>
-            <span id="watchText">Watcher stopped</span>
+    <!-- Record + this week -->
+    <section class="grid top-row">
+      <div class="card record-card">
+        <div class="flash rec-flash" id="allowanceFlash" style="display:none"></div>
+        <div class="record">
+          <div class="rec-btn-wrap">
+            <button class="rec-btn" id="recBtn" aria-label="Start recording">
+              <span class="glyph"></span>
+            </button>
           </div>
-          <div class="row-sub" id="watchSub">Recordings sit in the inbox until it runs.</div>
+          <div class="rec-info">
+            <div class="timer idle" id="timer">Ready to record</div>
+            <div class="rec-meta" id="recMeta">Not recording</div>
+            <select id="courseSel" aria-label="Course to file under"></select>
+            <div class="levels" id="levels" aria-hidden="true">
+              <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            </div>
+            <div class="levels-label" id="levelsLabel"></div>
+          </div>
         </div>
-        <button class="switch" id="watchBtn" role="switch" aria-checked="false" aria-label="Watcher"></button>
+        <div class="rec-note" id="recNote">
+          The mic takes a moment to open, so start before the lecture does.
+        </div>
       </div>
-      <div class="steps idle" id="steps"></div>
-      <div class="proc-detail" id="procDetail"></div>
-      <div class="row" style="margin-top:6px">
-        <div class="row-main">
+
+      <div class="card">
+        <div class="card-head">
+          <h2>This week</h2>
+          <span class="card-sub" id="weekSub"></span>
+        </div>
+        <div class="week" id="week"></div>
+        <div class="week-foot">
+          <span><i class="key filled"></i>recorded, click to open</span>
+          <span><i class="key now"></i>in session</span>
+          <span><i class="key"></i>upcoming</span>
+          <span><i class="key missed"></i>no recording</span>
+          <span><i class="key canceled"></i>class did not meet</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Pipeline + tiles -->
+    <section class="grid status">
+      <div class="card">
+        <h2>Pipeline</h2>
+        <div class="watchline">
+          <div class="row-main">
+            <div class="status-line">
+              <span class="dot off" id="watchDot"></span>
+              <span id="watchText">Watcher stopped</span>
+            </div>
+            <div class="row-sub" id="watchSub">Recordings sit in the inbox until it runs.</div>
+          </div>
+          <button class="switch" id="watchBtn" role="switch" aria-checked="false" aria-label="Watcher"></button>
+        </div>
+        <div class="steps idle" id="steps"></div>
+        <div class="proc-detail" id="procDetail"></div>
+        <div class="inbox">
           <div class="row-title" id="inboxTitle">Inbox empty</div>
           <div class="row-sub" id="inboxSub">Nothing waiting to be processed.</div>
           <div class="inbox-list" id="inboxList" hidden></div>
         </div>
       </div>
-    </div>
 
-    <div class="tiles" id="tiles"></div>
-  </section>
+      <div class="tiles" id="tiles"></div>
+    </section>
 
-  <!-- Chart + recent -->
-  <section class="grid charts">
-    <div class="card">
+    <!-- Chart + recent -->
+    <section class="grid charts">
+      <div class="card">
+        <div class="card-head">
+          <h2>Lectures per week</h2>
+          <span class="card-sub">Last 8 weeks, against what the schedule expects</span>
+        </div>
+        <div class="chart" id="weeksChart"></div>
+        <div class="legend" id="weeksLegend"></div>
+      </div>
+      <div class="card recent-card" id="recentCard">
+        <div class="card-head">
+          <h2>Recent lectures</h2>
+          <div class="chips" id="chips"></div>
+        </div>
+        <div class="recent-fill">
+          <div class="recent-list" id="recent"><div class="empty">Nothing processed yet.</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Study assistant: reserved for v3. Nothing here is wired up yet. -->
+    <section class="card assistant" id="assistant">
       <div class="card-head">
-        <h2>Lectures per week</h2>
-        <span class="card-sub">Last 8 weeks, against what the schedule expects</span>
+        <h2>Study assistant</h2>
+        <span class="soon">Coming in v3</span>
       </div>
-      <div class="chart" id="weeksChart"></div>
-      <div class="legend" id="weeksLegend"></div>
-    </div>
-    <div class="card recent-card">
-      <div class="card-head">
-        <h2>Recent lectures</h2>
-        <div class="chips" id="chips"></div>
-      </div>
-      <div class="recent-fill">
-        <div class="recent-list" id="recent"><div class="empty">Nothing processed yet.</div></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Study assistant: reserved for v3. Nothing here is wired up yet. -->
-  <section class="card assistant" id="assistant">
-    <div class="card-head">
-      <h2>Study assistant</h2>
-      <span class="soon">Coming in v3</span>
-    </div>
-    <div class="assistant-body">
-      <div>
-        <div class="convo">
-          <div class="bubble me" id="askSample">What did we cover this week, and what should I review before the next class?</div>
-          <div class="bubble ai">
-            Answers will come from your own transcripts and summaries, with the lecture each point came from linked.
-            <span class="cite">Not connected yet</span>
+      <div class="assistant-body">
+        <div>
+          <div class="convo">
+            <div class="bubble me" id="askSample">What did we cover this week, and what should I review before the next class?</div>
+            <div class="bubble ai">
+              Answers will come from your own transcripts and summaries, with the lecture each point came from linked.
+              <span class="cite">Not connected yet</span>
+            </div>
           </div>
+          <div class="ask">
+            <input type="text" placeholder="Ask about any lecture, or ask for a study guide" disabled aria-label="Ask the study assistant (not available yet)">
+            <button type="button" disabled>Ask</button>
+          </div>
+          <div class="starters" id="starters"></div>
         </div>
-        <div class="ask">
-          <input type="text" placeholder="Ask about any lecture, or ask for a study guide" disabled aria-label="Ask the study assistant (not available yet)">
-          <button type="button" disabled>Ask</button>
+        <div class="plans">
+          <h3>What it will do</h3>
+          <ul>
+            <li>Answer questions across every transcript and summary filed in Drive, course by course.</li>
+            <li>Build a study guide for a course, a week, or an exam from the lectures that matter.</li>
+            <li>Quiz you on key terms, and point back to the minute of the lecture they came from.</li>
+            <li>List what is due, pulled from the action items already in your notes.</li>
+          </ul>
         </div>
-        <div class="starters" id="starters"></div>
       </div>
-      <div class="plans">
-        <h3>What it will do</h3>
-        <ul>
-          <li>Answer questions across every transcript and summary filed in Drive, course by course.</li>
-          <li>Build a study guide for a course, a week, or an exam from the lectures that matter.</li>
-          <li>Quiz you on key terms, and point back to the minute of the lecture they came from.</li>
-          <li>List what is due, pulled from the action items already in your notes.</li>
-        </ul>
-      </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- Setup -->
-  <div class="card" style="padding:14px 22px">
-    <div class="checks" id="checks"></div>
-  </div>
-
+  </main>
 </div>
 
 <script>
@@ -1230,7 +1311,7 @@ function renderPipeline(s) {
   $("steps").className = "steps" + (p ? "" : " idle");
   $("steps").innerHTML = STAGES.map(([key, label], i) => {
     const cls = p && i < at ? " done" : p && i === at ? " active" : "";
-    return `<div class="step${cls}"><div class="step-dot"></div><div class="step-label">${label}</div></div>`;
+    return `<div class="step${cls}">${label}</div>`;
   }).join("");
   const detail = $("procDetail");
   if (p) {
@@ -1277,7 +1358,7 @@ function renderRecent(s) {
   }
   box.innerHTML = rows.map(x => {
     if (x.error) {
-      return `<div class="row"><span class="sw-l" style="--course:var(--err)"></span><div class="row-main">
+      return `<div class="rec-row" style="--course:var(--err)"><span class="sw-l"></span><div class="row-main">
         <div class="row-title">${escapeHtml(x.source)}</div>
         <div class="row-sub">${longDate(x.when)} · ${escapeHtml(x.error).slice(0, 120)}</div>
       </div><span class="tag err">failed</span></div>`;
@@ -1292,12 +1373,29 @@ function renderRecent(s) {
     const tag = x.warning
       ? `<span class="tag warn">${escapeHtml(x.course)}</span>`
       : `<span class="tag course" style="${courseStyle(x.course)}"><span class="sw"></span>${escapeHtml(x.course)}</span>`;
-    return `<div class="row"><span class="sw-l" style="${courseStyle(x.course)}"></span><div class="row-main">
+    return `<div class="rec-row" style="${courseStyle(x.course)}"><span class="sw-l"></span><div class="row-main">
       <a class="row-title" href="${escapeHtml(x.url)}" target="_blank" rel="noopener" title="${escapeHtml(x.name)}">${escapeHtml(topic || x.name)}</a>
       <div class="row-sub">${longDate(x.date)} · from ${escapeHtml(x.source)}</div>
       ${measures.length ? `<div class="measures">${measures.join(" · ")}</div>` : ""}${warn}
     </div>${tag}</div>`;
   }).join("");
+}
+
+// Course rail -------------------------------------------------------------------
+// The sidebar's course list is the same filter the chart legend and the chips
+// over the recent list carry: one choice, shown in three places, so clicking a
+// course anywhere narrows the whole page.
+function renderSideCourses(ins) {
+  const box = $("sideCourses");
+  const courses = ins.courses.filter(c => c.count || c.meetings);
+  $("coursesHead").hidden = !courses.length;
+  box.innerHTML = courses.map(c => `<button type="button" class="sidecourse" data-course="${escapeHtml(c.code)}"
+      aria-pressed="${String(courseFilter === c.code)}" title="${escapeHtml(c.code)}: ${plural(c.count || 0, "lecture")} filed">
+      <span class="sw" style="background:${courseColor(c.code)}"></span>
+      <span class="code">${escapeHtml(c.code)}</span><em>${c.count || 0}</em></button>`).join("");
+  for (const b of box.querySelectorAll(".sidecourse")) {
+    b.onclick = () => setFilter(b.dataset.course);
+  }
 }
 
 // Study assistant placeholder ---------------------------------------------------
@@ -1376,6 +1474,7 @@ function render(s) {
     renderWeek(s.insights);
     renderTiles(s.insights);
     renderWeeksChart(s.insights);
+    renderSideCourses(s.insights);
   }
   const recentKey = JSON.stringify(s.recent) + courseFilter;
   if (recentKey !== lastRecent) {
