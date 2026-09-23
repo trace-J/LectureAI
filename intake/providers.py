@@ -324,6 +324,11 @@ PROXY_REASONS = {
     "provider_unavailable": "the transcription provider could not be reached",
     "too_large": "the chunk is bigger than the service accepts",
     "too_long": "the chunk is longer than the service accepts",
+    # Both mean the model answered and the answer was not usable, which is
+    # worth retrying: the same transcript has come back right on the next run.
+    "no_summary": "the model returned an empty summary; this can be run again",
+    "malformed_summary": "the model returned a summary it had packed its other "
+                         "fields into; this can be run again",
 }
 
 

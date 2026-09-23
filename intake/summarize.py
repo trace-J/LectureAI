@@ -228,20 +228,55 @@ def shape(payload: dict, course: str, date: str) -> dict:
     }
 
 
+# The schema's own field names, as the model closes them when it writes its
+# whole answer into the first field instead of filling the other three. No
+# lecture summary contains these, so finding one is proof of the failure
+# rather than a guess at it.
+LEAKED_FIELD_TAGS = ("</summary_md>", "<topic_slug>", "<key_terms>",
+                     "<action_items>", "</record_summary>")
+
+
 def require_written(result: dict) -> dict:
     """A summary with no summary in it is a failed call, not a thin one.
 
-    Both paths can produce one: a tool_use block whose input carried none of
-    the fields (seen once in six runs against a 5,500 word transcript), or a
-    parsed object of empty strings. Shaped rather than checked, that becomes a
-    blank note filed under the fallback slug and uploaded to Drive, which is
-    worse than an error because nothing says it happened. The lecture is still
-    on disk, so failing here costs a retry and nothing else.
+    Three shapes of failure, all of which used to be filed as a lecture:
+
+    An EMPTY summary. A tool_use block whose input carried none of the fields
+    (seen once in six runs against a 5,500 word transcript), or a parsed
+    object of empty strings.
+
+    A summary that swallowed the other fields. On 2026-09-23 the model wrote
+    the notes, the slug, seven key terms and two to-dos into summary_md as
+    tag-delimited text and left the other three fields empty. Every check
+    passed: the summary was long and real, so it was filed under the fallback
+    slug with no terms and an "Action items: none" section, while that
+    Friday's reading sat in the body as markup. Nothing said so.
+
+    A summary with NOTHING around it. No slug, no terms, no to-dos together
+    mean the model answered the prose and skipped the structure. Any one of
+    the three alone is a thin lecture and normal; all three at once is not.
+
+    The recording is still on disk in every case, so failing here costs a
+    retry and nothing else. Filing the wrong thing costs a lecture quietly.
     """
     if not result.get("summary_md", "").strip():
         raise RuntimeError(
             "the model returned an empty summary; nothing was written. "
             "The recording is untouched, so this can be run again."
+        )
+    leaked = next((t for t in LEAKED_FIELD_TAGS if t in result["summary_md"]), "")
+    if leaked:
+        raise RuntimeError(
+            f"the model wrote its other fields into the summary ({leaked} is in "
+            f"the text); nothing was written. The recording is untouched, so "
+            f"this can be run again."
+        )
+    if (result.get("topic_slug") == fallback_slug()
+            and not result.get("key_terms") and not result.get("action_items")):
+        raise RuntimeError(
+            "the model returned a summary with no topic, no key terms and no "
+            "action items; nothing was written. The recording is untouched, "
+            "so this can be run again."
         )
     return result
 
