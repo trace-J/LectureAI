@@ -650,6 +650,48 @@ def t19():
 results.append(run("an empty summary is an error, not a blank note filed to Drive", t19))
 
 
+def t19b():
+    """The 2026-09-23 ENTR-4306 lecture, which was filed rather than refused.
+
+    The model wrote the notes, the slug, the key terms and both of that
+    Friday's to-dos into summary_md as tag-delimited text and left the other
+    three fields empty. summary_md was long and real, so every check passed
+    and the reading went to Drive as markup in the body instead of to Notion.
+    """
+    signed_in()
+    leaked = {
+        "summary_md": "The lecture builds on the execution engine. "
+                      "</summary_md> <topic_slug>Execution-Vs-Innovation</topic_slug>",
+        "topic_slug": "", "key_terms": [], "action_items": [],
+    }
+    hollow = {"summary_md": "## Real notes, and nothing around them",
+              "topic_slug": "", "key_terms": [], "action_items": []}
+    for payload, expected in ((leaked, "wrote its other fields"),
+                              (hollow, "no topic, no key terms")):
+        real = account.transport
+        account.transport = lambda *a, p=payload, **k: (200, {"summary": p, "tokens": 12})
+        try:
+            summarize.summarize("a real transcript", "ENTR-4306", "2026-09-23")
+        except RuntimeError as exc:
+            assert expected in str(exc), exc
+            assert "run again" in str(exc), "say that the recording survived"
+        else:
+            raise AssertionError(f"{payload!r} should not become a note")
+        finally:
+            account.transport = real
+    # A thin lecture is still a lecture: any ONE of the three being empty is
+    # normal, and a summary that named its topic keeps going.
+    real = account.transport
+    account.transport = lambda *a, **k: (200, {"summary": {
+        "summary_md": "## Short class", "topic_slug": "Process-Costing",
+        "key_terms": [], "action_items": []}, "tokens": 12})
+    try:
+        assert summarize.summarize("t", "ACCT-4321", "2026-09-01")["summary_md"]
+    finally:
+        account.transport = real
+results.append(run("a summary that swallowed the other fields is refused, not filed", t19b))
+
+
 def t20():
     """A refusal names the meter that ran out, in that meter's own units.
 
