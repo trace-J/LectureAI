@@ -1539,6 +1539,86 @@ def t47():
 results.append(run("a damaged cancellations file is read as none, not as a crash", t47))
 
 
+# --- panel.log rotation ----------------------------------------------------
+#
+# launchd appends the panel's stdout and stderr to panel.log and nothing ever
+# trimmed it: one read was 3.7 MB and 54,000 lines.
+
+from intake import logfiles  # noqa: E402
+
+
+def t48():
+    where = tmp / "rotation"
+    where.mkdir()
+    log = where / "panel.log"
+    log.write_text("small\n")
+    assert logfiles.rotate(log, max_bytes=100, backups=2) is False
+    assert log.read_text() == "small\n" and not (where / "panel.log.1").exists()
+
+    # Past the limit it moves aside, and the older copies shift down.
+    for generation in ("first", "second", "third"):
+        log.write_text(generation * 50)
+        assert logfiles.rotate(log, max_bytes=100, backups=2) is True, generation
+        assert not log.exists(), "the oversized log was left in place"
+    assert (where / "panel.log.1").read_text().startswith("third")
+    assert (where / "panel.log.2").read_text().startswith("second")
+    assert not (where / "panel.log.3").exists(), "kept more copies than asked"
+    # A log that is not there is not an error.
+    assert logfiles.rotate(where / "missing.log", max_bytes=1) is False
+results.append(run("panel.log rotates by size and keeps a bounded number of copies", t48))
+
+
+def t49():
+    # The launchd case: stdout and stderr ARE panel.log. After rotating, what
+    # the process prints next must land in a fresh panel.log, not keep
+    # filling the renamed copy.
+    import subprocess
+    where = tmp / "rotation-stdio"
+    where.mkdir()
+    log = where / "panel.log"
+    log.write_text("x" * 500 + "\n")
+    script = (
+        "import sys; sys.path.insert(0, sys.argv[2]); from pathlib import Path\n"
+        "from intake import logfiles\n"
+        "print('before', flush=True)\n"
+        "assert logfiles.rotate(Path(sys.argv[1]), max_bytes=100, backups=1)\n"
+        "print('after', flush=True)\n"
+        "print('after on stderr', file=sys.stderr, flush=True)\n"
+    )
+    with log.open("a") as handle:
+        subprocess.run([sys.executable, "-c", script, str(log),
+                        str(Path(__file__).resolve().parent)],
+                       stdout=handle, stderr=handle, stdin=subprocess.DEVNULL,
+                       check=True, timeout=60)
+    old = (where / "panel.log.1").read_text()
+    new = log.read_text()
+    assert "before" in old and "after" not in old, old[-80:]
+    assert new == "after\nafter on stderr\n", new
+results.append(run("after rotating, a launchd-redirected stdout writes the fresh log", t49))
+
+
+def t50():
+    # The panel trims its log on the way up, in both `intake panel` and the
+    # app, which share prepare().
+    seen = []
+    saved = (logfiles.keep_trimmed, gui.sync.sync_later, gui.relay.start,
+             gui.updates.check_later)
+    logfiles.keep_trimmed = lambda path, *a, **k: seen.append(path)
+    gui.sync.sync_later = lambda *a, **k: None
+    gui.relay.start = lambda *a, **k: None
+    gui.updates.check_later = lambda *a, **k: None
+    try:
+        gui.prepare("127.0.0.1", 18765)
+    finally:
+        (logfiles.keep_trimmed, gui.sync.sync_later, gui.relay.start,
+         gui.updates.check_later) = saved
+    assert seen == [config.HOME_DIR / "panel.log"], seen
+    # And the file it trims is the one launchd writes.
+    from intake import service
+    assert service.plist()["StandardOutPath"] == str(seen[0])
+results.append(run("the panel trims panel.log as it starts", t50))
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
