@@ -7,7 +7,7 @@ leak a recording or a credential, so reports are genuinely welcome.
 ## Reporting a vulnerability
 
 Use GitHub's private reporting:
-[open an advisory](https://github.com/trace-J/LectureAI/security/advisories/new)
+[open an advisory](https://github.com/SyllabusAI/LectureAI/security/advisories/new)
 and describe what you found. The report stays between us until there is a fix.
 Please do not open a public issue or pull request for a security problem, and
 please do not test against anyone else's account or recordings.
@@ -23,7 +23,7 @@ the shortest steps that demonstrate it.
 ## Versions that get fixes
 
 The newest release on the
-[releases page](https://github.com/trace-J/LectureAI/releases) and whatever is
+[releases page](https://github.com/SyllabusAI/LectureAI/releases) and whatever is
 currently on `main`. There are no backports to older versions; a fix ships in
 the next release.
 
@@ -43,7 +43,7 @@ the next release.
   as such, and every user still authorizes their own account and holds their
   own token. A report that it is "exposed" will be closed.
 - **The account service.** Sign-in, device claim, and the web relay live in
-  [syllabus-accounts](https://github.com/trace-J/syllabus-accounts) and have
+  [syllabus-accounts](https://github.com/SyllabusAI/syllabus-accounts) and have
   their own policy. Report those there.
 - **Bugs in the providers themselves**, meaning Google, OpenAI, Anthropic,
   Deepgram, Notion, or ffmpeg. Those go upstream.

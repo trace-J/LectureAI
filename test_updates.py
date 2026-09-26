@@ -33,11 +33,11 @@ def run(label, fn):
 
 RELEASES = [
     {"tag_name": "ffmpeg-8.1.2-1", "draft": False, "prerelease": False,
-     "html_url": "https://github.com/trace-J/LectureAI/releases/tag/ffmpeg-8.1.2-1"},
+     "html_url": "https://github.com/SyllabusAI/LectureAI/releases/tag/ffmpeg-8.1.2-1"},
     {"tag_name": "v0.3.0", "draft": False, "prerelease": True, "html_url": "x"},
     {"tag_name": "v0.2.1", "draft": True, "prerelease": False, "html_url": "x"},
     {"tag_name": "v0.2.0", "draft": False, "prerelease": False,
-     "html_url": "https://github.com/trace-J/LectureAI/releases/tag/v0.2.0",
+     "html_url": "https://github.com/SyllabusAI/LectureAI/releases/tag/v0.2.0",
      "assets": [{"name": "Syllabus-0.2.0.dmg.sha256", "browser_download_url": "https://x/s"},
                 {"name": "Syllabus-0.2.0.dmg", "browser_download_url": "https://x/Syllabus-0.2.0.dmg"}]},
     {"tag_name": "v0.1.0", "draft": False, "prerelease": False, "html_url": "x"},

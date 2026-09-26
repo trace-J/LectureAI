@@ -55,7 +55,7 @@ if [[ ! -x "$FFMPEG_DIR/ffmpeg" || ! -x "$FFMPEG_DIR/ffprobe" ]]; then
         echo "  locally with packaging/ffmpeg/build.sh, or set SYLLABUS_FFMPEG_DIR." >&2
         exit 1
     fi
-    URL="https://github.com/trace-J/LectureAI/releases/download/$PIN_tag/$PIN_asset"
+    URL="https://github.com/SyllabusAI/LectureAI/releases/download/$PIN_tag/$PIN_asset"
     echo "fetching $URL"
     mkdir -p "$FFMPEG_DIR"
     curl -sfL -o "$BUILD/$PIN_asset" "$URL"

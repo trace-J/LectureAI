@@ -76,7 +76,7 @@ failed upload never costs you the transcription you already paid for.
 ## Install
 
 **The Mac app.** Download the newest `Syllabus-x.y.z.dmg` from the
-[releases page](https://github.com/trace-J/LectureAI/releases), open it, and
+[releases page](https://github.com/SyllabusAI/LectureAI/releases), open it, and
 drag Syllabus to Applications. Open Syllabus and it lands on its Setup page:
 sign in to a Syllabus account, pick a microphone, enter your class schedule,
 and connect Google Drive. A signed-in Mac holds no API key of its own; without
@@ -109,7 +109,7 @@ brew install ffmpeg pipx
 ```
 
 ```bash
-pipx install git+https://github.com/trace-J/LectureAI
+pipx install git+https://github.com/SyllabusAI/LectureAI
 ```
 
 ```bash
@@ -330,7 +330,7 @@ described above is what you see if it was refused.
 The Setup page ends with an optional step: **Sign in to a Syllabus account**.
 An account is a Google identity kept by a small web service at
 `syllabusaccounts.maincoursemedia.com` (its code is the
-[syllabus-accounts](https://github.com/trace-J/syllabus-accounts) repo, a
+[syllabus-accounts](https://github.com/SyllabusAI/syllabus-accounts) repo, a
 Cloudflare Worker with a D1 database). Signing in ties this Mac's panel to
 that identity. It is what lets the panel on the web sign you in ("The panel
 on the web" below), and it is where your class schedule and your Google
@@ -809,7 +809,7 @@ Drive folder, filename prefix, Notion target, panel port. Every module reads
 those from `config.PROFILE` rather than spelling them out. To work on it:
 
 ```bash
-git clone https://github.com/trace-J/LectureAI && cd LectureAI
+git clone https://github.com/SyllabusAI/LectureAI && cd LectureAI
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt   # installs the package editable, with the intake command
 ```
