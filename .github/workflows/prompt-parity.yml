@@ -41,7 +41,7 @@ jobs:
       - name: The lecture prompt must match syllabus-accounts
         run: |
           set -euo pipefail
-          URL=https://raw.githubusercontent.com/trace-J/syllabus-accounts/main/src/prompts.ts
+          URL=https://raw.githubusercontent.com/SyllabusAI/syllabus-accounts/main/src/prompts.ts
           if ! curl -fsSL -o /tmp/prompts.ts "$URL"; then
             echo "::error::could not fetch $URL. If src/prompts.ts moved or the repo went private,"
             echo "::error::update this workflow and .github/workflows/prompt_parity.py in both repos."

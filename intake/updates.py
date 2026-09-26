@@ -1,6 +1,6 @@
 """Is there a newer Syllabus? Asked of GitHub Releases once a day, answered from a file.
 
-Releases of the app are tags like v0.2.0 on trace-J/LectureAI, cut by the
+Releases of the app are tags like v0.2.0 on SyllabusAI/LectureAI, cut by the
 release workflow (.github/workflows/release.yml). The panel asks GitHub for
 the list from a thread at startup, no more than once a day, and remembers
 the answer in the home directory. The status the page polls, and the menu
@@ -32,7 +32,7 @@ from typing import Callable
 
 from intake import __version__, config
 
-REPO = "trace-J/LectureAI"
+REPO = "SyllabusAI/LectureAI"
 RELEASES_API = f"https://api.github.com/repos/{REPO}/releases?per_page=20"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
 
