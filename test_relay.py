@@ -537,7 +537,8 @@ class HeldSocket:
     """A connection that stays open until close(), like a real one, and records
     every text frame sent up it with the time it was sent."""
 
-    def __init__(self, fail_sends=False):
+    def __init__(self, fail_sends=False, close_after_pings=None):
+        self.close_after_pings = close_after_pings
         self.sent = []
         self.times = []
         self.opened = threading.Event()
@@ -555,6 +556,8 @@ class HeldSocket:
         self.opened.set()
         while not self.closed.wait(0.005):
             self.peak_beats = max(self.peak_beats, len(heartbeat_threads()))
+            if self.close_after_pings is not None and len(self.pings()) >= self.close_after_pings:
+                self.closed.set()  # the service drops it
         on_close(1000, "bye")
 
     def send(self, text):
@@ -620,10 +623,9 @@ def t18():
     socks = []
 
     def factory(*a):
-        s = HeldSocket()
-        socks.append(s)
         # Each connection holds for a few beats, then the service drops it.
-        threading.Timer(BEAT * 3.5, s.close).start()
+        s = HeldSocket(close_after_pings=3)
+        socks.append(s)
         return s.factory(*a)
 
     r = relay.Relay(echo, socket_factory=factory, sleep=lambda s: None, heartbeat_seconds=BEAT)
@@ -633,7 +635,7 @@ def t18():
         assert len(socks) == 3, socks
         for i, s in enumerate(socks):
             assert s.peak_beats == 1, f"connection {i} saw {s.peak_beats} heartbeat threads"
-            assert s.pings(), f"connection {i} sent no heartbeat"
+            assert len(s.pings()) >= 3, f"connection {i} sent {len(s.pings())} heartbeats"
         assert heartbeat_threads() == [], "a heartbeat thread leaked across reconnects"
     finally:
         account.forget()
@@ -673,7 +675,8 @@ def t20():
         with contextlib.redirect_stderr(err):
             runner.start()
             assert sock.opened.wait(5)
-            time.sleep(BEAT * 6)
+            assert wait_for(lambda: "heartbeat" in err.getvalue()), "a failed heartbeat said nothing"
+            time.sleep(BEAT * 5)  # ticks that, before, would each have written a line
             sock.close()
             runner.join(5)
         lines = [l for l in err.getvalue().splitlines() if "heartbeat" in l]
