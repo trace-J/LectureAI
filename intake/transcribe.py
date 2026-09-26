@@ -15,6 +15,9 @@ Progress goes to stderr, the transcript goes to stdout, so this works:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import os
 import shutil
 import subprocess
 import sys
@@ -125,10 +128,85 @@ def split(src: Path, work_dir: Path, seconds: int) -> list[Path]:
     return chunks
 
 
+class ChunkCheckpoint:
+    """Each chunk's transcript, on disk the moment the provider returns it.
+
+    A lecture long enough to split goes up as several requests, each billed as
+    it lands. Resume used to keep the transcript only once every chunk had
+    succeeded, so a failure on the last chunk threw away the ones before it
+    and the retry paid for all of them again: one 73 minute lecture was billed
+    three times. Now a retry sends only the chunks that never came back.
+
+    Results are filed under a key made from everything that decides what a
+    chunk holds: the source file's size and modification time, the provider,
+    its chunk length, whether the audio was compressed first, and the number
+    and sizes of the chunks the split produced. A different recording, a
+    different provider, or a split that cut the audio differently gets a
+    different key, and never stitches in text from somebody else's chunk.
+    Anything filed under another key is stale and is dropped on sight.
+    """
+
+    def __init__(self, root: Path, key: str):
+        self.root = root
+        self.dir = root / key
+
+    @staticmethod
+    def key(src: Path, provider: TranscriptionProvider, compressed: bool,
+            chunks: list[Path]) -> str:
+        stat = src.stat()
+        ident = {
+            "v": 1,
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+            "provider": provider.name,
+            "chunk_seconds": provider.max_chunk_seconds,
+            "compressed": compressed,
+            "chunks": [_size(c) for c in chunks],
+        }
+        raw = json.dumps(ident, sort_keys=True).encode()
+        return hashlib.sha256(raw).hexdigest()[:24]
+
+    def open(self) -> None:
+        """Make this key's folder, and drop any other key's."""
+        try:
+            if self.root.is_dir():
+                for other in self.root.iterdir():
+                    if other != self.dir:
+                        if other.is_dir():
+                            shutil.rmtree(other, ignore_errors=True)
+                        else:
+                            other.unlink(missing_ok=True)
+            self.dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+
+    def _part(self, index: int) -> Path:
+        return self.dir / f"part_{index:03d}.txt"
+
+    def get(self, index: int) -> str | None:
+        try:
+            return self._part(index).read_text()
+        except OSError:
+            return None
+
+    def put(self, index: int, text: str) -> None:
+        """Keep one chunk's text. Never raises: failing to save a result
+        must not fail the transcription that just paid for it."""
+        part = self._part(index)
+        temp = part.with_name(f"{part.name}.{os.getpid()}.tmp")
+        try:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            temp.write_text(text)
+            temp.replace(part)
+        except OSError:
+            temp.unlink(missing_ok=True)
+
+
 def transcribe(
     path: str | Path,
     on_progress=None,
     provider: TranscriptionProvider | None = None,
+    checkpoint: Path | None = None,
 ) -> str:
     """Transcribe an audio file, compressing and splitting as needed.
 
@@ -142,6 +220,11 @@ def transcribe(
     work moves along. A 75 minute lecture takes many minutes and, on the
     default provider, ten API calls, so something has to be able to say how
     far in it is.
+
+    checkpoint, if given, is a folder where each chunk's transcript is kept
+    as soon as it succeeds, so that a retry after a failure part way through
+    pays only for the chunks that never came back (see ChunkCheckpoint). The
+    caller removes it once the whole transcript is safely stored.
     """
     def progress(detail: str) -> None:
         if on_progress:
@@ -164,7 +247,8 @@ def transcribe(
     work_dir = Path(tempfile.mkdtemp(prefix=f"{src.stem}_", dir=config.WORK_DIR))
     try:
         audio = src
-        if _size(audio) > provider.compress_threshold_bytes:
+        compressed = _size(audio) > provider.compress_threshold_bytes
+        if compressed:
             progress("compressing the audio")
             audio = compress(audio, work_dir)
 
@@ -188,10 +272,24 @@ def transcribe(
         parts: list[str] = []
         progress("splitting the audio")
         chunks = split(audio, work_dir, provider.max_chunk_seconds)
+        saved = None
+        if checkpoint is not None:
+            saved = ChunkCheckpoint(
+                Path(checkpoint),
+                ChunkCheckpoint.key(src, provider, compressed, chunks))
+            saved.open()
         for i, chunk in enumerate(chunks, start=1):
+            earlier = saved.get(i) if saved else None
+            if earlier is not None:
+                log(f"  chunk {i}/{len(chunks)}: reusing what an earlier attempt paid for")
+                parts.append(earlier)
+                continue
             log(f"  chunk {i}/{len(chunks)} ...")
             progress(f"part {i} of {len(chunks)}")
-            parts.append(_transcribe_chunk(chunk, provider, work_dir))
+            text = _transcribe_chunk(chunk, provider, work_dir)
+            if saved:
+                saved.put(i, text)
+            parts.append(text)
 
         text = "\n\n".join(p for p in parts if p)
         log(f"  done: {len(text.split())} words from {len(chunks)} chunks")

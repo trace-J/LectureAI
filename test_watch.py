@@ -89,8 +89,9 @@ class Fakes:
         def fake_duration(path):
             return self.duration
 
-        def fake_transcribe(path, on_progress=None):
+        def fake_transcribe(path, on_progress=None, checkpoint=None):
             self.transcribed += 1
+            self.checkpoint = checkpoint
             if on_progress:
                 on_progress("working")
             return self.transcript
@@ -581,6 +582,218 @@ def t22():
     # And it is not audio, so the watcher must never try to process one.
     assert config.course_note(audio).suffix not in config.AUDIO_EXTENSIONS
 results.append(run("the note is cleared once the recording is filed", t22))
+
+
+# 23 to 27. A transcription that fails part way through must not bill the
+#    chunks that already succeeded a second time. Resume used to keep the
+#    transcript only once every chunk was back, so a failure on the last chunk
+#    re-sent all of them (one 73 minute lecture was billed three times). These
+#    run the real transcribe() with ffmpeg and the network removed, and count
+#    what reaches the provider.
+class ChunkProvider:
+    """A provider that records every chunk it is sent, and can fail on one."""
+
+    def __init__(self, fail_on=None, name="stub/chunked", chunk_seconds=600):
+        self.name = name
+        self.max_bytes = 25 * 1024 * 1024
+        self.compress_threshold_bytes = 24 * 1024 * 1024
+        self.max_chunk_seconds = chunk_seconds
+        self.truncation_word_threshold = None
+        self.fail_on = fail_on      # 1-based chunk number to fail on, or None
+        self.sent = []              # chunk numbers, in the order sent
+
+    def transcribe_file(self, path):
+        number = int(Path(path).stem.rsplit("_", 1)[1])
+        self.sent.append(number)
+        if number == self.fail_on:
+            raise RuntimeError(f"upload failed on chunk {number}")
+        return f"words of part {number}"
+
+
+class ChunkedAudio:
+    """Replaces transcribe's ffmpeg calls: `seconds` of audio, split for real
+    arithmetic but without touching any audio."""
+
+    def __init__(self, seconds=3000.0):
+        self.seconds = seconds
+        self._saved = {}
+
+    def __enter__(self):
+        import math
+
+        def fake_split(src, work_dir, seconds):
+            count = max(1, math.ceil(self.seconds / seconds))
+            return [work_dir / f"chunk_{i:03d}.m4a" for i in range(1, count + 1)]
+
+        for name, value in (
+            ("_size", lambda path: 1000),
+            ("duration_seconds", lambda path: self.seconds),
+            ("split", fake_split),
+            ("compress", lambda src, work_dir: src),
+            ("log", lambda msg: None),
+        ):
+            self._saved[name] = getattr(transcribe, name)
+            setattr(transcribe, name, value)
+        return self
+
+    def __exit__(self, *exc):
+        for name, value in self._saved.items():
+            setattr(transcribe, name, value)
+        return False
+
+
+def t23():
+    clear()
+    audio = recording(body="CHUNKED AUDIO")
+    checkpoint = config.WORK_DIR / "chunk-test"
+    import shutil
+    shutil.rmtree(checkpoint, ignore_errors=True)
+    with ChunkedAudio(seconds=3000.0):   # five 10 minute chunks
+        failing = ChunkProvider(fail_on=4)
+        try:
+            transcribe.transcribe(audio, provider=failing, checkpoint=checkpoint)
+        except RuntimeError as exc:
+            assert "chunk 4" in str(exc), exc
+        else:
+            raise AssertionError("the failure on chunk 4 was swallowed")
+        assert failing.sent == [1, 2, 3, 4], failing.sent
+
+        retry = ChunkProvider()
+        text = transcribe.transcribe(audio, provider=retry, checkpoint=checkpoint)
+    assert retry.sent == [4, 5], f"the retry re-sent paid chunks: {retry.sent}"
+    expected = "\n\n".join(f"words of part {n}" for n in range(1, 6))
+    assert text == expected, text
+    shutil.rmtree(checkpoint, ignore_errors=True)
+results.append(run("a retry after a failure on chunk k sends only chunks k..n", t23))
+
+
+def t24():
+    clear()
+    audio = recording(body="CHUNKED AUDIO")
+    checkpoint = config.WORK_DIR / "chunk-test"
+    import os
+    import shutil
+    shutil.rmtree(checkpoint, ignore_errors=True)
+    with ChunkedAudio(seconds=3000.0):
+        try:
+            transcribe.transcribe(audio, provider=ChunkProvider(fail_on=3),
+                                  checkpoint=checkpoint)
+        except RuntimeError:
+            pass
+        # A different chunk length cuts the audio differently: part 1 of a
+        # 25 minute split is not part 1 of a 10 minute one.
+        wider = ChunkProvider(chunk_seconds=1500)
+        transcribe.transcribe(audio, provider=wider, checkpoint=checkpoint)
+        assert wider.sent == [1, 2], f"stale chunks were reused: {wider.sent}"
+
+        try:
+            transcribe.transcribe(audio, provider=ChunkProvider(fail_on=3),
+                                  checkpoint=checkpoint)
+        except RuntimeError:
+            pass
+        # A different provider is a different transcript.
+        other = ChunkProvider(name="stub/other")
+        transcribe.transcribe(audio, provider=other, checkpoint=checkpoint)
+        assert other.sent == [1, 2, 3, 4, 5], other.sent
+
+        try:
+            transcribe.transcribe(audio, provider=ChunkProvider(fail_on=3),
+                                  checkpoint=checkpoint)
+        except RuntimeError:
+            pass
+        # The file changed underneath: a new recording in the same place.
+        audio.write_text("A DIFFERENT RECORDING")
+        stamp = when(TUESDAY_2PM_END) + 60
+        os.utime(audio, (stamp, stamp))
+        changed = ChunkProvider()
+        transcribe.transcribe(audio, provider=changed, checkpoint=checkpoint)
+        assert changed.sent == [1, 2, 3, 4, 5], changed.sent
+    # Only the current key's results are kept; the stale ones were dropped.
+    assert len([p for p in checkpoint.iterdir()]) == 1, list(checkpoint.iterdir())
+    shutil.rmtree(checkpoint, ignore_errors=True)
+results.append(run("chunks from another file, provider or split are never reused", t24))
+
+
+def t25():
+    clear()
+    audio = recording(body="CHUNKED AUDIO")
+    with Fakes() as fake:
+        # The real transcribe, over fake audio: only the expensive leg is fake.
+        transcribe.transcribe = fake._saved[(transcribe, "transcribe")]
+        with ChunkedAudio(seconds=3600.0):   # six chunks
+            failing = ChunkProvider(fail_on=5)
+            fake._remember(watch.providers, "get", lambda name=None: failing)
+            try:
+                watch.process(audio, interactive=False)
+            except RuntimeError as exc:
+                assert "chunk 5" in str(exc), exc
+            else:
+                raise AssertionError("the failure on chunk 5 was swallowed")
+            slot = watch.Resume(config.recording_key(when(TUESDAY_2PM_END), 3600.0))
+            assert slot.transcript() is None, "a partial transcript was saved whole"
+            assert sorted(p.name for p in slot.chunks_dir().glob("*/part_*.txt")) == [
+                "part_001.txt", "part_002.txt", "part_003.txt", "part_004.txt"]
+
+            retry = ChunkProvider()
+            watch.providers.get = lambda name=None: retry
+            out = watch.process(audio, interactive=False)
+    assert retry.sent == [5, 6], f"process re-billed paid chunks: {retry.sent}"
+    assert fake.summarized == 1, fake.summarized
+    body = fake.uploads[1]["body"]
+    assert body.startswith("words of part 1") and body.endswith("words of part 6"), body
+    assert out["stem"], out
+    assert not slot.dir.exists(), "the checkpoint outlived a finished lecture"
+results.append(run("process() resumes a half-billed transcription chunk by chunk", t25))
+
+
+def t26():
+    clear()
+    audio = recording()
+    # A slot written before per-chunk results existed: a transcript and
+    # nothing else, no chunks folder.
+    slot = watch.Resume(config.recording_key(when(TUESDAY_2PM_END), 3600.0))
+    slot.dir.mkdir(parents=True, exist_ok=True)
+    (slot.dir / "transcript.txt").write_text("the transcript an old build saved")
+    with Fakes() as fake:
+        watch.process(audio, interactive=False)
+    assert fake.transcribed == 0, "an old slot's transcript was paid for again"
+    assert fake.uploads[1]["body"] == "the transcript an old build saved"
+
+    clear()
+    audio = recording()
+    # An old slot holding only a summary still transcribes, and the new code
+    # hands the transcription somewhere to keep its chunks.
+    slot.dir.mkdir(parents=True, exist_ok=True)
+    (slot.dir / "summary.json").write_text(json.dumps({
+        "summary_md": "# old", "topic_slug": "Old-Topic",
+        "key_terms": [], "action_items": []}))
+    with Fakes() as fake:
+        out = watch.process(audio, interactive=False)
+    assert fake.transcribed == 1 and fake.summarized == 0, (fake.transcribed, fake.summarized)
+    assert fake.checkpoint == slot.chunks_dir(), fake.checkpoint
+    assert "Old-Topic" in out["stem"], out
+results.append(run("a resume slot from before per-chunk results still works", t26))
+
+
+def t27():
+    clear()
+    audio = recording(body="CHUNKED AUDIO")
+    checkpoint = config.WORK_DIR / "chunk-test"
+    import shutil
+    shutil.rmtree(checkpoint, ignore_errors=True)
+    # A lecture short enough to go up whole, and one with no checkpoint at
+    # all (the command line), both behave exactly as before.
+    with ChunkedAudio(seconds=300.0):
+        whole = ChunkProvider()
+        text = transcribe.transcribe(audio, provider=whole, checkpoint=checkpoint)
+    assert len(whole.sent) == 1, whole.sent
+    assert not checkpoint.exists(), "a single request left chunk state behind"
+    with ChunkedAudio(seconds=3000.0):
+        plain = ChunkProvider()
+        text = transcribe.transcribe(audio, provider=plain)
+    assert plain.sent == [1, 2, 3, 4, 5], plain.sent
+    assert text.endswith("words of part 5"), text
+results.append(run("no checkpoint, or no split, transcribes as it always did", t27))
 
 
 print()
